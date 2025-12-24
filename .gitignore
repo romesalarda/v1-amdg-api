@@ -176,3 +176,6 @@ media/
 aws/
 
 .env
+/staticfiles/static/
+/mediafiles/media/
+staticfiles/

@@ -23,9 +23,7 @@ urlpatterns = [
     # Authentication endpoints
     path('auth/login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/refresh/', CustomTokenRefreshView.as_view(), name='token_refresh'),
-    path('auth/logout/', logout, name='logout'),
-    path('auth/register/', UserViewSet.as_view({'post': 'register'}), name='register'),
-    
+    path('auth/logout/', logout, name='logout'),    
     # User management endpoints
     path('', include(router.urls)),
 ]
