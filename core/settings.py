@@ -182,6 +182,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "core",
     "apps.users.apps.UsersConfig",
+    "apps.locations.apps.LocationsConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -552,3 +553,9 @@ LOGGING = {
 # DEFAULT PRIMARY KEY FIELD TYPE
 # =============================================================================
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# =============================================================================
+# OTHER
+# =============================================================================
+MAX_LENGTH_LOCATION_ID = 20
