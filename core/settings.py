@@ -8,38 +8,189 @@ https://docs.djangoproject.com/en/3.2/topics/settings/
 
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/3.2/ref/settings/
+
+IMPORTANT - AWS SSM USAGE:
+==============================
+ALL secrets are loaded from SSM Parameter Store in a SINGLE batch call at startup.
+This prevents KMS quota exhaustion from repeated decrypt operations.
+
+DO NOT add runtime SSM calls anywhere in the application:
+- NO get_parameter() calls in views, tasks, or middleware
+- ALL secrets must be loaded via get_secret() which uses startup cache
+- New secrets must be added to REQUIRED_SECRETS list below
 """
 
 from pathlib import Path
+from dotenv import load_dotenv
+import os
+from datetime import timedelta
+
+# Load .env file for local development
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# =============================================================================
+# SENTRY CONFIGURATION (Toggleable)
+# =============================================================================
+SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False") == "True"
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
+if SENTRY_ENABLED and SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.celery import CeleryIntegration
+    from sentry_sdk.integrations.redis import RedisIntegration
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-gyht1$pi@_=gdkw$lr&6zuv+k0w6e@0o9p&56$94w*gv8cr!6q'
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(),
+            CeleryIntegration(),
+            RedisIntegration(),
+        ],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.1")),
+        send_default_pii=True,
+        environment=os.getenv("ENVIRONMENT", "development"),
+    )
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# =============================================================================
+# AWS SSM PARAMETER STORE CONFIGURATION
+# =============================================================================
+USE_SSM = os.getenv("USE_SSM", "False") == "True"
+SSM_PARAM_PREFIX = os.getenv("SSM_PARAM_PREFIX", "/prod/amdg/v1/")
 
-ALLOWED_HOSTS = []
+ssm_client = None
+_SECRET_CACHE = {}  # In-memory cache for secrets loaded at startup
 
-
-# Application definition
-
-INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
+# Define all required secret keys upfront (MAX 10 for single batch read)
+REQUIRED_SECRETS = [
+    'SECRET_KEY',
+    'DEBUG',
+    'ALLOWED_HOSTS',
+    'DB_ENGINE',
+    'DB_NAME',
+    'DB_USER',
+    'DB_PASSWORD',
+    'DB_HOST',
+    'DB_PORT',
 ]
 
+if USE_SSM:
+    try:
+        import boto3
+        from botocore.exceptions import ClientError, NoCredentialsError
+        
+        ssm_client = boto3.client('ssm', region_name=os.getenv("AWS_REGION", "eu-west-2"))
+    except (ImportError, NoCredentialsError) as e:
+        print(f"WARNING: Could not initialize SSM client: {e}")
+        USE_SSM = False
+
+
+def _chunked(iterable, size=10):
+    """Split an iterable into chunks of specified size (SSM limit is 10 parameters per call)."""
+    iterator = iter(iterable)
+    while chunk := list(zip(*[iterator] * size)):
+        yield [item[0] for item in chunk]
+    # Handle remaining items
+    remaining = list(iterator)
+    if remaining:
+        yield remaining
+
+
+def _load_all_secrets_from_ssm():
+    """Load ALL secrets from SSM Parameter Store in a single batch call at startup."""
+    if not USE_SSM or not ssm_client:
+        return
+    
+    try:
+        param_names = [f"{SSM_PARAM_PREFIX}{secret}" for secret in REQUIRED_SECRETS]
+        
+        # SSM allows max 10 parameters per get_parameters call
+        for chunk in _chunked(param_names, 10):
+            response = ssm_client.get_parameters(
+                Names=chunk,
+                WithDecryption=True
+            )
+            
+            for param in response['Parameters']:
+                # Strip the prefix to get the secret name
+                secret_name = param['Name'].replace(SSM_PARAM_PREFIX, '')
+                _SECRET_CACHE[secret_name] = param['Value']
+            
+            # Log any invalid parameters
+            if response.get('InvalidParameters'):
+                print(f"WARNING: Invalid SSM parameters: {response['InvalidParameters']}")
+    
+    except Exception as e:
+        print(f"ERROR loading secrets from SSM: {e}")
+        print("Falling back to environment variables")
+
+
+# Load secrets at startup
+_load_all_secrets_from_ssm()
+
+
+def get_secret(name, default=None):
+    """
+    Get a secret from the cache (populated at startup) or fall back to environment variables.
+    
+    DO NOT call boto3 SSM client here - all secrets are pre-loaded at startup.
+    """
+    if USE_SSM and name in _SECRET_CACHE:
+        return _SECRET_CACHE[name]
+    return os.getenv(name, default)
+
+
+# =============================================================================
+# CORE DJANGO SETTINGS
+# =============================================================================
+SECRET_KEY = get_secret('SECRET_KEY', 'django-insecure-gyht1$pi@_=gdkw$lr&6zuv+k0w6e@0o9p&56$94w*gv8cr!6q')
+DEBUG = get_secret("DEBUG", "True") == "True"
+ALLOWED_HOSTS = get_secret("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+
+# Custom User Model
+AUTH_USER_MODEL = "users.CommunityUser"
+
+# =============================================================================
+# APPLICATION DEFINITION
+# =============================================================================
+DJANGO_APPS = [
+    'jazzmin',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    'storages',
+]
+
+THIRD_PARTY_APPS = [
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'drf_spectacular',
+    'django_filters',
+    'corsheaders',
+    'channels',
+    'django_celery_beat',
+    'django_celery_results',
+]
+
+LOCAL_APPS = [
+    "core",
+    "apps.users",
+]
+
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+
+# =============================================================================
+# MIDDLEWARE
+# =============================================================================
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -51,10 +202,13 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'core.urls'
 
+# =============================================================================
+# TEMPLATES
+# =============================================================================
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -68,22 +222,36 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'core.wsgi.application'
+ASGI_APPLICATION = 'core.asgi.application'
 
+# =============================================================================
+# DATABASE CONFIGURATION
+# =============================================================================
+# Use PostgreSQL in production/docker, fallback to SQLite for local if specified
+USE_POSTGRES = get_secret("USE_POSTGRES", "True") == "True"
 
-# Database
-# https://docs.djangoproject.com/en/3.2/ref/settings/#databases
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+if USE_POSTGRES:
+    DATABASES = {
+        'default': {
+            'ENGINE': get_secret('DB_ENGINE', 'django.db.backends.postgresql'),
+            'NAME': get_secret('DB_NAME', 'amdg_db'),
+            'USER': get_secret('DB_USER', 'postgres'),
+            'PASSWORD': get_secret('DB_PASSWORD', ''),
+            'HOST': get_secret('DB_HOST', 'localhost'),
+            'PORT': get_secret('DB_PORT', '5432'),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
-
-# Password validation
-# https://docs.djangoproject.com/en/3.2/ref/settings/#auth-password-validators
-
+# =============================================================================
+# PASSWORD VALIDATION
+# =============================================================================
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -99,27 +267,291 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
-# Internationalization
-# https://docs.djangoproject.com/en/3.2/topics/i18n/
-
+# =============================================================================
+# INTERNATIONALIZATION
+# =============================================================================
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_L10N = True
-
 USE_TZ = True
 
+# =============================================================================
+# STATIC & MEDIA FILES (AWS S3)
+# =============================================================================
+USE_S3 = get_secret("USE_S3", "False") == "True"
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/3.2/howto/static-files/
+if USE_S3:
+    # AWS S3 Settings
+    AWS_ACCESS_KEY_ID = get_secret("AWS_ACCESS_KEY_ID", "")
+    AWS_SECRET_ACCESS_KEY = get_secret("AWS_SECRET_ACCESS_KEY", "")
+    AWS_STORAGE_BUCKET_NAME = get_secret("AWS_STORAGE_BUCKET_NAME", "")
+    AWS_S3_REGION_NAME = get_secret("AWS_S3_REGION_NAME", "eu-west-2")
+    AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': 'max-age=86400',
+    }
+    AWS_DEFAULT_ACL = 'public-read'
+    AWS_LOCATION = 'static'
+    AWS_QUERYSTRING_AUTH = False
 
-STATIC_URL = '/static/'
+    # Static files
+    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/{AWS_LOCATION}/'
 
-# Default primary key field type
-# https://docs.djangoproject.com/en/3.2/ref/settings/#default-auto-field
+    # Media files
+    DEFAULT_FILE_STORAGE = 'core.storage_backends.MediaStorage'
+    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+else:
+    # Local static/media files
+    STATIC_URL = '/static/'
+    STATIC_ROOT = BASE_DIR / 'staticfiles'
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'
 
+STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').exists() else []
+
+# =============================================================================
+# CORS CONFIGURATION
+# =============================================================================
+CORS_ALLOWED_ORIGINS = get_secret(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000"
+).split(",")
+
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = get_secret("CORS_ALLOW_ALL_ORIGINS", "False") == "True"
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# =============================================================================
+# CSRF CONFIGURATION (for cookie-based auth)
+# =============================================================================
+CSRF_TRUSTED_ORIGINS = get_secret(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000"
+).split(",")
+
+CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript to read CSRF token
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = 'Lax'
+
+# =============================================================================
+# SESSION CONFIGURATION
+# =============================================================================
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = 'Lax'
+
+# =============================================================================
+# DJANGO REST FRAMEWORK
+# =============================================================================
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.FormParser',
+        'rest_framework.parsers.MultiPartParser',
+    ],
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+# =============================================================================
+# SIMPLE JWT CONFIGURATION (HTTP-Only Cookies)
+# =============================================================================
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=int(get_secret("JWT_ACCESS_TOKEN_LIFETIME_MINUTES", "15"))),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=int(get_secret("JWT_REFRESH_TOKEN_LIFETIME_DAYS", "7"))),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+    
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    
+    # HTTP-Only Cookie settings
+    'AUTH_COOKIE': 'access',
+    'AUTH_COOKIE_REFRESH': 'refresh',
+    'AUTH_COOKIE_SECURE': not DEBUG,
+    'AUTH_COOKIE_HTTP_ONLY': True,
+    'AUTH_COOKIE_PATH': '/',
+    'AUTH_COOKIE_SAMESITE': 'Lax',
+}
+
+# =============================================================================
+# DRF SPECTACULAR (OpenAPI Schema)
+# =============================================================================
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'AMDG API',
+    'DESCRIPTION': 'AMDG Platform API Documentation',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': r'/api',
+}
+
+# =============================================================================
+# DJANGO CHANNELS (WebSockets)
+# =============================================================================
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [(
+                get_secret("REDIS_HOST", "localhost"),
+                int(get_secret("REDIS_PORT", "6379"))
+            )],
+        },
+    },
+}
+
+# =============================================================================
+# CELERY CONFIGURATION
+# =============================================================================
+CELERY_BROKER_URL = get_secret("CELERY_BROKER_URL", "redis://localhost:6379/1")
+CELERY_RESULT_BACKEND = 'django-db'
+CELERY_CACHE_BACKEND = 'default'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# =============================================================================
+# EMAIL CONFIGURATION
+# =============================================================================
+EMAIL_BACKEND = get_secret(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend"
+)
+
+if "ses" in EMAIL_BACKEND.lower():
+    # AWS SES Configuration
+    AWS_SES_REGION_NAME = get_secret("AWS_SES_REGION_NAME", "eu-west-2")
+    AWS_SES_REGION_ENDPOINT = f'email.{AWS_SES_REGION_NAME}.amazonaws.com'
+    DEFAULT_FROM_EMAIL = get_secret("DEFAULT_FROM_EMAIL", "noreply@rsalarda.works")
+    SERVER_EMAIL = get_secret("SERVER_EMAIL", "noreply@rsalarda.works")
+else:
+    # SMTP/Console fallback
+    EMAIL_HOST = get_secret("EMAIL_HOST", "smtp.gmail.com")
+    EMAIL_PORT = int(get_secret("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = get_secret("EMAIL_USE_TLS", "True") == "True"
+    EMAIL_HOST_USER = get_secret("EMAIL_HOST_USER", "")
+    EMAIL_HOST_PASSWORD = get_secret("EMAIL_HOST_PASSWORD", "")
+    DEFAULT_FROM_EMAIL = get_secret("DEFAULT_FROM_EMAIL", "noreply@example.com")
+
+# =============================================================================
+# STRIPE CONFIGURATION
+# =============================================================================
+STRIPE_TEST_MODE = get_secret("STRIPE_TEST_MODE", "True") == "True"
+STRIPE_SECRET_KEY = get_secret(
+    "STRIPE_SECRET_KEY_TEST" if STRIPE_TEST_MODE else "STRIPE_SECRET_KEY_LIVE",
+    ""
+)
+STRIPE_PUBLISHABLE_KEY = get_secret(
+    "STRIPE_PUBLISHABLE_KEY_TEST" if STRIPE_TEST_MODE else "STRIPE_PUBLISHABLE_KEY_LIVE",
+    ""
+)
+STRIPE_WEBHOOK_SECRET = get_secret("STRIPE_WEBHOOK_SECRET", "")
+
+# =============================================================================
+# GOOGLE OAUTH (for future implementation)
+# =============================================================================
+GOOGLE_OAUTH_CLIENT_ID = get_secret("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = get_secret("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = get_secret("GOOGLE_OAUTH_REDIRECT_URI", "")
+
+# =============================================================================
+# SECURITY SETTINGS
+# =============================================================================
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO' if not DEBUG else 'DEBUG',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
+
+# =============================================================================
+# DEFAULT PRIMARY KEY FIELD TYPE
+# =============================================================================
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

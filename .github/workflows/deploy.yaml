@@ -1,0 +1,242 @@
+name: CI/CD with AWS ECR and EC2
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: eu-west-2
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-2.amazonaws.com
+  ECR_REPOSITORY: amdg
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS credentials
+        run: |
+          aws sts get-caller-identity
+          aws configure list
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+
+      - name: Create .env.test file for CI
+        run: |
+          cat > .env << EOF
+          SECRET_KEY=test-secret-key-for-ci-only-not-for-production
+          DEBUG=True
+          ALLOWED_HOSTS=localhost,127.0.0.1,web
+          USE_POSTGRES=True
+          DB_ENGINE=django.db.backends.postgresql
+          DB_NAME=amdg_test_db
+          DB_USER=postgres
+          DB_PASSWORD=${{ secrets.TEST_DB_PASSWORD }}
+          DB_HOST=db
+          DB_PORT=5432
+          USE_S3=False
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          CELERY_BROKER_URL=redis://redis:6379/1
+          CORS_ALLOWED_ORIGINS=http://localhost:3000
+          CORS_ALLOW_ALL_ORIGINS=False
+          CSRF_TRUSTED_ORIGINS=http://localhost:3000
+          EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+          STRIPE_TEST_MODE=True
+          SENTRY_ENABLED=False
+          IMAGE_TAG=ci-build-${{ github.sha }}
+          EOF
+
+      - name: Clean up old volumes
+        run: |
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml down -v || true
+          docker volume prune -f || true
+
+      - name: Build Docker containers for testing
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml build
+
+      - name: Start services
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          echo "Starting services with IMAGE_TAG=$IMAGE_TAG..."
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml up -d
+          echo "Services started, checking status..."
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml ps
+          
+          echo ""
+          echo "=== POSTGRES LOGS ==="
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml logs db
+          
+          echo ""
+          echo "=== REDIS LOGS ==="
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml logs redis
+          
+          echo ""
+          echo "=== WEB LOGS ==="
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml logs web
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for database to be ready..."
+          timeout 60 bash -c 'until docker-compose -f docker-compose.yml -f docker-compose.ci.yml exec -T db pg_isready -U postgres; do sleep 2; done'
+          
+          echo "Waiting for Redis to be ready..."
+          timeout 30 bash -c 'until docker-compose -f docker-compose.yml -f docker-compose.ci.yml exec -T redis redis-cli ping; do sleep 2; done'
+          
+          echo "All services are ready!"
+
+      - name: Run migrations
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml exec -T web python manage.py migrate --noinput
+
+      - name: Run Django tests
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml exec -T web python manage.py test
+
+      - name: Cleanup test containers
+        if: always()
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml down -v
+
+      - name: Build and push Django app image to ECR
+        if: github.ref == 'refs/heads/main'
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Building production image..."
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "Pushing images to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "Successfully pushed images:"
+          echo "  - $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "  - $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+
+  deploy:
+    needs: build-test-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify EC2 Status
+        run: |
+          aws ec2 describe-instance-status \
+            --instance-ids ${{ secrets.EC2_INSTANCE_ID }} \
+            --query 'InstanceStatuses[0].InstanceState.Name' \
+            --output text
+
+      - name: Deploy to EC2 via SSM
+        id: deploy_ssm
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "set -e",
+              "cd /home/ubuntu/app",
+              "export USE_SSM=True",
+              "export SSM_PARAM_PREFIX=/prod/amdg/v1/",
+              "export AWS_REGION=eu-west-2",
+              "export ECR_REGISTRY=${{ env.ECR_REGISTRY }}",
+              "export IMAGE_TAG=${{ github.sha }}",
+              "echo \"Logging into ECR...\"",
+              "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}",
+              "echo \"Pulling latest images...\"",
+              "docker-compose pull",
+              "echo \"Stopping old containers...\"",
+              "docker-compose down",
+              "echo \"Starting new containers...\"",
+              "docker-compose up -d",
+              "echo \"Running migrations...\"",
+              "docker-compose exec -T web python manage.py migrate --noinput",
+              "echo \"Collecting static files...\"",
+              "docker-compose exec -T web python manage.py collectstatic --noinput",
+              "echo \"Cleaning up old images...\"",
+              "docker image prune -af",
+              "echo \"Deployment completed successfully!\""
+            ]' \
+            --output text \
+            --query "Command.CommandId")
+          
+          echo "command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
+          echo "Command ID: $COMMAND_ID"
+
+      - name: Wait for deployment command to complete
+        run: |
+          COMMAND_ID="${{ steps.deploy_ssm.outputs.command_id }}"
+          
+          echo "Waiting for command $COMMAND_ID to complete..."
+          
+          for i in {1..60}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+              --query "Status" \
+              --output text)
+            
+            echo "Attempt $i/60: Status is $STATUS"
+            
+            if [ "$STATUS" = "Success" ]; then
+              echo "Deployment completed successfully!"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+                --query "StandardOutputContent" \
+                --output text
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "Deployment failed with status: $STATUS"
+              echo "Error output:"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+                --query "StandardErrorContent" \
+                --output text
+              exit 1
+            fi
+            
+            sleep 10
+          done
+          
+          echo "Deployment timed out after 10 minutes"
+          exit 1
