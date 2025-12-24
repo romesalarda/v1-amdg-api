@@ -12,7 +12,7 @@ class EventPermissionCategoryChoices(models.TextChoices):
     STAFF_MANAGEMENT = 'STAFF_MANAGEMENT', 'Staff Management Permissions'
     REPORTING = 'REPORTING', 'Reporting Permissions'
 
-class EventPermmission(models.Model):
+class EventPermission(models.Model):
     '''
     Model representing specific permissions related to events.
     '''
@@ -39,7 +39,7 @@ class EventPermissionAssignment(models.Model):
     '''
     event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='permission_assignments')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='event_permissions')
-    permission = models.ForeignKey(EventPermmission, on_delete=models.CASCADE, related_name='assignments')
+    permission = models.ForeignKey(EventPermission, on_delete=models.CASCADE, related_name='assignments')
     
     assigned_at = models.DateTimeField(auto_now_add=True)
     assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='event_permission_assigned_by')

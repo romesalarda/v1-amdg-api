@@ -53,5 +53,29 @@ class OrganisationControl(models.Model):
     
     def __str__(self):
         return f"{self.user.username} controls {self.organisation.title}"
-
     
+class InvolvedOrganisationRoleChoices(models.TextChoices):
+    COMMUNITY = 'COMMUNITY', 'Community'
+    SPONSOR = 'SPONSOR', 'Sponsor'
+    PARTNER = 'PARTNER', 'Partner'
+    ORGANISER = 'ORGANISER', 'Organiser'
+    VENUE_PROVIDER = 'VENUE_PROVIDER', 'Venue Provider'
+    MEDIA_PARTNER = 'MEDIA_PARTNER', 'Media Partner'
+
+class InvolvedEventOrganisation(models.Model):
+    '''
+    Model representing an organisation involved in an event. E.g. sponsors, partners, organisers.
+    '''
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name='involvements')    
+    event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='involved_organisations')
+    role = models.CharField(max_length=30, choices=InvolvedOrganisationRoleChoices.choices, default=InvolvedOrganisationRoleChoices.COMMUNITY)
+    
+    added_at = models.DateTimeField(auto_now_add=True)
+    added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='involved_organisations_added')
+    
+    class Meta:
+        unique_together = ('organisation', 'event', 'role')
+        ordering = ['-added_at']
+    
+    def __str__(self):
+        return f"{self.organisation.title} as {self.role} in event {self.event_id}"

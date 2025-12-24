@@ -45,10 +45,10 @@ class AvailabilityWindow(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
-    def validate_availability(self):
+    def clean(self):
         if self.available_from >= self.available_to:
             raise ValueError("available_from must be earlier than available_to")
-        
+                
     class Meta:
         indexes = [
             models.Index(fields=['availability_id']),

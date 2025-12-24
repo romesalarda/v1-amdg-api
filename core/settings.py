@@ -177,6 +177,8 @@ THIRD_PARTY_APPS = [
     'channels',
     'django_celery_beat',
     'django_celery_results',
+    'djmoney',
+    'timezone_field',
 ]
 
 LOCAL_APPS = [
