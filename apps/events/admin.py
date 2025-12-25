@@ -3,7 +3,8 @@ from django.utils.html import format_html
 from .models import (
     Event, EventType, EventAuthorization, EventPermission, 
     EventPermissionAssignment, EventReview, EventRole, 
-    EventRoleAssignment, EventStaff, EventStaffAvailability
+    EventRoleAssignment, EventStaff, EventStaffAvailability,
+    EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice
 )
 
 
@@ -224,3 +225,131 @@ class EventStaffAvailabilityAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+class EventQuestionOptionInline(admin.TabularInline):
+    model = EventQuestionOption
+    extra = 1
+    readonly_fields = ('created_at', 'updated_at')
+    fields = ('option_text', 'order', 'created_at')
+    ordering = ('order',)
+
+
+class EventQuestionAnswerInline(admin.TabularInline):
+    model = EventQuestionAnswer
+    extra = 0
+    readonly_fields = ('submitted_at', 'updated_at')
+    fields = ('attendee', 'answer_text', 'submitted_at')
+    autocomplete_fields = ('attendee',)
+
+
+@admin.register(EventQuestion)
+class EventQuestionAdmin(admin.ModelAdmin):
+    list_display = ('question_title', 'event', 'question_type', 'required', 'public', 'order', 'created_at')
+    list_filter = ('question_type', 'required', 'public', 'event', 'created_at')
+    search_fields = ('question_title', 'question_body', 'event__title')
+    readonly_fields = ('id', 'created_at', 'updated_at')
+    autocomplete_fields = ('event',)
+    list_editable = ('order',)
+    ordering = ('event', 'order')
+    inlines = [EventQuestionOptionInline, EventQuestionAnswerInline]
+    
+    fieldsets = (
+        ('Question Information', {
+            'fields': ('id', 'event', 'question_title', 'question_body', 'question_type')
+        }),
+        ('Configuration', {
+            'fields': ('required', 'public', 'order')
+        }),
+        ('Value Constraints', {
+            'fields': ('min_value', 'max_value'),
+            'classes': ('collapse',),
+            'description': 'Only applicable for slider questions'
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(EventQuestionOption)
+class EventQuestionOptionAdmin(admin.ModelAdmin):
+    list_display = ('option_text', 'question', 'order', 'created_at')
+    list_filter = ('question__event', 'created_at')
+    search_fields = ('option_text', 'question__question_title')
+    readonly_fields = ('created_at', 'updated_at')
+    autocomplete_fields = ('question',)
+    list_editable = ('order',)
+    ordering = ('question', 'order')
+    
+    fieldsets = (
+        ('Option Information', {
+            'fields': ('question', 'option_text', 'order')
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+class EventQuestionAnswerChoiceInline(admin.TabularInline):
+    model = EventQuestionAnswerChoice
+    extra = 0
+    readonly_fields = ('selected_at',)
+    autocomplete_fields = ('option',)
+
+
+@admin.register(EventQuestionAnswer)
+class EventQuestionAnswerAdmin(admin.ModelAdmin):
+    list_display = ('question', 'attendee', 'get_answer_preview', 'submitted_at')
+    list_filter = ('question__event', 'question__question_type', 'submitted_at')
+    search_fields = ('question__question_title', 'attendee__first_name', 'attendee__last_name', 'answer_text')
+    readonly_fields = ('submitted_at', 'updated_at')
+    autocomplete_fields = ('question', 'attendee')
+    date_hierarchy = 'submitted_at'
+    inlines = [EventQuestionAnswerChoiceInline]
+    
+    fieldsets = (
+        ('Answer Information', {
+            'fields': ('question', 'attendee', 'answer_text')
+        }),
+        ('Metadata', {
+            'fields': ('submitted_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_answer_preview(self, obj):
+        if len(obj.answer_text) > 50:
+            return obj.answer_text[:50] + '...'
+        return obj.answer_text
+    get_answer_preview.short_description = 'Answer Preview'
+
+
+@admin.register(EventQuestionAnswerChoice)
+class EventQuestionAnswerChoiceAdmin(admin.ModelAdmin):
+    list_display = ('answer', 'option', 'get_question', 'get_attendee', 'selected_at')
+    list_filter = ('selected_at',)
+    search_fields = ('answer__attendee__first_name', 'answer__attendee__last_name', 'option__option_text')
+    readonly_fields = ('selected_at',)
+    autocomplete_fields = ('answer', 'option')
+    
+    fieldsets = (
+        ('Choice Information', {
+            'fields': ('answer', 'option')
+        }),
+        ('Metadata', {
+            'fields': ('selected_at',),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_question(self, obj):
+        return obj.option.question.question_title
+    get_question.short_description = 'Question'
+    
+    def get_attendee(self, obj):
+        return obj.answer.attendee
+    get_attendee.short_description = 'Attendee'

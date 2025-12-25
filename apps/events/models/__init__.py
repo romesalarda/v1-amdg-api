@@ -4,6 +4,7 @@ from .staff import EventStaff, EventStaffAvailability
 from .roles import EventRole, EventRoleAssignment, EventRoleCategoryChoices
 from .authorization import EventAuthorization
 from .review import EventReview
+from .questions import EventQuestion, EventQuestionTypeChoices, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice
 
 __all__ = [
     'Event',
@@ -19,5 +20,10 @@ __all__ = [
     'EventRoleCategoryChoices',
     'EventAuthorization',
     'EventReview',
-    'EventStaffAvailability'
+    'EventStaffAvailability',
+    'EventQuestion',
+    'EventQuestionTypeChoices',
+    'EventQuestionOption',
+    'EventQuestionAnswer',
+    'EventQuestionAnswerChoice',
 ]

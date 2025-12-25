@@ -6,7 +6,7 @@ from .models import (
     MedicalCondition, AttendeeMedicalCondition,
     EmergencyContact, FamilyGroup, FamilyAttendee,
     AccessibilityRequirement, AttendeeAccessibilityRequirement,
-    Consent, AttendeeConsent
+    Consent, AttendeeConsent, AttendeeMessage, EventAttendance
 )
 
 
@@ -452,3 +452,71 @@ class AttendeeConsentAdmin(admin.ModelAdmin):
         from django.utils import timezone
         queryset.update(consent_given=True, given_at=timezone.now(), given_by=request.user)
     mark_consent_given.short_description = "Mark consent as given"
+
+
+@admin.register(AttendeeMessage)
+class AttendeeMessageAdmin(admin.ModelAdmin):
+    list_display = ('attendee', 'subject', 'priority', 'submitted_at', 'responsed_at', 'responsed_by')
+    list_filter = ('priority', 'submitted_at', 'responsed_at')
+    search_fields = ('subject', 'message', 'attendee__first_name', 'attendee__last_name', 'attendee__attendee_display_id')
+    readonly_fields = ('submitted_at', 'sent_at')
+    autocomplete_fields = ('attendee', 'responsed_by')
+    date_hierarchy = 'submitted_at'
+    
+    fieldsets = (
+        ('Message Information', {
+            'fields': ('attendee', 'subject', 'message', 'priority')
+        }),
+        ('Response', {
+            'fields': ('response', 'responsed_at', 'responsed_by')
+        }),
+        ('Admin Notes', {
+            'fields': ('admin_notes',),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('submitted_at', 'sent_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['mark_as_responded']
+    
+    def mark_as_responded(self, request, queryset):
+        from django.utils import timezone
+        queryset.update(responsed_at=timezone.now(), responsed_by=request.user)
+    mark_as_responded.short_description = "Mark as responded"
+
+
+@admin.register(EventAttendance)
+class EventAttendanceAdmin(admin.ModelAdmin):
+    list_display = ('attendee', 'event', 'is_checked_in', 'check_in_time', 'check_out_time', 'check_in_by')
+    list_filter = ('event', 'check_in_time', 'check_out_time')
+    search_fields = ('attendee__first_name', 'attendee__last_name', 'attendee__attendee_display_id', 'event__title')
+    readonly_fields = ('check_in_time', 'check_out_time')
+    autocomplete_fields = ('event', 'attendee', 'check_in_by', 'check_out_by')
+    date_hierarchy = 'check_in_time'
+    
+    fieldsets = (
+        ('Attendance Information', {
+            'fields': ('event', 'attendee')
+        }),
+        ('Check-in', {
+            'fields': ('check_in_time', 'check_in_by')
+        }),
+        ('Check-out', {
+            'fields': ('check_out_time', 'check_out_by')
+        }),
+    )
+    
+    actions = ['mark_checked_in', 'mark_checked_out']
+    
+    def mark_checked_in(self, request, queryset):
+        from django.utils import timezone
+        queryset.update(check_in_time=timezone.now(), check_in_by=request.user)
+    mark_checked_in.short_description = "Mark as checked in"
+    
+    def mark_checked_out(self, request, queryset):
+        from django.utils import timezone
+        queryset.update(check_out_time=timezone.now(), check_out_by=request.user)
+    mark_checked_out.short_description = "Mark as checked out"
