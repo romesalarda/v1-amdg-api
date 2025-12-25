@@ -60,3 +60,9 @@ class AvailabilityWindow(models.Model):
     
     def __repr__(self):
         return f"<AvailabilityWindow {self.name} (ID: {self.availability_id})>"
+    
+    def within_window(self, check_datetime):
+        '''
+        Check if a given datetime is within the availability window.
+        '''
+        return self.available_from <= check_datetime <= self.available_to

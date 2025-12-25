@@ -10,7 +10,7 @@ from timezone_field import TimeZoneField
 import uuid
 
 from apps.common.models import SoftDeleteModel, AvailabilityWindow, Resource
-from apps.common.mixins import HasResourceMixin, HasAvailabilityMixin
+from apps.common.mixins import LandingImageMixin, HasAvailabilityMixin
 
 User = get_user_model()
 
@@ -53,7 +53,7 @@ class EventType(models.Model):
     def __str__(self):
         return self.title
 
-class Event(SoftDeleteModel, HasResourceMixin, HasAvailabilityMixin):
+class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     
     # identifier fields
     event_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True) # uuid for URLS
@@ -120,31 +120,6 @@ class Event(SoftDeleteModel, HasResourceMixin, HasAvailabilityMixin):
             
         if self.display_identifier is None:
             self.display_identifier = str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]
-            
-    def add_availability_window(self, window: AvailabilityWindow): # basically for extra validation
-        '''
-        Adds an availability window to the event.
-        '''
-        if window.available_from < self.start_datetime or window.available_to > self.end_datetime:
-            raise ValidationError("Availability window must be within the event's start and end datetime.")
-        if window.target_type != ContentType.objects.get_for_model(self):
-            raise ValidationError("Availability window target must be the event itself.")
-        
-        window.target_id = self.id
-        window.target_type = ContentType.objects.get_for_model(self)
-        window.clean()
-        window.save()
-        return window
-        
-    def add_resource(self, resource: Resource): # basically for extra validation
-        '''
-        Adds a resource to the event.
-        '''
-        resource.target_id = self.id
-        resource.target_type = ContentType.objects.get_for_model(self)
-        resource.clean()
-        resource.save()
-        return resource
             
     def latest_authorisation(self):
         return (

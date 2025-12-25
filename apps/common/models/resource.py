@@ -1,8 +1,11 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
+from django.utils.text import slugify
+from django.utils.translation import gettext_lazy as _
 
 User = get_user_model()
 
@@ -21,6 +24,10 @@ class Resource(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
     
+    # db fields for generic relation
+    tag = models.CharField(max_length=50, blank=True, 
+                           null=True, help_text=_("Tag for categorizing the resource, e.g., LANDING_PHOTO, SCHEDULE_PDF, SPEAKER_BIO, etc. Database only.")
+                           ) # LANDING_PHOTO, SCHEDULE_PDF, SPEAKER_BIO, etc. db only
     target_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     target_id = models.PositiveIntegerField()
     target = GenericForeignKey('target_type', 'target_id')
@@ -41,10 +48,13 @@ class Resource(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='resources_added')
     
+    protected = models.BooleanField(default=False, help_text=_("If true, the resource cannot be deleted automatically.  "))
+    
     class Meta:
         indexes = [
             models.Index(fields=['target_type', 'target_id']),
             models.Index(fields=['resource_type']),
+            models.Index(fields=['tag'])
         ]
     
     def __str__(self):
@@ -52,6 +62,19 @@ class Resource(models.Model):
     
     def __repr__(self):
         return f"<Resource {self.name} (ID: {self.id})>"
+    
+    def clean(self):
+        if self.resource_type == ResourceTypeChoices.DOCUMENT or self.resource_type == ResourceTypeChoices.OTHER:
+            if not self.file:
+                raise ValidationError("File must be provided for DOCUMENT or OTHER resource types.")
+        elif self.resource_type == ResourceTypeChoices.LINK:
+            if not self.link:
+                raise ValidationError("Link must be provided for LINK resource type.")
+        elif self.resource_type == ResourceTypeChoices.IMAGE:
+            if not self.image:
+                raise ValidationError("Image must be provided for IMAGE resource type.")
+        if self.tag:
+            self.tag = slugify(self.tag).upper()
     
     def get_resource(self):
         '''
