@@ -188,6 +188,9 @@ LOCAL_APPS = [
     "apps.organisations.apps.OrganisationsConfig",
     "apps.events.apps.EventsConfig",
     "apps.common.apps.CommonConfig",
+    "apps.payments.apps.PaymentsConfig",
+    "apps.attendee.apps.AttendeeConfig",
+    "apps.products.apps.ProductsConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

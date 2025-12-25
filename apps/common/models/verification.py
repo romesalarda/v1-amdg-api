@@ -1,0 +1,63 @@
+from django.db import models
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+
+User = get_user_model()
+
+class VerificationStatus(models.TextChoices):
+    PENDING = 'pending', 'Pending'
+    VERIFIED = 'verified', 'Verified'
+    REJECTED = 'rejected', 'Rejected'
+
+class RequiresVerificationModel(models.Model):
+    """
+    Abstract model to indicate that an entity requires verification.
+    """
+    
+    verification_status = models.CharField(
+        max_length=20,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.PENDING
+    )
+    verified_updated_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name='verified_%(class)s',
+        null=True,
+        blank=True
+    )
+    
+    class Meta:
+        abstract = True
+        
+    def mark_verified(self, verifier):
+        self.verification_status = VerificationStatus.VERIFIED
+        self.verified_updated_at = timezone.now()
+        self.verified_by = verifier
+        self.save()
+        
+    def mark_rejected(self, verifier):
+        self.verification_status = VerificationStatus.REJECTED
+        self.verified_updated_at = timezone.now()
+        self.verified_by = verifier
+        self.save()
+        
+    def mark_pending(self):
+        self.verification_status = VerificationStatus.PENDING
+        self.verified_updated_at = None
+        self.verified_by = None
+        self.save()
+        
+    @property
+    def is_verified(self):
+        return self.verification_status == VerificationStatus.VERIFIED
+    
+    @property
+    def is_rejected(self):
+        return self.verification_status == VerificationStatus.REJECTED
+    
+    @property
+    def is_pending(self):
+        return self.verification_status == VerificationStatus.PENDING
+    
