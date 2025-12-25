@@ -44,6 +44,8 @@ class Attendee(models.Model):
         default=AttendeeRelationship.SELF
     ) # relationship to the user who created this attendee
     
+    booking = models.ForeignKey('bookings.Booking', on_delete=models.SET_NULL, related_name='attendees', null=True, blank=True) # a booking can have multiple attendees
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     defined_by = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='created_attendees', null=True, blank=True)
@@ -140,7 +142,7 @@ class Attendee(models.Model):
             return False
         # TODO: implement payment logic
         
-    def pricing_context(self, payable):
+    def pricing_context(self):
         '''
         @param payable: An instance of a PayableModel (e.g., ticket, registration fee)
         @return: DiscountContext instance for pricing evaluations
@@ -148,13 +150,12 @@ class Attendee(models.Model):
         return DiscountContext(
             user=self.user,
             event=self.event,
-            payable=payable,
             metadata={
                 "age": self.age,
-                "organisations": list(self.organisations.values_list('organisation_id', flat=True)),
+                "organisations": list(self.organisations.values_list('organisation__title', flat=True)),
                 "staff_roles": list(self.user.event_roles.filter(event=self.event).values_list('role__name', flat=True)) if self.user else [],
                 "full_name": self.full_name,
-                "location": self.location,
+                "location": self.area_from.area_name if self.area_from else None,
             }
         )
         

@@ -13,3 +13,13 @@ def generate_human_readable_id(max_length, prefix, *args):
     unique_part_length = max_length - len(base) - 1  # -1 for hyphen
     unique_part = str(uuid.uuid4()).replace('-', '')[:unique_part_length].upper()
     return f"{base}-{unique_part}"
+
+def generate_alphanumeric_id(length):
+    """
+    Generates a random alphanumeric identifier of the specified length.
+    """
+    import random
+    import string
+
+    characters = string.ascii_uppercase + string.digits
+    return ''.join(random.choices(characters, k=length))

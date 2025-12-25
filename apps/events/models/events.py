@@ -137,3 +137,5 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         from apps.events.models.authorization import EventAuthorizationStatusChoices
         auth = self.latest_authorisation() 
         return auth and auth.status == EventAuthorizationStatusChoices.APPROVED
+    
+

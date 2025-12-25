@@ -6,9 +6,6 @@ from django.contrib.contenttypes.models import ContentType
 
 from decimal import Decimal
 
-from apps.payments.models.discounts import Discount, DiscountType
-from apps.payments.evaluator import discount_applies
-
 class DiscountMixin:
     
     @property
@@ -17,6 +14,8 @@ class DiscountMixin:
         Returns a queryset of Discount objects associated with this instance.
         Assumes a GenericForeignKey relationship.
         """
+        from apps.payments.models.discounts import Discount
+        
         content_type = ContentType.objects.get_for_model(self.__class__)
         return Discount.objects.filter(
             target_type=content_type,
@@ -44,8 +43,29 @@ class DiscountMixin:
         """
         for d in self.discounts.filter(discount_id=discount.discount_id):
             d.delete()
+            
+class PaymentMixin:
+    
+    @property
+    def payments(self, completed_only=True):
+        """
+        Returns a queryset of Payment objects associated with this instance.
+        Assumes a GenericForeignKey relationship.
+        """
+        from apps.payments.models.payments import Payment, PaymentStatusChoices
+        
+        content_type = ContentType.objects.get_for_model(self.__class__)
+        qs = Payment.objects.filter(
+            target_type=content_type,
+            target_id=self.pk,
+        )
+        if completed_only:
+            qs = qs.filter(
+                status=PaymentStatusChoices.COMPLETED
+            )
+        return qs
 
-class PayableModel(models.Model, DiscountMixin):
+class PayableModel(models.Model, DiscountMixin, PaymentMixin):
     """
     Mixin for models that represent a payable monetary value.
     """
@@ -110,6 +130,9 @@ class PayableModel(models.Model, DiscountMixin):
         return f"<PayableModel base_amount={self.base_amount}, percentage_modifier={self.percentage_modifier}>"
     
     def calculate_total_discounts(self, discount_base, context):
+        from apps.payments.models.discounts import DiscountType
+        from apps.payments.evaluator import discount_applies
+        
         percentage_total = Decimal('0.00')
         fixed_total = discount_base.zero
 

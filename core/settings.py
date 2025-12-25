@@ -191,6 +191,7 @@ LOCAL_APPS = [
     "apps.payments.apps.PaymentsConfig",
     "apps.attendee.apps.AttendeeConfig",
     "apps.products.apps.ProductsConfig",
+    "apps.bookings.apps.BookingsConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
