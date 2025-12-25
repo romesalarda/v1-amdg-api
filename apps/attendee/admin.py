@@ -6,7 +6,8 @@ from .models import (
     MedicalCondition, AttendeeMedicalCondition,
     EmergencyContact, FamilyGroup, FamilyAttendee,
     AccessibilityRequirement, AttendeeAccessibilityRequirement,
-    Consent, AttendeeConsent, AttendeeMessage, EventAttendance
+    Consent, AttendeeConsent, AttendeeMessage, EventAttendance,
+    AttendeeOrganisation
 )
 
 
@@ -520,3 +521,21 @@ class EventAttendanceAdmin(admin.ModelAdmin):
         from django.utils import timezone
         queryset.update(check_out_time=timezone.now(), check_out_by=request.user)
     mark_checked_out.short_description = "Mark as checked out"
+
+@admin.register(AttendeeOrganisation)
+class AttendeeOrganisationAdmin(admin.ModelAdmin):
+    list_display = ('attendee', 'organisation', 'added_at')
+    list_filter = ('added_at',)
+    search_fields = ('attendee__first_name', 'attendee__last_name', 'organisation')
+    readonly_fields = ('added_at',)
+    autocomplete_fields = ('attendee',)
+    
+    fieldsets = (
+        ('Organisation Information', {
+            'fields': ('attendee', 'organisation', 'role')
+        }),
+        ('Metadata', {
+            'fields': ('added_at',),
+            'classes': ('collapse',)
+        }),
+    )

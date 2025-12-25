@@ -3,6 +3,7 @@ from django.utils.translation import gettext_lazy as _
 from django_countries.fields import CountryField
 from django.utils.text import slugify
 from django.core import validators
+from django.core.exceptions import ValidationError
 
 import uuid
 
@@ -146,6 +147,13 @@ class AreaLocation (models.Model):
 
     class Meta:
         unique_together = ("area_name", "chapter")
+        constraints = [
+            models.UniqueConstraint(fields=['area_code', 'chapter'], name='unique_area_code_per_chapter')
+        ]
+        
+    def clean(self):
+        if self.chapter is None:
+            raise ValidationError("Chapter must be set for AreaLocation.")
         
     def save(self, *args, **kwargs):
         if self.area_code is None:

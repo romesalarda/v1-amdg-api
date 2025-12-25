@@ -5,6 +5,9 @@ def valid_date_of_birth(date_of_birth, raise_exception=True):
     and is a reasonable date (e.g., not before 1900-01-01).
     '''
     from datetime import date
+    if not date_of_birth:
+        return False
+    
     if date_of_birth > date.today():
         if raise_exception:
             raise ValueError("Date of birth cannot be in the future.")

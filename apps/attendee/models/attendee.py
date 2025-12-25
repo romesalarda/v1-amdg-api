@@ -35,7 +35,7 @@ class Attendee(models.Model):
     email = models.EmailField(blank=True, null=True, validators=[EmailValidator()])
     phone_number = models.CharField(max_length=20, null=True, blank=True, validators=[PhoneNumberValidator()])
     
-    date_of_birth = models.DateField(null=True, blank=True)
+    date_of_birth = models.DateField(null=True)
     gender = models.CharField(max_length=50, null=True, blank=True)
     
     relationship_to_user = models.CharField(
@@ -62,24 +62,25 @@ class Attendee(models.Model):
         
     def save(self, *args, **kwargs):
         if not self.attendee_display_id:
-            self.attendee_display_id = display.generate_human_readable_id(max_length=20, prefix="ATT", args=(self.event.display_code[:5],))
-        
+            self.attendee_display_id = display.generate_human_readable_id(20, "ATT", self.event.display_code[:5])
+        self.clean()
         super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.get_full_name()} ({self.attendee_display_id})"
+        return f"{self.full_name} ({self.attendee_display_id})"
     
     def __repr__(self):
         return f"<Attendee {self.attendee_display_id}: {self.full_name}>"
     
-    def clean(self):
-        super().clean()
-        
+    def clean(self):        
         if self.relationship_to_user == AttendeeRelationship.SELF and self.user is None:
             raise ValidationError("Attendees with 'self' relationship must be linked to a user account.")
         
         self.first_name = self.first_name.strip().title()
         self.last_name = self.last_name.strip().title()
+        
+        if self.date_of_birth is None:
+            raise ValidationError("Date of birth is required for attendee.")
         
         if not date_validation.valid_date_of_birth(self.date_of_birth, raise_exception=False):
             raise ValidationError("Date of birth cannot be in the future or unreasonably far in the past.")
