@@ -130,6 +130,14 @@ class Booking(models.Model):
             raise ValidationError({
                 'booking_reference': 'Booking reference cannot be empty.'
             })
+        
+        # Validate that all attendees belong to the same event as the booking
+        if self.pk and self.event:
+            mismatched_attendees = self.attendees.exclude(event=self.event)
+            if mismatched_attendees.exists():
+                raise ValidationError({
+                    'event': f'{mismatched_attendees.count()} attendee(s) belong to a different event than this booking.'
+                })
     
     def save(self, *args, **kwargs):
         self.clean()

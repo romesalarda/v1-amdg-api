@@ -34,10 +34,10 @@ class DiscountRuleEvaluator:
         return context.user and context.metadata.get("is_event_staff", False)
 
     def is_age_lt(self, rule, context):
-        return context.user and context.metadata.get("age", None) is not None and context.metadata.get("age") < int(rule.value)
+        return context.metadata.get("age", None) is not None and context.metadata.get("age") < int(rule.value)
     
     def is_age_gt(self, rule, context):
-        return context.user and context.metadata.get("age", None) is not None and context.metadata.get("age") > int(rule.value)
+        return context.metadata.get("age", None) is not None and context.metadata.get("age") > int(rule.value)
 
     def value_matches(self, rule, context):
         return context.metadata.get("code") == rule.value
@@ -49,7 +49,7 @@ class DiscountRuleEvaluator:
         return context.metadata.get("staff_roles") and rule.value in context.metadata.get("staff_roles", [])
         
     def name_matches(self, rule, context):
-        return context.user and rule.value.strip().lower() in context.metadata.get("full_name", "").strip().lower()
+        return rule.value.strip().lower() in context.metadata.get("full_name", "").strip().lower()
     
     def location_matches(self, rule, context):
         return context.metadata.get("location").lower() == rule.value.lower()

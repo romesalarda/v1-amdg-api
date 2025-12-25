@@ -119,7 +119,8 @@ class Payment(PayableModel):
                 )
 
             if (
-                self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
+                self.method
+                and self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
                 and not self.bank_transfer_reference
             ):
                 self.bank_transfer_reference = generate_alphanumeric_id(MAX_LENGTH_BANK_REF)

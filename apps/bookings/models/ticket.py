@@ -96,6 +96,14 @@ class Ticket(models.Model):
         on_delete=models.CASCADE,
         related_name='tickets'
     )
+    package = models.ForeignKey(
+        'bookings.BookingPackage',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tickets',
+        help_text='The booking package used for pricing this ticket'
+    )
     issued_at = models.DateTimeField(auto_now_add=True)
     payment = models.ForeignKey(
         'payments.Payment',
@@ -166,6 +174,13 @@ class Ticket(models.Model):
             if self.attendee.event_id != self.ticket_type.event_id:
                 raise ValidationError({
                     'attendee': 'Attendee must belong to the same event as the ticket type.'
+                })
+        
+        # Validate that package (if provided) matches ticket_type
+        if self.package and self.ticket_type:
+            if self.package.ticket_type_id != self.ticket_type.id:
+                raise ValidationError({
+                    'package': 'Package must be for the same ticket type as this ticket.'
                 })
         
     def use_ticket(self):

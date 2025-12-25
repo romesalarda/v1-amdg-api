@@ -1,5 +1,5 @@
 from django.db import models
-from djmoney.models.fields import MoneyField
+from djmoney.models.fields import MoneyField, Money
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -114,7 +114,8 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         )
 
         total = price - discount
-        return max(total, self.base_amount.zero)
+        zero = Money(0, price.currency)
+        return max(total, zero)
 
 
     def is_free(self):
@@ -132,9 +133,10 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
     def calculate_total_discounts(self, discount_base, context):
         from apps.payments.models.discounts import DiscountType
         from apps.payments.evaluator import discount_applies
+        from djmoney.money import Money
         
         percentage_total = Decimal('0.00')
-        fixed_total = discount_base.zero
+        fixed_total = Money(0, discount_base.currency)
 
         for d in self.discounts:
             if not discount_applies(d, context):

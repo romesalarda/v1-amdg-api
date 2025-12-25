@@ -72,6 +72,10 @@ class Discount(models.Model):
             models.Index(fields=['target_type', 'target_id']),
         ]
         ordering = ['-created_at']
+        
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
     
     def clean(self):
         super().clean()
@@ -87,6 +91,9 @@ class Discount(models.Model):
 
         if self.discount_type == DiscountType.FIXED and self.percentage:
             raise ValidationError("Fixed discount must not define percentage.")
+        
+        if self.target_id is None or self.target_type is None:
+            raise ValidationError("Discount must have a valid target.")
 
     def __str__(self):
         if self.discount_type == DiscountType.PERCENTAGE:

@@ -29,6 +29,7 @@ class BaseAttendeePersonalInfoModel(RequiresVerificationModel):
     attendee = models.ForeignKey('attendee.Attendee', on_delete=models.CASCADE, related_name='%(class)s')
     
     details = models.TextField(null=True, blank=True)  # additional details if any
+    notes = models.TextField(null=True, blank=True)  # additional notes or important information
     added_at = models.DateTimeField(auto_now_add=True) # time when this requirement was added
     added_by = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, related_name='added_attendee_%(class)s', null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)

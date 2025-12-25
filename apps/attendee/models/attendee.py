@@ -113,6 +113,26 @@ class Attendee(models.Model):
         return self.user and self.user.event_staff_roles.filter(event=self.event).exists()
     
     @property
+    def medical_conditions(self):
+        from apps.attendee.models.personal.medical import AttendeeMedicalCondition
+        return AttendeeMedicalCondition.objects.filter(attendee=self)
+    
+    @property
+    def dietary_requirements(self):
+        from apps.attendee.models.personal.dietary import AttendeeDietaryRequirement
+        return AttendeeDietaryRequirement.objects.filter(attendee=self)
+    
+    @property
+    def accessibility_requirements(self):
+        from apps.attendee.models.personal.accessibility import AttendeeAccessibilityRequirement
+        return AttendeeAccessibilityRequirement.objects.filter(attendee=self)   
+    
+    @property
+    def consents(self):
+        from apps.attendee.models.personal.consent import AttendeeConsent
+        return AttendeeConsent.objects.filter(attendee=self)
+    
+    @property
     def self_registered(self): # means that this attendee can access dashboard, make decisions, etc.
         '''
         Determine if the attendee was self-registered (i.e., relationship is 'self').
