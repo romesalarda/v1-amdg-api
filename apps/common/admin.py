@@ -43,7 +43,7 @@ class ResourceAdmin(admin.ModelAdmin):
             'fields': ('name', 'description', 'resource_type', 'public')
         }),
         ('Target', {
-            'fields': ('target_type', 'target_id')
+            'fields': ('target_type', 'target_id', 'protected')
         }),
         ('Resource Content', {
             'fields': ('file', 'link', 'image')

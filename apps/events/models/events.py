@@ -121,6 +121,10 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         if self.display_identifier is None:
             self.display_identifier = str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]
             
+        if self.created_by is None:
+            raise ValidationError("Event must have a created_by user.")
+        
+            
     def latest_authorisation(self):
         return (
             self.authorisations

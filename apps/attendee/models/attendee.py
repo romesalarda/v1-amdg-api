@@ -9,6 +9,7 @@ from datetime import date
 import uuid
 
 from apps.locations.models import AreaLocation
+from apps.payments.evaluator import DiscountContext
 
 User = get_user_model()
 
@@ -102,6 +103,13 @@ class Attendee(models.Model):
         return None
     
     @property
+    def is_event_staff(self):
+        '''
+        Determine if the attendee is event staff based on linked user account.
+        '''
+        return self.user and self.user.event_staff_roles.filter(event=self.event).exists()
+    
+    @property
     def self_registered(self): # means that this attendee can access dashboard, make decisions, etc.
         '''
         Determine if the attendee was self-registered (i.e., relationship is 'self').
@@ -130,6 +138,41 @@ class Attendee(models.Model):
         if not self.user: # only users with linked accounts can have payments
             return False
         # TODO: implement payment logic
+        
+    def pricing_context(self, payable):
+        '''
+        @param payable: An instance of a PayableModel (e.g., ticket, registration fee)
+        @return: DiscountContext instance for pricing evaluations
+        '''
+        return DiscountContext(
+            user=self.user,
+            event=self.event,
+            payable=payable,
+            metadata={
+                "age": self.age,
+                "organisations": list(self.organisations.values_list('organisation_id', flat=True)),
+                "staff_roles": list(self.user.event_roles.filter(event=self.event).values_list('role__name', flat=True)) if self.user else [],
+                "full_name": self.full_name,
+                "location": self.location,
+            }
+        )
+        
+    def add_organisation(self, organisation):
+        '''
+        Link an organisation to this attendee.
+        '''
+        from apps.attendee.models import AttendeeOrganisation
+        link, created = AttendeeOrganisation.objects.get_or_create(
+            attendee=self,
+            organisation=organisation
+        )
+        return link
+    
+    def is_part_of_organisation(self, organisation):
+        '''
+        Check if the attendee is linked to a specific organisation.
+        '''
+        return self.organisations.filter(organisation=organisation).exists()
     
     def mark_checked_in(self, event, checked_in_by=None, raise_if_already_checked_in=False):
         

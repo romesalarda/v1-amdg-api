@@ -132,11 +132,11 @@ class InvolvedEventOrganisationAdmin(admin.ModelAdmin):
     )
 
 
-class EventSponsorPackageInline(admin.TabularInline):
+class EventSponsorPackageInline(admin.StackedInline):
     model = EventSponsorPackage
     extra = 1
     readonly_fields = ('added_at', 'updated_at')
-    fields = ('event', 'package_name', 'package_description', 'price', 'currency')
+    fields = ('event', 'package_name', 'package_description', 'base_amount', 'percentage_modifier', 'added_at', 'updated_at')
 
 
 @admin.register(EventSponsor)
@@ -161,8 +161,8 @@ class EventSponsorAdmin(admin.ModelAdmin):
 
 @admin.register(EventSponsorPackage)
 class EventSponsorPackageAdmin(admin.ModelAdmin):
-    list_display = ('package_name', 'sponsor', 'event', 'amount', 'added_at')
-    list_filter = ('added_at', 'updated_at', 'amount')
+    list_display = ('package_name', 'sponsor', 'event', 'base_amount', 'added_at')
+    list_filter = ('added_at', 'updated_at', 'base_amount')
     search_fields = ('package_name', 'sponsor__name', 'event__title', 'package_description')
     readonly_fields = ('added_at', 'updated_at')
     autocomplete_fields = ('sponsor', 'event')
@@ -172,7 +172,7 @@ class EventSponsorPackageAdmin(admin.ModelAdmin):
             'fields': ('package_name', 'package_description', 'sponsor', 'event')
         }),
         ('Payment Details', {
-            'fields': ('amount',)
+            'fields': ('base_amount', 'percentage_modifier')
         }),
         ('Metadata', {
             'fields': ('added_at', 'updated_at'),

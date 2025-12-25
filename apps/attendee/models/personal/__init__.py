@@ -5,6 +5,7 @@ from .medical import AttendeeMedicalCondition, MedicalCondition
 from .emergency import EmergencyContact
 from .consent import AttendeeConsent, Consent
 from .attendance import EventAttendance
+from .oraganisation import AttendeeOrganisation
 
 __all__ = [
     'BaseAttendeePersonalInfoModel',
@@ -19,4 +20,5 @@ __all__ = [
     'Consent',
     'AttendeeConsent',
     'EventAttendance',
+    'AttendeeOrganisation',
 ]

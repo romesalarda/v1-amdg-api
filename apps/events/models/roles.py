@@ -40,3 +40,12 @@ class EventRoleAssignment(models.Model):
     
     assigned_at = models.DateTimeField(auto_now_add=True)
     assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='event_role_assigned_by')
+    
+    class Meta:
+        unique_together = ('event', 'user', 'role')
+        
+    def __str__(self):
+        return f"{self.user.username} - {self.role.name} for {self.event.display_identifier}"
+    
+    def __repr__(self):
+        return f"<EventRoleAssignment user={self.user.username}, role={self.role.name}, event={self.event.display_identifier}>"
