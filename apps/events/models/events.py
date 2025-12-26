@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
+from django.core.validators import MinLengthValidator, MaxLengthValidator
 
 from django.contrib.contenttypes.models import ContentType
 from timezone_field import TimeZoneField
@@ -57,8 +58,15 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     
     # identifier fields
     event_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True) # uuid for URLS
-    display_code = models.CharField(max_length=10, unique=True) # human-friendly unique code
-    display_identifier = models.CharField(max_length=20, unique=True) # short identifier for display
+    display_code = models.CharField(max_length=10, unique=True, validators=[
+        MinLengthValidator(3),
+        MaxLengthValidator(10)
+    ]) # human-friendly unique code
+    display_identifier = models.CharField(max_length=20, unique=True, blank=True,
+                                          validators=[
+                                                MinLengthValidator(6),
+                                                MaxLengthValidator(20)
+                                              ]) # short identifier for display
     
     # admin fields
     status = models.CharField(max_length=20, choices=EventStatusChoices.choices, default=EventStatusChoices.DRAFTING)
@@ -114,12 +122,16 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     def clean(self):
         if self.start_datetime >= self.end_datetime:
             raise ValidationError("Event start_datetime must be before end_datetime.")
+        
+        if self.start_datetime == self.end_datetime:
+            raise ValidationError("Event start_datetime and end_datetime cannot be the same.")
+        
         if self.title:
             self.title = self.title.strip()
             self.url_safe_title = slugify(self.title)   
             
-        if self.display_identifier is None:
-            self.display_identifier = str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]
+        if self.display_identifier is None or self.display_identifier == '':
+            self.display_identifier = str(str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]).upper()
             
         if self.created_by is None:
             raise ValidationError("Event must have a created_by user.")

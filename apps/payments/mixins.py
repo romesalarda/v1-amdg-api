@@ -100,6 +100,9 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
 
     @property
     def modified_amount(self):
+        if not self.base_amount or self.percentage_modifier == 0:
+            return self.base_amount
+        
         return self.base_amount * (
             Decimal('1.00') + self.percentage_modifier / Decimal('100')
         )

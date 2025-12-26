@@ -68,7 +68,7 @@ class AttendeeAdmin(admin.ModelAdmin):
     list_display = ('attendee_display_id', 'full_name', 'event', 'email', 'phone_number', 'age', 'relationship_to_user', 'created_at')
     list_filter = ('relationship_to_user', 'gender', 'event', 'created_at')
     search_fields = ('attendee_display_id', 'first_name', 'last_name', 'email', 'phone_number')
-    readonly_fields = ('attendee_id', 'created_at', 'updated_at', 'age', 'is_minor')
+    readonly_fields = ('attendee_id', 'created_at', 'updated_at', 'age', 'is_minor', 'deleted_at', 'deleted_by')
     autocomplete_fields = ('user', 'event')
     date_hierarchy = 'created_at'
     
@@ -100,6 +100,10 @@ class AttendeeAdmin(admin.ModelAdmin):
         }),
         ('Metadata', {
             'fields': ('defined_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+        ('Soft Delete', {
+            'fields': ('deleted_at', 'deleted_by'),
             'classes': ('collapse',)
         }),
     )

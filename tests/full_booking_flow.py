@@ -210,7 +210,7 @@ class FullBookingFlowIntegrationTest(TestCase):
             date_of_birth=date(1980, 5, 20),  # 45 years old
             event=self.event,
             booking=booking,
-            relationship_to_user=AttendeeRelationship.OTHER,
+            relationship_to_user=AttendeeRelationship.PARRENT,
             defined_by=self.sam
         )
         
@@ -222,7 +222,7 @@ class FullBookingFlowIntegrationTest(TestCase):
             date_of_birth=date(1977, 8, 10),  # 48 years old
             event=self.event,
             booking=booking,
-            relationship_to_user=AttendeeRelationship.OTHER,
+            relationship_to_user=AttendeeRelationship.PARRENT,
             defined_by=self.sam
         )
         
@@ -233,7 +233,7 @@ class FullBookingFlowIntegrationTest(TestCase):
             date_of_birth=date(2011, 11, 5),  # 14 years old
             event=self.event,
             booking=booking,
-            relationship_to_user=AttendeeRelationship.CHILD,
+            relationship_to_user=AttendeeRelationship.SIBLING,
             defined_by=self.sam
         )
         
@@ -244,7 +244,7 @@ class FullBookingFlowIntegrationTest(TestCase):
             date_of_birth=date(2023, 6, 25),  # 2 years old
             event=self.event,
             booking=booking,
-            relationship_to_user=AttendeeRelationship.CHILD,
+            relationship_to_user=AttendeeRelationship.SIBLING,
             defined_by=self.sam
         )
         
@@ -357,7 +357,7 @@ class FullBookingFlowIntegrationTest(TestCase):
         # Sam: Early bird £10, 10% staff discount = £9
         sam_context = sam_attendee.pricing_context()
         # Manually set event staff metadata for Sam
-        sam_context.metadata['is_event_staff'] = True
+        sam_context.metadata['is_event_staff'] = True # TODO: use staff object
         
         sam_price = self.early_bird_package.total_amount_for_context(sam_context)
         expected_sam_price = Money('9.00', 'GBP')  # £10 - 10% = £9
@@ -407,7 +407,7 @@ class FullBookingFlowIntegrationTest(TestCase):
                 }
             }
         )
-        
+                
         # Link payment to booking
         payment.target = booking
         payment.save()

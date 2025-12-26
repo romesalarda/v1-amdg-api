@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.core.validators import EmailValidator
 from django.core.exceptions import ValidationError
+from django.contrib.contenttypes.models import ContentType
 from core.utils.validators import PhoneNumberValidator
 from core.utils import dates as date_validation, display 
 
@@ -10,6 +11,7 @@ import uuid
 
 from apps.locations.models import AreaLocation
 from apps.payments.evaluator import DiscountContext
+from apps.common.models.softdelete import SoftDeleteModel
 
 User = get_user_model()
 
@@ -18,9 +20,11 @@ class AttendeeRelationship(models.TextChoices):
     SPOUSE = 'spouse', 'Spouse'
     CHILD = 'child', 'Child'
     FRIEND = 'friend', 'Friend'
+    PARRENT = 'parent', 'Parent'
+    SIBLING = 'sibling', 'Sibling'
     OTHER = 'other', 'Other'
 
-class Attendee(models.Model):
+class Attendee(SoftDeleteModel):
     
     attendee_id = models.UUIDField(default=uuid.uuid4, editable=False) # url-safe unique identifier
     attendee_display_id = models.CharField(max_length=100, unique=True, blank=True)  # human-readable unique identifier
@@ -113,6 +117,15 @@ class Attendee(models.Model):
         return self.user and self.user.event_staff_roles.filter(event=self.event).exists()
     
     @property
+    def staff_role_names(self):
+        '''
+        Get a list of staff roles the attendee has for the event.
+        '''
+        if self.user:
+            return list(self.user.event_staff_roles.filter(event=self.event).values_list('role__name', flat=True))
+        return []
+    
+    @property
     def medical_conditions(self):
         from apps.attendee.models.personal.medical import AttendeeMedicalCondition
         return AttendeeMedicalCondition.objects.filter(attendee=self)
@@ -138,6 +151,37 @@ class Attendee(models.Model):
         Determine if the attendee was self-registered (i.e., relationship is 'self').
         '''
         return self.relationship_to_user == AttendeeRelationship.SELF and self.user is not None
+    
+    @property
+    def is_cancelled(self):
+        '''
+        Determine if the attendee has been marked as cancelled.
+        '''
+        return self.actions.filter(action=AttendeeActionChoices.CANCELLED).exists()
+    
+    @property
+    def is_registered(self):
+        '''
+        Determine if the attendee has been marked as registered.
+        '''
+        return self.actions.filter(action=AttendeeActionChoices.REGISTERED).exists()
+    
+    def get_outstanding_payments(self):
+        '''
+        Retrieve a queryset of outstanding payments for this attendee.
+        '''
+        if not self.user:
+            return Payment.objects.none()
+        
+        from apps.payments.models.payments import Payment, PaymentStatusChoices
+
+        booking_oustanding = Payment.objects.filter(
+            target_type=ContentType.objects.get_for_model(self.booking.__class__),
+            target_id=self.booking.pk,
+            status=PaymentStatusChoices.PENDING
+        )
+        
+        return booking_oustanding
     
     def latest_action(self):
         '''
@@ -166,14 +210,15 @@ class Attendee(models.Model):
         '''
         @param payable: An instance of a PayableModel (e.g., ticket, registration fee)
         @return: DiscountContext instance for pricing evaluations
-        '''
+        '''        
         return DiscountContext(
             user=self.user,
             event=self.event,
             metadata={
                 "age": self.age,
                 "organisations": list(self.organisations.values_list('organisation__title', flat=True)),
-                "staff_roles": list(self.user.event_roles.filter(event=self.event).values_list('role__name', flat=True)) if self.user else [],
+                "staff_roles": self.staff_role_names,
+                "is_event_staff": self.is_event_staff,
                 "full_name": self.full_name,
                 "location": self.area_from.area_name if self.area_from else None,
             }
@@ -196,9 +241,10 @@ class Attendee(models.Model):
         '''
         return self.organisations.filter(organisation=organisation).exists()
     
-    def mark_checked_in(self, event, checked_in_by=None, raise_if_already_checked_in=False):
+    def mark_checked_in(self, event, checked_in_by, raise_if_already_checked_in=False):
         
         from apps.attendee.models.personal.attendance import EventAttendance
+        from apps.attendee.models import AttendeeAction, AttendeeActionChoices
         '''
         Mark the attendee as checked in for a specific event.
         '''
@@ -212,6 +258,12 @@ class Attendee(models.Model):
             attendance.checked_in_at = models.DateTimeField(auto_now=True)
             attendance.save()
             
+        AttendeeAction.objects.create(
+            action=AttendeeActionChoices.CHECKED_IN,
+            attendee=self,
+            performed_by=checked_in_by
+        )
+            
         if raise_if_already_checked_in and not created and attendance.is_checked_in:
             raise ValidationError("Attendee is already checked in for this event.")
         return attendance
@@ -219,6 +271,8 @@ class Attendee(models.Model):
     def mark_checked_out(self, event, checked_out_by=None, raise_if_not_checked_in=False):
         
         from apps.attendee.models.personal.attendance import EventAttendance
+        from apps.attendee.models import AttendeeAction, AttendeeActionChoices
+
         '''
         Mark the attendee as checked out for a specific event.
         '''
@@ -227,11 +281,42 @@ class Attendee(models.Model):
             attendance.checked_out_by = checked_out_by
             attendance.checked_out_at = models.DateTimeField(auto_now=True)
             attendance.save()
+            
+            AttendeeAction.objects.create(
+                action=AttendeeActionChoices.CHECKED_IN,
+                attendee=self,
+                performed_by=checked_out_by
+            )   
+        
             return attendance
+
         except EventAttendance.DoesNotExist:
             if raise_if_not_checked_in:
                 raise ValidationError("Attendee is not checked in for this event.")
             return None
+        
+    def mark_registered(self):
+        '''
+        Mark the attendee as registered.
+        '''
+        from apps.attendee.models import AttendeeAction, AttendeeActionChoices
+        AttendeeAction.objects.create(
+            action=AttendeeActionChoices.REGISTERED,
+            attendee=self,
+            performed_by=self.defined_by
+        )
+        
+    def mark_cancelled(self, cancelled_by, notes=None):
+        '''
+        Mark the attendee as cancelled.
+        '''
+        from apps.attendee.models import AttendeeAction, AttendeeActionChoices
+        AttendeeAction.objects.create(
+            action=AttendeeActionChoices.CANCELLED,
+            attendee=self,
+            performed_by=cancelled_by,
+            notes=notes
+        )
     
 class AttendeeGuardian(models.Model):
     
