@@ -1,0 +1,68 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+.eggs
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Docker
+docker-compose*.yml
+Dockerfile
+.dockerignore
+
+# Database
+*.sqlite3
+db.sqlite3
+
+# Static/Media (will be served from S3)
+/static/
+/staticfiles/
+/media/
+
+# Logs
+*.log
+logs/
+
+# Documentation
+README.md
+QUICKSTART.md
+*.md
+
+# Tests
+.coverage
+htmlcov/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup
+*.bak
+*.backup

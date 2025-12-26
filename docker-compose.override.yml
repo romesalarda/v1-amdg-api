@@ -1,0 +1,40 @@
+# Local development docker-compose override
+# This file is automatically used by docker-compose for local development
+# It adds build contexts so you can develop without pushing to ECR
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: amdg-local:latest
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"  # Expose for local access
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: amdg-local:latest
+    env_file:
+      - .env
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: amdg-local:latest
+    env_file:
+      - .env
+
+  # Expose Postgres for local tools (optional)
+  db:
+    ports:
+      - "5432:5432"
+
+  # Expose Redis for local tools (optional)
+  redis:
+    ports:
+      - "6379:6379"

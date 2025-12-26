@@ -1,0 +1,118 @@
+# Production docker-compose.yml
+# This file is used on EC2 for production deployments
+# Images are ALWAYS pulled from ECR - never built locally
+
+services:
+  # Redis - Broker for Celery and Channel Layer for Django Channels
+  redis:
+    image: redis:7-alpine
+    container_name: redis_server
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-amdg_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Django Web Application (HTTP + WebSockets via Uvicorn)
+  web:
+    image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-2.amazonaws.com}/amdg:${IMAGE_TAG:-latest}
+    container_name: django_app
+    command: uvicorn core.asgi:application --host 0.0.0.0 --port 8000 --log-level info
+    expose:
+      - "8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    volumes:
+      - ./logs:/var/log/django
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings
+      # All other env vars are set via shell environment on EC2
+      # Never use env_file in production - use AWS Systems Manager Parameter Store
+
+  # Celery Worker - Background task execution
+  celery_worker:
+    image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-2.amazonaws.com}/amdg:${IMAGE_TAG:-latest}
+    container_name: celery_worker
+    command: celery -A core worker --loglevel=info --concurrency=2
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A core inspect ping -d celery@$${HOSTNAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Celery Beat - Scheduled task dispatcher
+  celery_beat:
+    image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-2.amazonaws.com}/amdg:${IMAGE_TAG:-latest}
+    container_name: celery_beat
+    command: celery -A core beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:latest
+    container_name: nginx_server
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - /etc/letsencrypt/live/rsalarda.works/fullchain.pem:/etc/letsencrypt/live/rsalarda.works/fullchain.pem:ro
+      - /etc/letsencrypt/live/rsalarda.works/privkey.pem:/etc/letsencrypt/live/rsalarda.works/privkey.pem:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
