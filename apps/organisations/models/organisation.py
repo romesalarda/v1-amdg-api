@@ -11,6 +11,8 @@ import uuid
 
 User = get_user_model()
 
+MAX_GENERATED_CODE_ATTEMPTS = 5
+
 class Organisation(models.Model):
     
     title = models.CharField(max_length=255, unique=True)
@@ -197,11 +199,15 @@ class OrganisationAcceptanceCode(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.code:
-            while True:
+            attempts = 0
+            while attempts < MAX_GENERATED_CODE_ATTEMPTS:
                 generated_code = generate_alphanumeric_id(length=10).upper()
                 if not OrganisationAcceptanceCode.objects.filter(code=generated_code).exists():
                     self.code = generated_code
                     break
+                attempts += 1
+            if not self.code:
+                raise ValidationError("Could not generate a unique acceptance code. Please try again.")
 
         if self.expires_at and self.expires_at < timezone.now():
             self.is_active = False
