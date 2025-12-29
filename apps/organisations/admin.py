@@ -2,7 +2,8 @@ from django.contrib import admin
 from django.utils.html import format_html
 from .models import (
     Organisation, OrganisationContact, OrganisationControl, Leader,
-    InvolvedEventOrganisation, EventSponsor, EventSponsorPackage
+    InvolvedEventOrganisation, EventSponsor, EventSponsorPackage,
+    UserOrganisationMembership, OrganisationInvite, OrganisationAcceptanceCode
 )
 
 
@@ -179,3 +180,89 @@ class EventSponsorPackageAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(UserOrganisationMembership)
+class UserOrganisationMembershipAdmin(admin.ModelAdmin):
+    list_display = ('user', 'organisation', 'verified_at', 'added_by', 'added_at')
+    list_filter = ('added_at', 'verified_at', 'organisation')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name', 'organisation__title')
+    readonly_fields = ('added_at', 'verified_at', 'requires_verification')
+    autocomplete_fields = ('organisation', 'user', 'added_by')
+    
+    fieldsets = (
+        ('Membership Information', {
+            'fields': ('organisation', 'user', 'added_by')
+        }),
+        ('Verification', {
+            'fields': ('verified_at', 'requires_verification')
+        }),
+        ('Metadata', {
+            'fields': ('added_at',),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def requires_verification(self, obj):
+        return obj.requires_verification
+    requires_verification.short_description = 'Requires Verification'
+    requires_verification.boolean = True
+
+
+@admin.register(OrganisationInvite)
+class OrganisationInviteAdmin(admin.ModelAdmin):
+    list_display = ('id', 'organisation', 'target_user', 'invited_by', 'accepted', 'is_valid_status', 'added_at', 'expires_at')
+    list_filter = ('accepted', 'is_active', 'added_at', 'accepted_at', 'expires_at')
+    search_fields = ('organisation__title', 'target_user__email', 'target_user__first_name', 'target_user__last_name')
+    readonly_fields = ('id', 'added_at', 'accepted_at', 'is_valid_status')
+    autocomplete_fields = ('organisation', 'target_user', 'invited_by')
+    
+    fieldsets = (
+        ('Invite Information', {
+            'fields': ('id', 'organisation', 'target_user', 'invited_by')
+        }),
+        ('Status', {
+            'fields': ('accepted', 'accepted_at', 'is_active', 'is_valid_status', 'expires_at')
+        }),
+        ('Metadata', {
+            'fields': ('added_at',),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def is_valid_status(self, obj):
+        return obj.is_valid
+    is_valid_status.short_description = 'Is Valid'
+    is_valid_status.boolean = True
+
+
+@admin.register(OrganisationAcceptanceCode)
+class OrganisationAcceptanceCodeAdmin(admin.ModelAdmin):
+    list_display = ('code', 'organisation', 'uses', 'max_uses', 'is_active', 'is_valid_status', 'expires_at', 'added_at')
+    list_filter = ('is_active', 'added_at', 'expires_at')
+    search_fields = ('code', 'organisation__title')
+    readonly_fields = ('added_at', 'uses', 'is_valid_status', 'is_single_use_display')
+    autocomplete_fields = ('organisation', 'added_by')
+    
+    fieldsets = (
+        ('Code Information', {
+            'fields': ('code', 'organisation', 'added_by')
+        }),
+        ('Usage & Status', {
+            'fields': ('uses', 'max_uses', 'is_single_use_display', 'is_active', 'is_valid_status', 'expires_at')
+        }),
+        ('Metadata', {
+            'fields': ('added_at',),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def is_valid_status(self, obj):
+        return obj.is_valid
+    is_valid_status.short_description = 'Is Valid'
+    is_valid_status.boolean = True
+    
+    def is_single_use_display(self, obj):
+        return obj.is_single_use
+    is_single_use_display.short_description = 'Single Use'
+    is_single_use_display.boolean = True

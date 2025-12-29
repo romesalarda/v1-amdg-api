@@ -91,21 +91,16 @@ class UserOrganisationMembership(models.Model): # adminregister
         self.verified_at = timezone.now()
         self.save()
 
-    def verify_with_code(self, code: str):
+    def verify_with_code(self, acceptance_code: 'OrganisationAcceptanceCode'):
         '''
         verify associated membership using an acceptance code.
         
         :param self: Description
         :param code: Acceptance code to verify membership
-        :type code: str
+        :type code: OrganisationAcceptanceCode
         '''
         if not self.organisation.required_acceptance_code:
             raise ValidationError("This organisation does not require an acceptance code for verification.")
-        
-        try:
-            acceptance_code = OrganisationAcceptanceCode.objects.get(organisation=self.organisation, code=code)
-        except OrganisationAcceptanceCode.DoesNotExist:
-            raise ValidationError("Invalid acceptance code.")
         
         if not acceptance_code.is_valid:
             raise ValidationError("Acceptance code is not valid.")
@@ -201,8 +196,6 @@ class OrganisationAcceptanceCode(models.Model):
         return f"<OrganisationAcceptanceCode organisation={self.organisation.title} code={self.code} uses={self.uses}/{self.max_uses} active={self.is_active}>"
     
     def save(self, *args, **kwargs):
-        self.clean()
-
         if not self.code:
             while True:
                 generated_code = generate_alphanumeric_id(length=10).upper()
@@ -249,9 +242,7 @@ class OrganisationAcceptanceCode(models.Model):
         
         if self.expires_at and self.expires_at < timezone.now():
             self.is_active = False
-            self.save()
             raise ValidationError("Acceptance code has expired.")
-        
         self.uses += 1
         
         if self.uses >= self.max_uses:
