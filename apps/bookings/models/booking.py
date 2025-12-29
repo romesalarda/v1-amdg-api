@@ -125,7 +125,6 @@ class Booking(models.Model):
         return f"<Booking id={self.id} reference={self.booking_reference} user={self.made_by}>"
     
     def clean(self):
-        super().clean()
         if not self.booking_reference or not self.booking_reference.strip():
             raise ValidationError({
                 'booking_reference': 'Booking reference cannot be empty.'

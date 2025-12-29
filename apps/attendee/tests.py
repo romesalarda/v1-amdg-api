@@ -229,6 +229,472 @@ class AttendeeModelTest(TestCase):
         str_repr = str(attendee)
         self.assertIn('String Test', str_repr)
         self.assertIn(attendee.attendee_display_id, str_repr)
+    
+    def test_attendee_date_of_birth_required(self):
+        """Test that date_of_birth is required"""
+        attendee = Attendee(
+            first_name='No',
+            last_name='Birthday',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=None
+        )
+        
+        with self.assertRaises(ValidationError):
+            attendee.clean()
+    
+    def test_attendee_future_date_of_birth_invalid(self):
+        """Test that future date of birth is invalid"""
+        future_date = date.today() + timedelta(days=365)
+        attendee = Attendee(
+            first_name='Future',
+            last_name='Baby',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=future_date
+        )
+        
+        with self.assertRaises(ValidationError):
+            attendee.clean()
+    
+    def test_is_event_staff_property(self):
+        """Test is_event_staff property"""
+        from apps.events.models import EventStaff
+        
+        # Create attendee with staff role
+        EventStaff.objects.create(
+            user=self.user,
+            event=self.event,
+            assigned_by=self.user
+        )
+        
+        attendee = Attendee.objects.create(
+            first_name='Staff',
+            last_name='Member',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        self.assertTrue(attendee.is_event_staff)
+        
+        # Test non-staff attendee
+        non_staff_user = User.objects.create_user(
+            username='nonstaff',
+            email='nonstaff@example.com',
+            password='testpass123'
+        )
+        
+        non_staff_attendee = Attendee.objects.create(
+            first_name='Regular',
+            last_name='Attendee',
+            event=self.event,
+            user=non_staff_user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=non_staff_user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        self.assertFalse(non_staff_attendee.is_event_staff)
+    
+    def test_staff_role_names_property(self):
+        """Test staff_role_names property - Note: EventStaff doesn't store role names"""
+        from apps.events.models import EventStaff
+        
+        # Create staff assignment
+        EventStaff.objects.create(
+            user=self.user,
+            event=self.event,
+            assigned_by=self.user
+        )
+        
+        attendee = Attendee.objects.create(
+            first_name='Multi',
+            last_name='Role',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        # staff_role_names returns empty list as EventStaff model doesn't have role relationship
+        role_names = attendee.staff_role_names
+        self.assertIsInstance(role_names, list)
+    
+    def test_was_defined_by_event_staff_property(self):
+        """Test was_defined_by_event_staff property"""
+        from apps.events.models import EventStaff
+        
+        # Create staff user
+        staff_user = User.objects.create_user(
+            username='staffcreator',
+            email='staffcreator@example.com',
+            password='testpass123'
+        )
+        
+        EventStaff.objects.create(
+            user=staff_user,
+            event=self.event,
+            assigned_by=self.user
+        )
+        
+        # Attendee created by staff
+        attendee = Attendee.objects.create(
+            first_name='Created',
+            last_name='ByStaff',
+            event=self.event,
+            relationship_to_user=AttendeeRelationship.CHILD,
+            defined_by=staff_user,
+            date_of_birth=date(2015, 1, 1)
+        )
+        
+        self.assertTrue(attendee.was_defined_by_event_staff)
+        
+        # Attendee created by non-staff
+        non_staff_attendee = Attendee.objects.create(
+            first_name='Self',
+            last_name='Created',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        self.assertFalse(non_staff_attendee.was_defined_by_event_staff)
+    
+    def test_medical_conditions_property(self):
+        """Test medical_conditions property"""
+        attendee = Attendee.objects.create(
+            first_name='Medical',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        condition = MedicalCondition.objects.create(
+            code='TEST1',
+            label='Test Condition',
+            added_by=self.user
+        )
+        
+        AttendeeMedicalCondition.objects.create(
+            attendee=attendee,
+            medical_condition=condition,
+            added_by=self.user
+        )
+        
+        medical_conditions = attendee.medical_conditions
+        self.assertEqual(medical_conditions.count(), 1)
+        self.assertEqual(medical_conditions.first().medical_condition, condition)
+    
+    def test_dietary_requirements_property(self):
+        """Test dietary_requirements property"""
+        attendee = Attendee.objects.create(
+            first_name='Dietary',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        diet = DietaryRequirement.objects.create(
+            code='TEST2',
+            label='Test Diet',
+            added_by=self.user
+        )
+        
+        AttendeeDietaryRequirement.objects.create(
+            attendee=attendee,
+            dietary_requirement=diet,
+            added_by=self.user
+        )
+        
+        dietary_reqs = attendee.dietary_requirements
+        self.assertEqual(dietary_reqs.count(), 1)
+        self.assertEqual(dietary_reqs.first().dietary_requirement, diet)
+    
+    def test_accessibility_requirements_property(self):
+        """Test accessibility_requirements property"""
+        attendee = Attendee.objects.create(
+            first_name='Access',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        access = AccessibilityRequirement.objects.create(
+            code='TEST3',
+            label='Test Access',
+            added_by=self.user
+        )
+        
+        AttendeeAccessibilityRequirement.objects.create(
+            attendee=attendee,
+            accessibility_requirement=access,
+            added_by=self.user
+        )
+        
+        access_reqs = attendee.accessibility_requirements
+        self.assertEqual(access_reqs.count(), 1)
+        self.assertEqual(access_reqs.first().accessibility_requirement, access)
+    
+    def test_consents_property(self):
+        """Test consents property"""
+        attendee = Attendee.objects.create(
+            first_name='Consent',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        consent = Consent.objects.create(
+            event=self.event,
+            code='TEST4',
+            title='Test Consent',
+            description='Test',
+            version='1.0',
+            defined_by=self.user
+        )
+        
+        AttendeeConsent.objects.create(
+            attendee=attendee,
+            consent=consent,
+            consent_given=True,
+            given_at=timezone.now(),
+            given_by=self.user,
+            recorded_by=self.user
+        )
+        
+        consents = attendee.consents
+        self.assertEqual(consents.count(), 1)
+        self.assertEqual(consents.first().consent, consent)
+    
+    def test_is_cancelled_property(self):
+        """Test is_cancelled property"""
+        attendee = Attendee.objects.create(
+            first_name='Cancel',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        self.assertFalse(attendee.is_cancelled)
+        
+        AttendeeAction.objects.create(
+            action=AttendeeActionChoices.CANCELLED,
+            attendee=attendee,
+            performed_by=attendee
+        )
+        
+        self.assertTrue(attendee.is_cancelled)
+    
+    def test_is_registered_property(self):
+        """Test is_registered property"""
+        attendee = Attendee.objects.create(
+            first_name='Register',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        self.assertFalse(attendee.is_registered)
+        
+        AttendeeAction.objects.create(
+            action=AttendeeActionChoices.REGISTERED,
+            attendee=attendee,
+            performed_by=attendee
+        )
+        
+        self.assertTrue(attendee.is_registered)
+    
+    def test_is_checked_in_property(self):
+        """Test is_checked_in property"""
+        attendee = Attendee.objects.create(
+            first_name='CheckIn',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        self.assertFalse(attendee.is_checked_in)
+        
+        attendance = EventAttendance.objects.create(
+            event=self.event,
+            attendee=attendee
+        )
+        attendance.check_in(timezone.now(), self.user)
+        
+        # Refresh from db
+        attendee.refresh_from_db()
+        self.assertTrue(attendee.is_checked_in)
+    
+    def test_mark_checked_in_method(self):
+        """Test mark_checked_in method"""
+        attendee = Attendee.objects.create(
+            first_name='MarkCheckIn',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        attendance = attendee.mark_checked_in(self.event, self.user)
+        
+        self.assertIsNotNone(attendance)
+        self.assertEqual(attendance.attendee, attendee)
+        self.assertEqual(attendance.event, self.event)
+        
+        # Check that action was created
+        action = AttendeeAction.objects.filter(
+            attendee=attendee,
+            action=AttendeeActionChoices.CHECKED_IN
+        ).first()
+        self.assertIsNotNone(action)
+    
+    def test_mark_checked_out_method(self):
+        """Test mark_checked_out method"""
+        attendee = Attendee.objects.create(
+            first_name='MarkCheckOut',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        # First check in
+        attendee.mark_checked_in(self.event, self.user)
+        
+        # Then check out
+        attendance = attendee.mark_checked_out(self.event, self.user)
+        
+        self.assertIsNotNone(attendance)
+        self.assertIsNotNone(attendance.checked_out_by)
+        
+        # Test checking out without checking in first
+        new_attendee = Attendee.objects.create(
+            first_name='NoCheckIn',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.CHILD,
+            defined_by=self.user,
+            date_of_birth=date(2015, 1, 1)
+        )
+        
+        result = new_attendee.mark_checked_out(self.event, self.user)
+        self.assertIsNone(result)
+        
+        # Test with raise_if_not_checked_in flag
+        with self.assertRaises(ValidationError):
+            new_attendee.mark_checked_out(self.event, self.user, raise_if_not_checked_in=True)
+    
+    def test_mark_registered_method(self):
+        """Test mark_registered method"""
+        attendee = Attendee.objects.create(
+            first_name='MarkReg',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        attendee.mark_registered(performed_by=attendee) 
+        
+        self.assertTrue(attendee.is_registered)
+        action = AttendeeAction.objects.filter(
+            attendee=attendee,
+            action=AttendeeActionChoices.REGISTERED
+        ).first()
+        self.assertIsNotNone(action)
+    
+    def test_mark_cancelled_method(self):
+        """Test mark_cancelled method"""
+        attendee = Attendee.objects.create(
+            first_name='MarkCancel',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1)
+        )
+        
+        cancellation_notes = 'User requested cancellation'
+        attendee.mark_cancelled(notes=cancellation_notes)
+        
+        self.assertTrue(attendee.is_cancelled)
+        action = AttendeeAction.objects.filter(
+            attendee=attendee,
+            action=AttendeeActionChoices.CANCELLED
+        ).first()
+        self.assertIsNotNone(action)
+        self.assertEqual(action.notes, cancellation_notes)
+    
+    def test_pricing_context_method(self):
+        """Test pricing_context method"""
+        attendee = Attendee.objects.create(
+            first_name='Pricing',
+            last_name='Test',
+            event=self.event,
+            user=self.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(1990, 1, 1),
+            area_from=self.area
+        )
+        
+        # Add organisation
+        org = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
+        attendee.add_organisation(org)
+        
+        context = attendee.pricing_context()
+        
+        self.assertIsNotNone(context)
+        self.assertEqual(context.user, self.user)
+        self.assertEqual(context.event, self.event)
+        self.assertIn('age', context.metadata)
+        self.assertIn('organisations', context.metadata)
+        self.assertIn('full_name', context.metadata)
+        self.assertIn('location', context.metadata)
+        self.assertEqual(context.metadata['full_name'], 'Pricing Test')
+        self.assertEqual(context.metadata['location'], self.area.area_name)
 
 
 class AttendeeGuardianModelTest(TestCase):

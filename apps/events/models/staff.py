@@ -8,7 +8,7 @@ class EventStaff(models.Model):
     
     staff_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='staff_members')
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='event_staff_roles', null=True)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='event_staff', null=True)
     
     assigned_at = models.DateTimeField(auto_now_add=True)
     assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='event_staff_assigned')

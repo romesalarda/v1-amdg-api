@@ -114,7 +114,7 @@ class Attendee(SoftDeleteModel):
         '''
         Determine if the attendee is event staff based on linked user account.
         '''
-        return self.user and self.user.event_staff_roles.filter(event=self.event).exists()
+        return self.user and self.user.event_staff.filter(event=self.event).exists()
     
     @property
     def staff_role_names(self):
@@ -122,8 +122,17 @@ class Attendee(SoftDeleteModel):
         Get a list of staff roles the attendee has for the event.
         '''
         if self.user:
-            return list(self.user.event_staff_roles.filter(event=self.event).values_list('role__name', flat=True))
+            return list(self.user.event_roles.filter(event=self.event).values_list('role__name', flat=True))
         return []
+    
+    @property
+    def was_defined_by_event_staff(self):
+        '''
+        Determine if the attendee was created by event staff.
+        '''
+        if self.defined_by:
+            return self.defined_by.event_staff.filter(event=self.event).exists()
+        return False
     
     @property
     def medical_conditions(self):
@@ -194,7 +203,7 @@ class Attendee(SoftDeleteModel):
         '''
         Determine if the attendee is currently checked in based on their latest event attendance.
         '''
-        latest_check_in = self.event_attendances.filter(event__isnull=False).order_by('-event__start_date')
+        latest_check_in = self.event_attendances.filter(event__isnull=False).order_by('-event__start_datetime')
         if latest_check_in.exists():
             latest_check_in = latest_check_in.first()
             return latest_check_in.is_checked_in
@@ -251,17 +260,17 @@ class Attendee(SoftDeleteModel):
         attendance, created = EventAttendance.objects.get_or_create(
             event=event,
             attendee=self,
-            defaults={'checked_in_by': checked_in_by}
+            defaults={'check_in_by': checked_in_by}
         )
         if not created:
-            attendance.checked_in_by = checked_in_by
-            attendance.checked_in_at = models.DateTimeField(auto_now=True)
+            attendance.check_in_by = checked_in_by
+            attendance.check_in_at = models.DateTimeField(auto_now=True)
             attendance.save()
             
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.CHECKED_IN,
             attendee=self,
-            performed_by=checked_in_by
+            performed_by=None # system action
         )
             
         if raise_if_already_checked_in and not created and attendance.is_checked_in:
@@ -285,7 +294,7 @@ class Attendee(SoftDeleteModel):
             AttendeeAction.objects.create(
                 action=AttendeeActionChoices.CHECKED_IN,
                 attendee=self,
-                performed_by=checked_out_by
+                performed_by=None # system action
             )   
         
             return attendance
@@ -295,7 +304,7 @@ class Attendee(SoftDeleteModel):
                 raise ValidationError("Attendee is not checked in for this event.")
             return None
         
-    def mark_registered(self):
+    def mark_registered(self, performed_by=None):
         '''
         Mark the attendee as registered.
         '''
@@ -303,10 +312,10 @@ class Attendee(SoftDeleteModel):
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.REGISTERED,
             attendee=self,
-            performed_by=self.defined_by
+            performed_by=performed_by
         )
         
-    def mark_cancelled(self, cancelled_by, notes=None):
+    def mark_cancelled(self, notes=None):
         '''
         Mark the attendee as cancelled.
         '''
@@ -314,7 +323,7 @@ class Attendee(SoftDeleteModel):
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.CANCELLED,
             attendee=self,
-            performed_by=cancelled_by,
+            performed_by=None, # system action,
             notes=notes
         )
     
