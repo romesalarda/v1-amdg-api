@@ -92,6 +92,15 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField()
+
+    organisation = models.ForeignKey( # adminregister
+        'organisations.Organisation', 
+        on_delete=models.CASCADE, 
+        related_name='events',
+        verbose_name=_("Organisation"),
+        help_text=_("The organisation hosting this event."),
+        null=True,
+        )
         
     class Meta:
         ordering = ['-created_at']
