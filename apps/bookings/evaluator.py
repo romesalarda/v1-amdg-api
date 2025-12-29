@@ -51,6 +51,9 @@ class PaymentPackageContextBuilder:
     
     def location_matches(self, rule, context):
         return context.metadata.get("location").lower() == rule.value.lower()
+    
+    def code_matches(self, rule, context):
+        return context.metadata.get("code") == rule.value
 
 def payment_package_applies(discount, context):
     '''

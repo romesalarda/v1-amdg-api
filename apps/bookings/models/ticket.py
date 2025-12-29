@@ -80,7 +80,7 @@ class Ticket(models.Model):
     Inherits from PayableModel to include payment-related fields and methods.
     """
     ticket_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    ticket_type = models.ForeignKey(
+    ticket_type = models.ForeignKey( # is it one day pass, full event, workshop only etc.
         TicketType,
         on_delete=models.CASCADE,
         related_name='tickets'
@@ -91,12 +91,12 @@ class Ticket(models.Model):
         choices=TicketStatusChoices.choices,
         default=TicketStatusChoices.ACTIVE
     )
-    attendee = models.ForeignKey(
+    attendee = models.ForeignKey( # who owns/uses this ticket
         'attendee.Attendee',
         on_delete=models.CASCADE,
         related_name='tickets'
     )
-    package = models.ForeignKey(
+    package = models.ForeignKey( # if purchased as part of a package i.e. early bird, standard
         'bookings.BookingPackage',
         on_delete=models.SET_NULL,
         null=True,
@@ -105,7 +105,7 @@ class Ticket(models.Model):
         help_text='The booking package used for pricing this ticket'
     )
     issued_at = models.DateTimeField(auto_now_add=True)
-    payment = models.ForeignKey(
+    payment = models.ForeignKey( # payment associated with this ticket
         'payments.Payment',
         on_delete=models.SET_NULL,
         null=True,

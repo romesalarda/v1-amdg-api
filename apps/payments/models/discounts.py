@@ -134,6 +134,7 @@ class DiscountRuleTypeChoices(models.TextChoices):
     EVENT_STAFF_ROLE_MATCHES = 'EVENT_STAFF_ROLE_MATCHES', _('Event Staff Role Matches') # for specific staff role discounts
     NAME_MATCHES = 'NAME_MATCHES', _('Name Matches') # for name based discounts
     LOCATION_MATCHES = 'LOCATION_MATCHES', _('Location Matches') # for location based discounts
+    CODE_MATCHES = 'CODE_MATCHES', _('Code Matches') # for code based discounts
         
 class DiscountRule(models.Model):
     '''
@@ -166,6 +167,7 @@ class DiscountRule(models.Model):
             DiscountRuleTypeChoices.EVENT_STAFF_ROLE_MATCHES,
             DiscountRuleTypeChoices.NAME_MATCHES,
             DiscountRuleTypeChoices.LOCATION_MATCHES,
+            DiscountRuleTypeChoices.CODE_MATCHES,
         ] and not self.value:
             raise ValidationError(f"Rule type {self.rule_type} requires a value.")
         

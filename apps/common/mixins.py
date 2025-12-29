@@ -1,6 +1,6 @@
 from django.contrib.contenttypes.models import ContentType
 from apps.common.models.resource import Resource
-from apps.common.models.availability import AvailabilityWindow
+from apps.common.models.availability import AvailabilityWindow, AvailabilityTypeChoices
 
 from django.core.exceptions import ValidationError
 
@@ -104,7 +104,7 @@ class HasAvailabilityMixin:
             return True
         return False
     
-    def is_within_availability_window(self, availability_type: str, check_datetime) -> bool:
+    def is_within_availability_window(self, availability_type, check_datetime) -> bool:
         '''
         Checks if the given datetime is within the specified availability window type for this event.
         '''

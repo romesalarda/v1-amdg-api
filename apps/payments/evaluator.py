@@ -28,6 +28,7 @@ class DiscountRuleEvaluator:
             DiscountRuleTypeChoices.EVENT_STAFF_ROLE_MATCHES: self.staff_role_matches,
             DiscountRuleTypeChoices.NAME_MATCHES: self.name_matches,
             DiscountRuleTypeChoices.LOCATION_MATCHES: self.location_matches,
+            DiscountRuleTypeChoices.CODE_MATCHES: self.code_matches,
         }[rule_type]
 
     def is_event_staff(self, rule, context):
@@ -53,6 +54,9 @@ class DiscountRuleEvaluator:
     
     def location_matches(self, rule, context):
         return context.metadata.get("location").lower() == rule.value.lower()
+    
+    def code_matches(self, rule, context):
+        return context.metadata.get("code") == rule.value
 
 def discount_applies(discount, context):
     '''
