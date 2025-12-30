@@ -88,3 +88,39 @@ class Resource(models.Model):
             return self.image
         else:
             return None
+        
+    @property
+    def is_image(self):
+        return self.resource_type == ResourceTypeChoices.IMAGE
+    
+    @property
+    def is_document(self):
+        return self.resource_type == ResourceTypeChoices.DOCUMENT
+    
+    @property
+    def is_link(self):
+        return self.resource_type == ResourceTypeChoices.LINK
+    
+    @property
+    def is_audio(self):
+        return self.resource_type == ResourceTypeChoices.AUDIO
+    
+
+    @property
+    def is_video(self):
+        return self.resource_type == ResourceTypeChoices.VIDEO  
+    
+    @property
+    def resource_url(self):
+        '''
+        Returns the URL of the resource based on its type.
+        '''
+        if self.resource_type == ResourceTypeChoices.DOCUMENT or self.resource_type == ResourceTypeChoices.OTHER:
+            if self.file:
+                return self.file.url
+        elif self.resource_type == ResourceTypeChoices.LINK:
+            return self.link
+        elif self.resource_type == ResourceTypeChoices.IMAGE:
+            if self.image:
+                return self.image.url
+        return None

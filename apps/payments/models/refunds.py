@@ -2,6 +2,7 @@ from django.db import models
 from django.core import validators, exceptions
 from django.contrib.auth import get_user_model
 from djmoney.models.fields import MoneyField
+from django.conf import settings
 
 from apps.common.models.verification import RequiresVerificationModel
 
@@ -11,7 +12,6 @@ import uuid
 
 User = get_user_model()
 
-MAX_GENERATED_CODE_ATTEMPTS = 5
 # refund process
 # 1. User requests refund -> RefundRequest created with status 'pending'
 # 2. Admin reviews request -> marks as 'verified' or 'rejected'
@@ -77,7 +77,7 @@ class RefundRequest(RequiresVerificationModel):
             self.tracking_reference = try_generate_unique_code(
                 model_class=RefundRequest,
                 length=10,
-                max_attempts=MAX_GENERATED_CODE_ATTEMPTS
+                max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS
             )
         except ValueError:
             raise exceptions.ValidationError("Could not generate a unique acceptance code. Please try again.")

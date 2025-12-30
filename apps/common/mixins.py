@@ -14,12 +14,14 @@ class HasResourceMixin:
             target_id=self.pk,
         )
         
-    def add_resource(self, resource: Resource):
+    def add_resource(self, resource: Resource, tag=None):
         '''
         Adds a resource to the model instance.
         '''
         resource.target_id = self.id
         resource.target_type = ContentType.objects.get_for_model(self)
+        if tag:
+            resource.tag = tag
         resource.clean()
         resource.save()
         return resource

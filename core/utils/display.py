@@ -36,3 +36,16 @@ def try_generate_unique_code(model_class, length, max_attempts=5):
             return code
         attempts += 1
     raise ValueError("Could not generate a unique code after multiple attempts.")
+
+def try_generate_unique_display_code(model_class, length, prefix, *args, max_attempts=5):
+    """
+    Tries to generate a unique human-readable display code for the given model class.
+    Retries up to max_attempts times to avoid collisions.
+    """
+    attempts = 0
+    while attempts < max_attempts:
+        code = generate_human_readable_id(length, prefix, *args)
+        if not model_class.objects.filter(display_code=code).exists():
+            return code
+        attempts += 1
+    raise ValueError("Could not generate a unique display code after multiple attempts.")

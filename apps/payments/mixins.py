@@ -120,12 +120,29 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         zero = Money(0, price.currency)
         return max(total, zero)
 
-
+    @property
     def is_free(self):
-        return self.total_amount.amount == 0
+        '''
+        Returns True if the base amount is zero. 
+        Note: This does not consider discounts or context.
+        '''
+        return self.base_amount.amount == 0
 
+    @property
     def is_positive(self):
-        return self.total_amount.amount > 0
+        '''
+        Returns True if the base amount is greater than zero.
+        Note: This does not consider discounts or context.
+        '''
+        return self.base_amount.amount > 0
+    
+    def is_free_with_context(self, context):
+        total = self.total_amount_for_context(context)
+        return total.amount == 0
+    
+    def is_positive_with_context(self, context):
+        total = self.total_amount_for_context(context)
+        return total.amount > 0
 
     def __str__(self):
         return f"{self.total_amount} ({self.percentage_modifier}% modifier)"

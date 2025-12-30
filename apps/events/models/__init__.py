@@ -1,4 +1,4 @@
-from .events import Event, EventType, EventStatusChoices
+from .events import Event, EventType, EventStatusChoices, EventSettings
 from .permissions import EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices
 from .staff import EventStaff, EventStaffAvailability
 from .roles import EventRole, EventRoleAssignment, EventRoleCategoryChoices
@@ -26,4 +26,5 @@ __all__ = [
     'EventQuestionOption',
     'EventQuestionAnswer',
     'EventQuestionAnswerChoice',
+    'EventSettings',
 ]

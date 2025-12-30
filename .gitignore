@@ -179,3 +179,5 @@ aws/
 /staticfiles/static/
 /mediafiles/media/
 staticfiles/
+
+TODO.md

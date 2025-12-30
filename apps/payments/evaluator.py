@@ -15,6 +15,16 @@ class DiscountContext:
 class DiscountRuleEvaluator:
 
     def evaluate(self, rule: DiscountRule, context: DiscountContext) -> bool:
+
+        if not isinstance(rule, DiscountRule):
+            raise ValueError("rule must be an instance of DiscountRule")
+        
+        if not isinstance(context, DiscountContext):
+            raise ValueError(
+                "context must be an instance of DiscountContext. " + 
+                "Expected Dataclass DiscountContext with user, event, metadata fields."
+                )
+
         handler = self.get_handler(rule.rule_type)
         return handler(rule, context)
 

@@ -2,7 +2,7 @@ from django.db import models
 from django.core import validators, exceptions
 from django.contrib.auth import get_user_model
 from djmoney.models.fields import MoneyField
-
+from django.conf import settings
 from apps.common.models.verification import RequiresVerificationModel
 
 from core.utils.display import try_generate_unique_code
@@ -10,9 +10,6 @@ from core.utils.display import try_generate_unique_code
 import uuid
 
 User = get_user_model()
-
-MAX_GENERATED_CODE_ATTEMPTS = 5
-
 class Donation(RequiresVerificationModel): # don't inherit from PayableModel as discounts, fine-grain money manipulation etc. don't apply
     '''
     Donation model to handle donations.
@@ -53,7 +50,7 @@ class Donation(RequiresVerificationModel): # don't inherit from PayableModel as 
             self.tracking_reference = try_generate_unique_code(
                 model_class=Donation,
                 length=10,
-                max_attempts=MAX_GENERATED_CODE_ATTEMPTS
+                max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS
             )
         except ValueError:
             raise exceptions.ValidationError("Could not generate a unique acceptance code. Please try again.")

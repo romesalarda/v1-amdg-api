@@ -5,6 +5,8 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.core.validators import MinLengthValidator, MaxLengthValidator
 
+from django.conf import settings
+
 from django.contrib.contenttypes.models import ContentType
 from timezone_field import TimeZoneField
 
@@ -30,7 +32,9 @@ class EventStatusChoices(models.TextChoices):
 MAX_EVENT_CODE_LENGTH = 5
     
 class EventType(models.Model):
-    
+    '''
+    EventType model to categorize events.
+    '''
     title = models.CharField(max_length=100)
     code = models.CharField(max_length=MAX_EVENT_CODE_LENGTH, unique=True) # e.g. CONF
     description = models.TextField(blank=True, null=True)
@@ -55,7 +59,13 @@ class EventType(models.Model):
         return self.title
 
 class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
+    '''
+    Event model to represent events within the system.
+    An event can have multiple products, donations, and participants associated with it.
+    Events have various statuses to represent their lifecycle, from drafting to completion.
     
+    '''
+
     # identifier fields
     event_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True) # uuid for URLS
     display_code = models.CharField(max_length=10, unique=True, validators=[
@@ -158,5 +168,69 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         from apps.events.models.authorization import EventAuthorizationStatusChoices
         auth = self.latest_authorisation() 
         return auth and auth.status == EventAuthorizationStatusChoices.APPROVED
-    
+class EventSettings(models.Model):
+    '''
+    Settings model to manage payment and registration settings for an event.
+    '''
 
+    event = models.OneToOneField(Event, on_delete=models.CASCADE, related_name='settings')
+
+    payment_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether payment processing is enabled for this event. Note that disabling this will also disable donations, refunds, and product selling."
+    ) # whether payment processing is enabled for this event - if false, no payments can be made for products, donations, etc. 
+      # Ensures events can be free if needed.
+    
+    product_publication_requires_verification = models.BooleanField(
+        default=False,
+        help_text="Whether products for this event require verification before being purchasable."  
+    ) # products added to this event require verification before being purchasable
+    product_selling_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether selling products is enabled for this event."
+    ) # whether selling products is enabled for this event
+
+    donation_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether donations are enabled for this event."
+    ) # whether donations are enabled for this event
+    refunds_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether refunds are enabled for this event."
+    ) # whether refunds are enabled for this event
+    accepting_sponsorships_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether accepting sponsorships is enabled for this event."
+    ) # whether accepting sponsorships is enabled for this event
+
+    participants_registration_require_verification = models.BooleanField(
+        default=False,
+        help_text="Whether participants for this event require manual event staff verification before being fully registered."
+    ) # participants registering for this event require manual verification by event staff before being fully registered
+
+    default_timezone = TimeZoneField(default=settings.TIME_ZONE)
+
+    class Meta:
+        verbose_name = "Event Setting"
+        verbose_name_plural = "Event Settings"
+    
+    def __str__(self):
+        return f"Settings for {self.event.title}"
+    
+    def __repr__(self):
+        return f"<EventSettings event={self.event.display_code} payment_enabled={self.payment_enabled}>"
+    
+    def clean(self):
+        if self.event is None:
+            raise ValidationError("EventSettings must be associated with an Event.")
+        
+        if self.payment_enabled is False:
+            self.donation_enabled = False
+            self.refunds_enabled = False
+            self.product_selling_enabled = False
+        
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)   
+
+    

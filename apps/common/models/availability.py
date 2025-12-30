@@ -4,6 +4,7 @@ from timezone_field import TimeZoneField
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.utils.translation import gettext_lazy as _
+from django.conf import settings
 
 import uuid
 
@@ -40,7 +41,7 @@ class AvailabilityWindow(models.Model):
 
     available_from = models.DateTimeField()
     available_to = models.DateTimeField()
-    timezone = TimeZoneField(default='Europe/London')
+    timezone = TimeZoneField(default=settings.TIME_ZONE)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

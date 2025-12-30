@@ -179,6 +179,7 @@ THIRD_PARTY_APPS = [
     'django_celery_results',
     'djmoney',
     'timezone_field',
+    'colorfield',
 ]
 
 LOCAL_APPS = [
@@ -281,7 +282,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # INTERNATIONALIZATION
 # =============================================================================
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Europe/London'
 USE_I18N = True
 USE_L10N = True
 USE_TZ = True
@@ -568,3 +569,4 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # OTHER
 # =============================================================================
 MAX_LENGTH_LOCATION_ID = 20
+MAX_ID_GENERATION_ATTEMPTS = 5
