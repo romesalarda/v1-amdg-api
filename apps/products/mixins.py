@@ -26,7 +26,7 @@ class ProductMixin (HasResourceMixin, HasAvailabilityMixin, HasRuleMixin):
         '''
         Returns whether the product can be published (made active).
         '''
-        if self.requires_verification() and not self.verified:
+        if self.requires_verification and not self.verified:
             return False
         return True
     

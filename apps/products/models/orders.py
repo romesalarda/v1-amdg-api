@@ -17,6 +17,7 @@ import uuid
 from decimal import Decimal
 
 ORDER_STATUS_TRANSITIONS = {
+    'draft': ['pending'],
     'pending': ['processing', 'cancelled'],
     'processing': ['completed', 'refunded'],
     'completed': ['refunded'],
@@ -24,11 +25,20 @@ ORDER_STATUS_TRANSITIONS = {
     'refunded': [],
 }
 class OrderStatusChoices(models.TextChoices):
-    PENDING = 'pending', 'Pending'
-    PROCESSING = 'processing', 'Processing'
-    COMPLETED = 'completed', 'Completed'
-    CANCELLED = 'cancelled', 'Cancelled'
-    REFUNDED = 'refunded', 'Refunded'
+    DRAFT = 'draft', 'Draft' # initial state, not yet confirmed basically a cart
+    PENDING = 'pending', 'Pending' # awaiting processing, has been submitted by user
+    PROCESSING = 'processing', 'Processing' # being processed (payment being confirmed, items being prepared)
+    COMPLETED = 'completed', 'Completed' # successfully completed
+    CANCELLED = 'cancelled', 'Cancelled' # cancelled by user or admin
+    PENDING_REFUND = 'pending_refund', 'Pending Refund' # refund requested, awaiting processing
+    REFUNDED = 'refunded', 'Refunded' # refunded to user
+
+# 1. User adds products to order (cart) -> Order in 'draft' status
+# 2. User submits order -> Order status changes to 'pending'
+# 3. Admin processes order -> Order status changes to 'processing'
+#  4. Once fulfilled, order status changes to 'completed'
+#  If cancelled at any point before completion, status changes to 'cancelled'
+
 class Order(RequiresVerificationModel): # orders may require verification before processing
     '''
     Order model to handle customer orders for products.
@@ -51,7 +61,7 @@ class Order(RequiresVerificationModel): # orders may require verification before
     status = models.CharField(
         max_length=20,
         choices=OrderStatusChoices.choices,
-        default=OrderStatusChoices.PENDING
+        default=OrderStatusChoices.DRAFT
     )
 
     total_amount = MoneyField(max_digits=10, decimal_places=2, default_currency='GBP') # db only, computed at order creation
@@ -88,7 +98,8 @@ class Order(RequiresVerificationModel): # orders may require verification before
                     model_class=Order,
                     length=25,
                     prefix='ORD',
-                    args=[self.event.id],
+                    args=[self.event.display_code],
+                    lookup_field='order_reference_id',
                     max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS
                 )
             except ValueError:
@@ -107,6 +118,15 @@ class Order(RequiresVerificationModel): # orders may require verification before
         
         if not self.attendee and not self.customer:
             raise exceptions.ValidationError("Order must be associated with either a customer or an attendee.")
+        
+        # Validate that stored total matches calculated total (prevents price manipulation)
+        if self.pk:  # Only validate if order exists (has items)
+            calculated_total = self.get_total_amount()
+            if self.total_amount != calculated_total:
+                raise exceptions.ValidationError(
+                    f"Order total amount ({self.total_amount}) does not match calculated total ({calculated_total}). "
+                    "Please recalculate the order total."
+                )
         
     @property
     def event(self):
@@ -137,6 +157,7 @@ class Order(RequiresVerificationModel): # orders may require verification before
     def transition_to(self, new_status: str):
         '''
         Transitions the order to the specified new status if valid.
+        Restores stock if transitioning to cancelled or refunded status.
 
         @param new_status: The target status to transition to.
         Raises ValidationError if the transition is not allowed.
@@ -144,7 +165,19 @@ class Order(RequiresVerificationModel): # orders may require verification before
         if not self.can_transition_to(new_status):
             raise exceptions.ValidationError(f"Cannot transition from {self.status} to {new_status}.")
         
+        old_status = self.status
         self.status = new_status
+        
+        # Restore stock when cancelling or refunding an order
+        if new_status in [OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED]:
+            for item in self.order_items.all():
+                if item.product_variant:
+                    try:
+                        item.product_variant.increment_stock(item.quantity)
+                    except exceptions.ValidationError:
+                        # If stock restoration fails (e.g., would exceed max), log but don't block cancellation
+                        pass
+        
         self.save()
 
     def get_total_amount(self) -> Money:
@@ -217,8 +250,9 @@ class Order(RequiresVerificationModel): # orders may require verification before
 
             product_variant.decrement_stock(quantity) # adjust stock
 
+            # Recalculate and save order total within transaction for consistency
+            self.total_amount = self.get_total_amount()
             self.full_clean()
-            self.recalculate_total_amount()
             self.save() # persist changes
 
         return order_item

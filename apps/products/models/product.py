@@ -66,6 +66,8 @@ class Product(ProductMetaClass): # discounts, resources and availability all app
     Product model representing a purchasable item within an event.
     '''
     product_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    display_code = models.CharField(max_length=50, unique=True, blank=True) # human-readable public identifier
+
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
 
@@ -94,7 +96,7 @@ class Product(ProductMetaClass): # discounts, resources and availability all app
                     model_class=Product,
                     length=20,
                     prefix='PROD',
-                    args=[self.event.code],
+                    args=[self.event.display_code],
                     max_attempts=5
                 )
             except ValueError:
@@ -244,27 +246,26 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
     def get_attendee_purchase_quantity(self, attendee): # return the number of this variant the attendee has already purchased
         '''
         Returns the total quantity of this product variant purchased by the given attendee.
+        Uses database aggregation for optimal performance.
 
         @param attendee: The Attendee instance whose purchases to check.
         @return: Total quantity purchased by the attendee.
         '''
         from apps.attendee.models.attendee import Attendee
+        from apps.products.models.orders import OrderItem
 
         if not isinstance(attendee, Attendee):
             raise exceptions.ValidationError("The provided attendee is not a valid Attendee instance.")
         
-        total_purchased = 0
-        orders = attendee.orders.filter(
-            order_items__product_variant=self,
-            status__in=['processing', 'completed', 'pending'] # only consider non-cancelled orders
-        ).distinct()
-
-        for order in orders:
-            order_items = order.order_items.filter(product_variant=self)
-            for item in order_items:
-                total_purchased += item.quantity
+        # Use aggregation to calculate total in a single query (fixes N+1 problem)
+        from django.db.models import Sum
+        result = OrderItem.objects.filter(
+            order__attendee=attendee,
+            product_variant=self,
+            order__status__in=['processing', 'completed', 'pending']  # only consider non-cancelled orders
+        ).aggregate(total_quantity=Sum('quantity'))
         
-        return total_purchased
+        return result['total_quantity'] or 0
 
     def can_attendee_purchase(self, attendee) -> bool:
         '''
