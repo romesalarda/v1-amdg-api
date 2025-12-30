@@ -233,17 +233,15 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         if amount <= 0:
             raise exceptions.ValidationError("Increment amount must be positive.")
 
-        updated = (
-            type(self).objects
-            .filter(
-                pk=self.pk,
+        updated = (type(self).objects.filter(pk=self.pk))
+        if self.max_stock_quantity is not None: # enforce max stock if set
+            updated = updated.filter(
                 stock_quantity__lte=F('max_stock_quantity') - amount
             )
-            .update(
-                stock_quantity=F('stock_quantity') + amount
-            )
-        )
 
+        updated = updated.update(
+            stock_quantity=F('stock_quantity') + amount
+        )
         if updated == 0:
             raise exceptions.ValidationError("Stock increment would exceed maximum capacity.")
 

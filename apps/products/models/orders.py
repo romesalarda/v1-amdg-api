@@ -174,9 +174,10 @@ class Order(RequiresVerificationModel): # orders may require verification before
                 if item.product_variant:
                     try:
                         item.product_variant.increment_stock(item.quantity)
-                    except exceptions.ValidationError:
+                    except exceptions.ValidationError as e  :
                         # If stock restoration fails (e.g., would exceed max), log but don't block cancellation
-                        pass
+                        print(f"Warning: Could not restore stock for ProductVariant {item.product_variant.id} when cancelling/refunding Order {self.id}.")
+                        print(f"Reason: {str(e)}")
         
         self.save()
 

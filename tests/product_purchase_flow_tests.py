@@ -374,7 +374,7 @@ class FullProductPurchaseFlowTest(TestCase):
         )
         
         mug_price_for_staff = self.mug_onesize_white.total_amount_for_context(
-            staff_base_context
+            staff_context
         )
         
         # Should be free (100% discount)
@@ -451,7 +451,8 @@ class FullProductPurchaseFlowTest(TestCase):
             attendee=self.emma_attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.emma
+            created_by=self.emma,
+            customer=self.emma
         )
         
         initial_stock = self.tshirt_medium_blue.stock_quantity
@@ -483,7 +484,8 @@ class FullProductPurchaseFlowTest(TestCase):
             attendee=self.emma_attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.emma
+            created_by=self.emma,
+            customer=self.emma
         )
         
         initial_stock = self.hoodie_large_black.stock_quantity
@@ -540,7 +542,8 @@ class FullProductPurchaseFlowTest(TestCase):
             attendee=staff_attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=staff_student
+            created_by=staff_student,
+            customer=staff_student
         )
         
         # Mock staff context for add_order_item

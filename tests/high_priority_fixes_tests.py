@@ -98,7 +98,8 @@ class StockRestorationOnCancellationTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
         
         order.add_order_item(self.variant, 5)
@@ -123,7 +124,8 @@ class StockRestorationOnCancellationTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
         
         order.add_order_item(self.variant, 3)
@@ -168,7 +170,8 @@ class StockRestorationOnCancellationTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
         
         order.add_order_item(self.variant, 4)
@@ -186,6 +189,7 @@ class StockRestorationOnCancellationTest(TestCase):
         # Verify both stocks restored
         self.variant.refresh_from_db()
         variant2.refresh_from_db()
+        
         self.assertEqual(self.variant.stock_quantity, initial_stock_1)
         self.assertEqual(variant2.stock_quantity, initial_stock_2)
 
@@ -258,7 +262,8 @@ class TransactionBoundaryTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
         
         # Add item
@@ -344,7 +349,8 @@ class OrderTotalValidationTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
         
         # Add items
@@ -365,7 +371,8 @@ class OrderTotalValidationTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
         
         # Add items
@@ -435,7 +442,8 @@ class OptimizedQueryTest(TestCase):
             color='#FF00FF',
             stock_quantity=100,
             added_by=self.user,
-            verified=True
+            verified=True,
+            max_purchase_quantity_per_order=6 # max purchase limit per attendee per order
         )
         
     def test_get_attendee_purchase_quantity_returns_correct_total(self):
@@ -446,7 +454,8 @@ class OptimizedQueryTest(TestCase):
                 attendee=self.attendee,
                 status=OrderStatusChoices.PENDING,
                 total_amount=Money(0, 'GBP'),
-                created_by=self.user
+                created_by=self.user,
+                customer=self.user
             )
             order.add_order_item(self.variant, 2)
             order.transition_to(OrderStatusChoices.PROCESSING)
@@ -463,7 +472,8 @@ class OptimizedQueryTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
         order1.add_order_item(self.variant, 3)
         order1.transition_to(OrderStatusChoices.PROCESSING)
@@ -474,7 +484,8 @@ class OptimizedQueryTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
         order2.add_order_item(self.variant, 2)
         order2.transition_to(OrderStatusChoices.CANCELLED)
