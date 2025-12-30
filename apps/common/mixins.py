@@ -1,11 +1,13 @@
 from django.contrib.contenttypes.models import ContentType
 from apps.common.models.resource import Resource
-from apps.common.models.availability import AvailabilityWindow, AvailabilityTypeChoices
+from apps.common.models.availability import AvailabilityWindow
+from apps.common.models.rules import AccessRule
 
-from django.core.exceptions import ValidationError
-
+from apps.common.evaluator import BaseEvaluator, BaseContext, rules_apply
 class HasResourceMixin:
-    
+    '''
+    Mixin to add resource functionality to a model.
+    '''
     @property
     def resources(self):
         ct = ContentType.objects.get_for_model(self, for_concrete_model=False)
@@ -78,6 +80,9 @@ class LandingImageMixin(HasResourceMixin):
         self.landing_images.delete()
         
 class HasAvailabilityMixin:
+    '''
+    Mixin to add availability window functionality to a model.
+    '''
     
     @property
     def availability_windows(self):
@@ -115,3 +120,42 @@ class HasAvailabilityMixin:
             if window.within_window(check_datetime):
                 return True
         return False    
+    
+class HasRuleMixin:
+    '''
+    Mixin to add rule functionality to a model.
+    '''
+    
+    @property
+    def rules(self):
+        ct = ContentType.objects.get_for_model(self, for_concrete_model=False)
+        return AccessRule.objects.filter(
+            target_type=ct,
+            target_id=self.pk,
+        )
+    
+    def add_rule(self, rule: AccessRule): 
+        '''
+        Adds a rule to the model instance.
+        '''
+        rule.target_id = self.id
+        rule.target_type = ContentType.objects.get_for_model(self)
+        rule.clean()
+        rule.save()
+        return rule
+    
+    def remove_rule(self, rule: AccessRule):
+        '''
+        Removes a rule from the model instance.
+        '''
+        if rule in self.rules:
+            rule.delete()
+            return True
+        return False
+    
+    def evaluate_rules(self, context: BaseContext, evaluator: BaseEvaluator = None) -> bool:
+        '''
+        Evaluates all associated rules against the given context.
+        Returns True if all rules apply, False otherwise.
+        '''
+        return rules_apply(self.rules, context, evaluator=evaluator)

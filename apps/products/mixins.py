@@ -4,13 +4,16 @@ from django.core import exceptions
 from django.contrib.auth import get_user_model
 from django.conf import settings
 
-from apps.common.mixins import HasResourceMixin, HasAvailabilityMixin
+from apps.common.mixins import HasResourceMixin, HasAvailabilityMixin, HasRuleMixin
 from apps.common.models.resource import Resource
 
 from datetime import datetime
 
-class PaymentMixin (HasResourceMixin, HasAvailabilityMixin):
-
+class ProductMixin (HasResourceMixin, HasAvailabilityMixin, HasRuleMixin):
+    '''
+    Shared mixin for models that involve payments, providing common properties and methods.
+    Images are marked as resources with tags 'PRODUCT_PHOTO_MAIN' and 'PRODUCT_PHOTO_SECONDARY'.
+    '''
     @property
     def requires_verification(self):
         '''
@@ -24,6 +27,23 @@ class PaymentMixin (HasResourceMixin, HasAvailabilityMixin):
         Returns whether the product can be published (made active).
         '''
         if self.requires_verification() and not self.verified:
+            return False
+        return True
+    
+    @property
+    def is_purchasable(self):
+        '''
+        Returns whether the product is purchasable based on its active status and availability windows.
+        '''
+        if not self.is_active:
+            return False
+        
+        now = datetime.now()
+        availability_windows = self.product_availability_windows
+        if availability_windows.exists():
+            for window in availability_windows:
+                if window.available_from <= now <= window.available_to:
+                    return True
             return False
         return True
     

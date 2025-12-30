@@ -11,6 +11,9 @@ import uuid
 
 from apps.locations.models import AreaLocation
 from apps.payments.evaluator import DiscountContext
+
+from apps.common.models.rules import AccessRule
+from apps.common.evaluator import BaseEvaluator, BaseContext, rules_apply
 from apps.common.models.softdelete import SoftDeleteModel
 
 User = get_user_model()
@@ -215,15 +218,34 @@ class Attendee(SoftDeleteModel):
             return False
         # TODO: implement payment logic
         
-    def pricing_context(self):
+    def pricing_context(self): # DEPRECATE in favour of get_base_context
         '''
         @param payable: An instance of a PayableModel (e.g., ticket, registration fee)
         @return: DiscountContext instance for pricing evaluations
         '''        
-        return DiscountContext(
+        return DiscountContext( #TODO migrate to use base from common
             user=self.user,
             event=self.event,
             metadata={
+                "age": self.age,
+                "organisations": list(self.organisations.values_list('organisation__title', flat=True)),
+                "staff_roles": self.staff_role_names,
+                "is_event_staff": self.is_event_staff,
+                "full_name": self.full_name,
+                "location": self.area_from.area_name if self.area_from else None,
+            }
+        )
+    
+    def get_base_context(self) -> BaseContext: # TODO: migrate to use common base context
+        '''
+        Generate a BaseContext for all evaluations.
+
+        @return: BaseContext instance for rule evaluations
+        '''
+        return BaseContext(
+            user=self.user,
+            event=self.event,
+            metadata={ # attendee-specific metadata
                 "age": self.age,
                 "organisations": list(self.organisations.values_list('organisation__title', flat=True)),
                 "staff_roles": self.staff_role_names,
