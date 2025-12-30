@@ -233,9 +233,7 @@ class Order(RequiresVerificationModel): # orders may require verification before
             
             product_variant.can_attendee_purchase_quantity(self.attendee, quantity, raise_exception=True) # raises if not enough stock
             
-            unit_price: Decimal = product_variant.get_attendee_final_price(
-                context=self.attendee.get_base_context() if self.attendee else {}
-            ).amount # with discounts applied
+            unit_price: Decimal = product_variant.get_attendee_final_price(self.attendee).amount # with discounts applied
             total_price = (unit_price * Decimal(quantity)).quantize(Decimal("0.01"))
 
             order_item = OrderItem(

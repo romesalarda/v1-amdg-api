@@ -86,8 +86,10 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         abstract = True
 
     def clean(self):
-        super().clean()
 
+        if self.base_amount is None:
+            raise ValidationError({'base_amount': 'Base amount must be set.'})
+        
         if self.base_amount.amount < 0:
             raise ValidationError({'base_amount': 'Base amount must be non-negative.'})
 

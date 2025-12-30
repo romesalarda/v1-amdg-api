@@ -42,6 +42,7 @@ class ProductMixin (HasResourceMixin, HasAvailabilityMixin, HasRuleMixin):
         availability_windows = self.product_availability_windows
         if availability_windows.exists():
             for window in availability_windows:
+                now = now.astimezone(window.timezone)
                 if window.available_from <= now <= window.available_to:
                     return True
             return False

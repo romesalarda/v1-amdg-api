@@ -119,6 +119,10 @@ class ProductModelTest(TestCase):
         
     def test_product_cannot_be_active_without_verification(self):
         """Test that unverified products cannot be made active"""
+
+        self.event.settings.product_publication_requires_verification = True
+        self.event.settings.save()
+        
         product = Product(
             title='Unverified Product',
             event=self.event,
@@ -866,7 +870,7 @@ class ProductVariantModelTest(TestCase):
         )
         
         self.assertIn('T-Shirt', str(variant))
-        self.assertIn('Medium', str(variant))
+        self.assertIn('MD', str(variant))
         self.assertIn('ProductVariant', repr(variant))
 
 
@@ -1506,8 +1510,11 @@ class OrderItemManagementTest(TestCase):
             attendee=self.attendee,
             status=OrderStatusChoices.PENDING,
             total_amount=Money(0, 'GBP'),
-            created_by=self.user
+            created_by=self.user,
+            customer=self.user
         )
+        order.full_clean()
+        order.save()
         
         initial_stock = self.variant.stock_quantity
         

@@ -83,8 +83,23 @@ class Product(ProductMetaClass): # discounts, resources and availability all app
         ]
 
     def clean(self):
+        super().clean() 
         if not self.can_publish and self.is_active:
             raise exceptions.ValidationError("Product cannot be published (made active) as it is not verified.")
+        
+        if self.is_active and not self.verified and self.requires_verification:
+            raise exceptions.ValidationError("Unverified products that require verification cannot be published.")
+        
+        # check unique constraint manually to provide better error message
+        existing_products = Product.objects.filter(
+            title__iexact=self.title.strip(),
+            event=self.event
+        )
+        if self.pk:
+            existing_products = existing_products.exclude(pk=self.pk)
+
+        if existing_products.exists():
+            raise exceptions.ValidationError("A product with this title already exists for the event.")
         
         self.title = self.title.strip().title()
 
@@ -157,25 +172,50 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         return f"ProductVariant({self.id}) - {self.product.title} - Size: {self.size} - Color: {self.color}"
     
     def __repr__(self):
-        return f"<ProductVariant id={self.id} variant_id={self.variant_id} product={self.product.title} size={self.size} color={self.color} stock_quantity={self.stock_quantity} active={self.active}>"
+        return f"<ProductVariant id={self.id} variant_id={self.variant_id} product={self.product.title} size={self.size} color={self.color} stock_quantity={self.stock_quantity} active={self.is_active}>"
     
-    def clean(self):
+    @property
+    def is_purchasable(self) -> bool:
+        return super().is_purchasable and self.product.is_purchasable
 
-        self.base_amount = self.product.base_amount # MUST match product price, otherwise we would have two base_amounts conflicting
+    def clean(self):
         super().clean() # call PayableModel clean
 
         if self.stock_quantity < 0:
             raise exceptions.ValidationError("Stock quantity cannot be negative.")
         if not self.product:
             raise exceptions.ValidationError("ProductVariant must be associated with a Product.")
+        
+        # check unique constraint manually to provide better error message
+        existing_variants = ProductVariant.objects.filter(
+            product=self.product,
+            size=self.size,
+            color=self.color
+        )
+        if self.pk:
+            existing_variants = existing_variants.exclude(pk=self.pk)
+
+        if existing_variants.exists():
+            raise exceptions.ValidationError("A ProductVariant with the same product, size, and color already exists.")
 
         self.color = self.color.upper()
         self.size = self.size.strip().upper()
 
         self.product.clean()
+
+    def _set_base_amount_from_product(self):
+        if not self.product_id:
+            raise exceptions.ValidationError("Cannot set base amount: ProductVariant is not associated with a Product.")
+        
+        self.base_amount = self.product.base_amount
     
     def save(self, *args, **kwargs):
-        self.clean()
+        self._set_base_amount_from_product()
+        self.size = self.size.strip().upper()
+        self.color = self.color.upper()
+
+        self.full_clean()
+
         super().save(*args, **kwargs)
 
     @property
@@ -323,7 +363,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
             raise exceptions.ValidationError("The provided attendee is not a valid Attendee instance.")
         
         final_price = self.total_amount_for_context(
-            context=attendee.get_base_context(),
+            context=attendee.pricing_context(),
         )
         return final_price
     
