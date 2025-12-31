@@ -5,7 +5,11 @@ from django.core.exceptions import ValidationError
 from apps.common.models import RequiresVerificationModel
 from apps.payments.mixins import DiscountMixin
 
+from django.contrib.auth import get_user_model
+
 import uuid
+
+User = get_user_model()
 
 # i.e. stardard registration may come with the event t-shirt and a mug
 # 1. standard package: t-shirt + mug (£15) with registration costing £10 and T-shirt costing £10 so £5 discount on package
@@ -31,7 +35,7 @@ class PackageProduct(RequiresVerificationModel, DiscountMixin): # discounts can 
     quantity_per_attendee = models.PositiveIntegerField(default=1, verbose_name=_("Quantity Per Attendee"))
     added_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Added At"))
     added_by = models.ForeignKey(
-        'auth.User',
+        User,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

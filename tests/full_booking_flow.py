@@ -77,6 +77,11 @@ class FullBookingFlowIntegrationTest(TestCase):
             code='YOUTH',
             created_by=self.sam
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Youth Events Org',
+            created_by=self.sam
+        )
         
         self.event = Event.objects.create(
             title='Annual Youth Conference 2025',
@@ -86,7 +91,8 @@ class FullBookingFlowIntegrationTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         # Create ticket types
