@@ -17,7 +17,7 @@ import uuid
 from decimal import Decimal
 
 ORDER_STATUS_TRANSITIONS = {
-    'draft': ['pending'],
+    'draft': ['pending', 'cancelled'],
     'pending': ['processing', 'cancelled'],
     'processing': ['completed', 'refunded'],
     'completed': ['refunded'],
@@ -39,7 +39,7 @@ class OrderStatusChoices(models.TextChoices):
 #  4. Once fulfilled, order status changes to 'completed'
 #  If cancelled at any point before completion, status changes to 'cancelled'
 
-class Order(RequiresVerificationModel): # orders may require verification before processing
+class Order(RequiresVerificationModel): # orders may require verification before processing # no admin model
     '''
     Order model to handle customer orders for products.
     '''
@@ -139,7 +139,7 @@ class Order(RequiresVerificationModel): # orders may require verification before
     
     @property
     def can_add_products(self) -> bool:
-        if self.status != OrderStatusChoices.PENDING:
+        if self.status != OrderStatusChoices.DRAFT:
             return False
         return True
 
@@ -217,7 +217,7 @@ class Order(RequiresVerificationModel): # orders may require verification before
             raise exceptions.ValidationError("Quantity must be at least 1.")
         
         if not self.can_add_products:
-            raise exceptions.ValidationError("Cannot add products to an order that is not in 'pending' status.")
+            raise exceptions.ValidationError("Cannot add products to an order that is not in 'draft' status.")
         
 
         with transaction.atomic():
@@ -255,8 +255,25 @@ class Order(RequiresVerificationModel): # orders may require verification before
             self.save() # persist changes
 
         return order_item
+    
+    def submit(self):
+        '''
+        Submits the order, transitioning it from 'draft' to 'pending' status.
+        Raises ValidationError if the order cannot be submitted.
+        '''
+        if self.status != OrderStatusChoices.DRAFT:
+            raise exceptions.ValidationError("Only orders in 'draft' status can be submitted.")
+        if self.order_items.count() == 0:
+            raise exceptions.ValidationError("Cannot submit an order with no items.")
+        
+        self.transition_to(OrderStatusChoices.PENDING)
 
-class OrderItem(models.Model):
+    def cancel(self):
+        '''
+        Cancels the order, transitioning it to 'cancelled' status.
+        '''
+        self.transition_to(OrderStatusChoices.CANCELLED)
+class OrderItem(models.Model): # no admin model
     '''
     OrderItem model to represent individual items within an order.
     '''

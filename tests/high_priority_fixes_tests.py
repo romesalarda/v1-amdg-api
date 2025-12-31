@@ -96,7 +96,7 @@ class StockRestorationOnCancellationTest(TestCase):
         # Create and add items to order
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user
@@ -122,15 +122,16 @@ class StockRestorationOnCancellationTest(TestCase):
         # Create completed order
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user
         )
         
         order.add_order_item(self.variant, 3)
-        order.transition_to(OrderStatusChoices.PROCESSING)
-        order.transition_to(OrderStatusChoices.COMPLETED)
+        order.transition_to(OrderStatusChoices.PENDING) # submitted for processing
+        order.transition_to(OrderStatusChoices.PROCESSING) # being verified
+        order.transition_to(OrderStatusChoices.COMPLETED) # finalized
         
         # Verify stock was decremented
         self.variant.refresh_from_db()
@@ -168,7 +169,7 @@ class StockRestorationOnCancellationTest(TestCase):
         # Create order with multiple items
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user
@@ -260,7 +261,7 @@ class TransactionBoundaryTest(TestCase):
         """Test that order total is updated within the same transaction as item creation"""
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user
@@ -347,7 +348,7 @@ class OrderTotalValidationTest(TestCase):
         """Test that validation rejects orders where total doesn't match items"""
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user
@@ -369,7 +370,7 @@ class OrderTotalValidationTest(TestCase):
         """Test that validation accepts orders with correct totals"""
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user
@@ -452,12 +453,13 @@ class OptimizedQueryTest(TestCase):
         for i in range(3):
             order = Order.objects.create(
                 attendee=self.attendee,
-                status=OrderStatusChoices.PENDING,
+                status=OrderStatusChoices.DRAFT,
                 total_amount=Money(0, 'GBP'),
                 created_by=self.user,
                 customer=self.user
             )
             order.add_order_item(self.variant, 2)
+            order.transition_to(OrderStatusChoices.PENDING)
             order.transition_to(OrderStatusChoices.PROCESSING)
             order.transition_to(OrderStatusChoices.COMPLETED)
         
@@ -470,19 +472,20 @@ class OptimizedQueryTest(TestCase):
         # Create completed order
         order1 = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user
         )
         order1.add_order_item(self.variant, 3)
+        order1.transition_to(OrderStatusChoices.PENDING)
         order1.transition_to(OrderStatusChoices.PROCESSING)
         order1.transition_to(OrderStatusChoices.COMPLETED)
         
         # Create cancelled order
         order2 = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user

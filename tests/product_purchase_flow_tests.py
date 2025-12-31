@@ -251,13 +251,13 @@ class FullProductPurchaseFlowTest(TestCase):
         order = Order.objects.create(
             customer=self.emma,
             attendee=self.emma_attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT, # TODO: shoulder be DRAFT initially
             total_amount=Money(0, 'GBP'),
             created_by=self.emma
         )
         
         self.assertIsNotNone(order.order_reference_id)
-        self.assertEqual(order.status, OrderStatusChoices.PENDING)
+        self.assertEqual(order.status, OrderStatusChoices.DRAFT)
         
         # ===== STEP 5: Add products to order =====
         initial_tshirt_stock = self.tshirt_medium_blue.stock_quantity
@@ -304,6 +304,10 @@ class FullProductPurchaseFlowTest(TestCase):
             self.hoodie_large_black.stock_quantity,
             initial_hoodie_stock - 1
         )
+
+        # submit order
+        order.transition_to(OrderStatusChoices.PENDING)
+        self.assertEqual(order.status, OrderStatusChoices.PENDING)
         
         # ===== STEP 9: Create payment =====
         payment = Payment.objects.create(
@@ -355,7 +359,7 @@ class FullProductPurchaseFlowTest(TestCase):
         order = Order.objects.create(
             customer=self.emma,
             attendee=self.emma_attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.emma
         )
@@ -387,7 +391,7 @@ class FullProductPurchaseFlowTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.emma_attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.emma
         )
@@ -409,7 +413,7 @@ class FullProductPurchaseFlowTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.emma_attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.emma
         )
@@ -431,7 +435,7 @@ class FullProductPurchaseFlowTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.emma_attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.emma
         )
@@ -449,7 +453,7 @@ class FullProductPurchaseFlowTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.emma_attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.emma,
             customer=self.emma
@@ -482,7 +486,7 @@ class FullProductPurchaseFlowTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.emma_attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.emma,
             customer=self.emma
@@ -540,7 +544,7 @@ class FullProductPurchaseFlowTest(TestCase):
         
         order = Order.objects.create(
             attendee=staff_attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=staff_student,
             customer=staff_student

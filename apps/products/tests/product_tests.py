@@ -1331,13 +1331,13 @@ class OrderModelTest(TestCase):
         self.assertFalse(order.can_transition_to(OrderStatusChoices.PENDING))
         self.assertFalse(order.can_transition_to(OrderStatusChoices.PROCESSING))
         
-    def test_order_can_add_products_only_in_pending_status(self):
-        """Test that products can only be added in pending status"""
+    def test_order_can_add_products_only_in_draft_status(self):
+        """Test that products can only be added in draft status"""
         from apps.products.models import Order, OrderStatusChoices
         
-        pending_order = Order.objects.create(
+        draft_order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user
         )
@@ -1349,7 +1349,7 @@ class OrderModelTest(TestCase):
             created_by=self.user
         )
         
-        self.assertTrue(pending_order.can_add_products)
+        self.assertTrue(draft_order.can_add_products)
         self.assertFalse(completed_order.can_add_products)
         
     def test_get_total_amount_calculation(self):
@@ -1374,7 +1374,7 @@ class OrderModelTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user
         )
@@ -1421,7 +1421,7 @@ class OrderModelTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user
         )
@@ -1508,7 +1508,7 @@ class OrderItemManagementTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user,
             customer=self.user
@@ -1543,7 +1543,7 @@ class OrderItemManagementTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user
         )
@@ -1562,7 +1562,7 @@ class OrderItemManagementTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user
         )
@@ -1578,7 +1578,7 @@ class OrderItemManagementTest(TestCase):
         
         order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user
         )
@@ -1586,8 +1586,8 @@ class OrderItemManagementTest(TestCase):
         with self.assertRaises(ValidationError):
             order.add_order_item(self.variant, 0)
             
-    def test_add_order_item_to_non_pending_order_raises_error(self):
-        """Test that items can only be added to pending orders"""
+    def test_add_order_item_to_non_draft_order_raises_error(self):
+        """Test that items can only be added to draft orders"""
         from apps.products.models import Order, OrderStatusChoices
         
         order = Order.objects.create(
@@ -1600,7 +1600,7 @@ class OrderItemManagementTest(TestCase):
         with self.assertRaises(ValidationError) as context:
             order.add_order_item(self.variant, 1)
         
-        self.assertIn('not in \'pending\' status', str(context.exception).lower())
+        self.assertIn('not in \'draft\' status', str(context.exception).lower())
 
 
 class OrderItemModelTest(TestCase):
@@ -1667,7 +1667,7 @@ class OrderItemModelTest(TestCase):
         from apps.products.models import Order, OrderStatusChoices
         self.order = Order.objects.create(
             attendee=self.attendee,
-            status=OrderStatusChoices.PENDING,
+            status=OrderStatusChoices.DRAFT,
             total_amount=Money(0, 'GBP'),
             created_by=self.user
         )
