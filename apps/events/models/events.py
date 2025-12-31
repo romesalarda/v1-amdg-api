@@ -139,6 +139,9 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         return f"<Event {self.display_code} - {self.title}>"
                 
     def clean(self):
+        if self.start_datetime is None or self.end_datetime is None:
+            raise ValidationError("Event must have both start_datetime and end_datetime defined.")
+
         if self.start_datetime >= self.end_datetime:
             raise ValidationError("Event start_datetime must be before end_datetime.")
         

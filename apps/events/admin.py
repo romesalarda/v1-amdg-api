@@ -4,7 +4,8 @@ from .models import (
     Event, EventType, EventAuthorization, EventPermission, 
     EventPermissionAssignment, EventReview, EventRole, 
     EventRoleAssignment, EventStaff, EventStaffAvailability,
-    EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice
+    EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice,
+    EventSettings
 )
 
 
@@ -353,3 +354,57 @@ class EventQuestionAnswerChoiceAdmin(admin.ModelAdmin):
     def get_attendee(self, obj):
         return obj.answer.attendee
     get_attendee.short_description = 'Attendee'
+
+
+@admin.register(EventSettings)
+class EventSettingsAdmin(admin.ModelAdmin):
+    list_display = ('event', 'payment_enabled', 'product_selling_enabled', 'donation_enabled', 
+                    'refunds_enabled', 'participants_registration_require_verification')
+    list_filter = ('payment_enabled', 'product_selling_enabled', 'donation_enabled', 
+                   'refunds_enabled', 'participants_registration_require_verification',
+                   'product_publication_requires_verification', 'accepting_sponsorships_enabled')
+    search_fields = ('event__title', 'event__display_code', 'event__display_identifier')
+    readonly_fields = ('get_event_details',)
+    autocomplete_fields = ('event',)
+    
+    fieldsets = (
+        ('Event', {
+            'fields': ('event', 'get_event_details', 'default_timezone')
+        }),
+        ('Payment Settings', {
+            'fields': ('payment_enabled', 'refunds_enabled'),
+            'description': 'Payment must be enabled for products, donations, and refunds to work.'
+        }),
+        ('Product Settings', {
+            'fields': ('product_selling_enabled', 'product_publication_requires_verification')
+        }),
+        ('Donation & Sponsorship Settings', {
+            'fields': ('donation_enabled', 'accepting_sponsorships_enabled')
+        }),
+        ('Registration Settings', {
+            'fields': ('participants_registration_require_verification',)
+        }),
+    )
+    
+    def get_event_details(self, obj):
+        if obj.event:
+            return format_html(
+                '<strong>Title:</strong> {}<br>'
+                '<strong>Code:</strong> {}<br>'
+                '<strong>Status:</strong> {}<br>'
+                '<strong>Start:</strong> {}<br>'
+                '<strong>End:</strong> {}',
+                obj.event.title,
+                obj.event.display_code,
+                obj.event.get_status_display(),
+                obj.event.start_datetime.strftime('%Y-%m-%d %H:%M'),
+                obj.event.end_datetime.strftime('%Y-%m-%d %H:%M')
+            )
+        return '-'
+    get_event_details.short_description = 'Event Details'
+    
+    def has_delete_permission(self, request, obj=None):
+        # EventSettings should not be deleted independently from Event
+        return False
+
+    
