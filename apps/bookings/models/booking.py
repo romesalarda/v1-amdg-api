@@ -27,7 +27,7 @@ class BookingPackage(PayableModel):
         TicketType,
         on_delete=models.PROTECT,
         related_name='booking_packages'
-    )
+    ) # scope to a specific ticket type
     
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -94,6 +94,24 @@ class BookingPackage(PayableModel):
         )
         
         return payment_package_applies(self, package_context)
+    
+    @property
+    def associated_products(self):
+        """
+        Retrieve all products associated with this booking package.
+        """
+        return self.package_products.select_related('product').all()
+    
+    def total_amount_for_context(self, context):
+        booking_ammount = super().total_amount_for_context(context)
+
+        if self.associated_products.exists():
+            for product in self.associated_products:
+                booking_ammount += product.total_amount_for_context(context)
+
+        return booking_ammount
+
+
     
 # system flow Create attendee(s) -> create booking -> create tickets linked to booking and attendees
     

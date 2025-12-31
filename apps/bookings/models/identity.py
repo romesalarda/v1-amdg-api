@@ -103,7 +103,7 @@ class AttendeeAlternativeSigninIdentifier(models.Model):
     '''
     sign_id = models.UUIDField(default=uuid.uuid4, editable=False, verbose_name=_("Sign ID"))
     attendee = models.ForeignKey( # attendee associated with this identifier for fast lookup
-        'bookings.Attendee',
+        'attendee.Attendee',
         on_delete=models.CASCADE,
         related_name='alternative_signins',
         verbose_name=_("Attendee")
