@@ -9,6 +9,7 @@ from django.conf import settings
 
 from django.contrib.contenttypes.models import ContentType
 from timezone_field import TimeZoneField
+from django.utils import timezone
 
 import uuid
 
@@ -44,15 +45,17 @@ class EventType(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def clean(self):
-        if self.title:
-            self.title = self.title.strip()
-        if self.code is None:
-            self.code = slugify(self.title)[:MAX_EVENT_CODE_LENGTH].upper()
-        else:
-            self.code = slugify(self.code)[:MAX_EVENT_CODE_LENGTH].upper()
+        if self.title is None or self.title.strip() == '':
+            raise ValidationError("EventType must have a title.")
     
     def save(self, *args, **kwargs):
-        self.clean()
+        if self.title:
+            self.title = self.title.strip()
+        if self.code is None or self.code.strip() == '':
+            self.code = slugify(self.title).upper()[:MAX_EVENT_CODE_LENGTH]
+        else:
+            self.code = slugify(self.code).upper()[:MAX_EVENT_CODE_LENGTH]
+
         super().save(*args, **kwargs)
     
     def __str__(self):
@@ -80,7 +83,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     
     # admin fields
     status = models.CharField(max_length=20, choices=EventStatusChoices.choices, default=EventStatusChoices.DRAFTING)
-    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_events')
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_events', blank=False, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     event_type = models.ForeignKey(EventType, on_delete=models.SET_NULL, null=True, related_name='events')
     timezone = TimeZoneField(default='Europe/London')
@@ -129,7 +132,14 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         ]
         
     def save(self, *args, **kwargs):
-        self.clean()        
+        self.full_clean()
+        if self.title:
+            self.title = self.title.strip()
+            self.url_safe_title = slugify(self.title)   
+            
+        if self.display_identifier is None or self.display_identifier == '':
+            self.display_identifier = str(str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]).upper()
+
         super().save(*args, **kwargs)
         
     def __str__(self):
@@ -146,15 +156,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             raise ValidationError("Event start_datetime must be before end_datetime.")
         
         if self.start_datetime == self.end_datetime:
-            raise ValidationError("Event start_datetime and end_datetime cannot be the same.")
-        
-        if self.title:
-            self.title = self.title.strip()
-            self.url_safe_title = slugify(self.title)   
-            
-        if self.display_identifier is None or self.display_identifier == '':
-            self.display_identifier = str(str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]).upper()
-            
+            raise ValidationError("Event start_datetime and end_datetime cannot be the same.")            
         if self.created_by is None:
             raise ValidationError("Event must have a created_by user.")
         
@@ -167,10 +169,57 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         )
     
     @property
+    def start_date_tzaware(self):
+        # timezone-aware date
+        return self.start_datetime.astimezone(self.timezone).date()
+    
+    @property
+    def end_date_tzaware(self):
+        # timezone-aware date
+        return self.end_datetime.astimezone(self.timezone).date()
+    
+    @property
+    def duration_days(self):
+        delta = self.end_date_tzaware - self.start_date_tzaware
+        return delta.days + 1  # inclusive of start and end date
+    
+    @property
+    def is_ongoing(self):
+        now = timezone.now().astimezone(self.timezone)
+        return self.start_datetime.astimezone(self.timezone) <= now <= self.end_datetime.astimezone(self.timezone)
+    
+    @property
     def is_approved(self):
         from apps.events.models.authorization import EventAuthorizationStatusChoices
         auth = self.latest_authorisation() 
         return auth and auth.status == EventAuthorizationStatusChoices.APPROVED
+
+    @property
+    def can_participants_register(self):
+        return (
+            self.status == EventStatusChoices.OPEN and 
+            self.is_approved and 
+            not self.max_capacity_reached
+            )
+
+    @property
+    def can_event_be_published(self):
+        return self.is_approved and self.status in [
+            EventStatusChoices.DRAFTING,
+            EventStatusChoices.POSTPONED,
+            EventStatusChoices.CANCELLED
+        ]
+    
+    @property
+    def max_capacity_reached(self):
+        if self.maximum_attendance is None:
+            return False
+        return self.attendees.count() >= self.maximum_attendance
+    
+    @property
+    def number_of_attendees(self):
+        return self.attendees.count()
+
 class EventSettings(models.Model):
     '''
     Settings model to manage payment and registration settings for an event.
@@ -189,7 +238,7 @@ class EventSettings(models.Model):
         help_text="Whether products for this event require verification before being purchasable."  
     ) # products added to this event require verification before being purchasable
     product_selling_enabled = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Whether selling products is enabled for this event."
     ) # whether selling products is enabled for this event
 
@@ -228,12 +277,38 @@ class EventSettings(models.Model):
             raise ValidationError("EventSettings must be associated with an Event.")
         
         if self.payment_enabled is False:
-            self.donation_enabled = False
-            self.refunds_enabled = False
-            self.product_selling_enabled = False
+            if self.donation_enabled:
+                raise ValidationError("Donations cannot be enabled if payment processing is disabled.")
+            
+            if self.refunds_enabled:
+                raise ValidationError("Refunds cannot be enabled if payment processing is disabled.")
+            
+            if self.product_selling_enabled:
+                raise ValidationError("Product selling cannot be enabled if payment processing is disabled.")           
         
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)   
+
+    def enable_payments(self):
+        '''
+        Enable payment-related features for the event.
+        
+        :param self: Description
+        '''
+        self.payment_enabled = True
+        self.save()
+
+    def disable_payments(self):
+        '''
+        Disable all payment-related features for the event.
+        
+        :param self: Description
+        '''
+        self.payment_enabled = False
+        self.donation_enabled = False
+        self.refunds_enabled = False
+        self.product_selling_enabled = False
+        self.save()
 
     
