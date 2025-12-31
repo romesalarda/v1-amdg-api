@@ -168,7 +168,6 @@ class Ticket(models.Model):
         
     def clean(self):
         super().clean()
-        
         # Validate that attendee's event matches ticket_type's event
         if self.attendee and self.ticket_type:
             if self.attendee.event_id != self.ticket_type.event_id:
@@ -182,9 +181,23 @@ class Ticket(models.Model):
                 raise ValidationError({
                     'package': 'Package must be for the same ticket type as this ticket.'
                 })
+            
+    @property
+    def is_valid(self) -> bool:
+        '''
+        Check if the ticket is valid for use based on its status and uses remaining.
+        
+        :return: True if the ticket is active and has remaining uses, False otherwise.
+        :rtype: bool
+        '''
+        return self.status == TicketStatusChoices.ACTIVE and self.uses > 0
         
     def use_ticket(self):
+        '''
+        Mark the ticket as used by decrementing the uses count.
         
+        :param self: Description
+        '''
         if self.status != TicketStatusChoices.ACTIVE:
             raise ValidationError("Only active tickets can be used.")
         if self.uses <= 0:

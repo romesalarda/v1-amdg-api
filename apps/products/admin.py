@@ -133,12 +133,12 @@ class OrderItemInline(admin.TabularInline):
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     list_display = ('order_reference_id', 'get_event', 'customer', 'attendee', 'status', 
-                    'total_amount', 'verification_status', 'created_at')
-    list_filter = ('status', 'verification_status', 'created_at', 'updated_at')
+                    'total_amount', 'created_at')
+    list_filter = ('status', 'created_at', 'updated_at')
     search_fields = ('order_reference_id', 'order_id', 'customer__email', 'customer__first_name', 
                      'customer__last_name', 'attendee__user__email')
-    readonly_fields = ('order_id', 'order_reference_id', 'created_at', 'updated_at', 'get_event',
-                       'verified_updated_at', 'verified_by', 'processed_at', 'processed_by')
+    readonly_fields = ('order_id', 'order_reference_id', 'created_at', 'updated_at', 'get_event')
+                    #    'verified_updated_at', 'verified_by', 'processed_at', 'processed_by')
     autocomplete_fields = ('customer', 'attendee', 'created_by', 'updated_by', 'payment')
     inlines = [OrderItemInline]
     list_select_related = ('customer', 'attendee', 'attendee__event', 'payment', 'created_by')
@@ -153,10 +153,10 @@ class OrderAdmin(admin.ModelAdmin):
         ('Payment', {
             'fields': ('total_amount', 'payment')
         }),
-        ('Verification', {
-            'fields': ('verification_status', 'verified_updated_at', 'verified_by', 'processed_at', 'processed_by'),
-            'classes': ('collapse',)
-        }),
+        # ('Verification', {
+        #     'fields': ('verification_status', 'verified_updated_at', 'verified_by', 'processed_at', 'processed_by'),
+        #     'classes': ('collapse',)
+        # }), # Verification removed for orders
         ('Metadata', {
             'fields': ('created_by', 'created_at', 'updated_by', 'updated_at'),
             'classes': ('collapse',)
@@ -174,7 +174,7 @@ class OrderAdmin(admin.ModelAdmin):
     get_event.short_description = 'Event'
     
     actions = ['transition_to_pending', 'transition_to_processing', 'transition_to_completed', 
-               'transition_to_cancelled', 'mark_as_verified']
+               'transition_to_cancelled'] #, 'mark_as_verified']
     
     def transition_to_pending(self, request, queryset):
         for order in queryset:
@@ -212,14 +212,14 @@ class OrderAdmin(admin.ModelAdmin):
                 self.message_user(request, f"Error transitioning {order.order_reference_id}: {str(e)}", level='error')
     transition_to_cancelled.short_description = "Transition to Cancelled"
     
-    def mark_as_verified(self, request, queryset):
-        for order in queryset:
-            try:
-                order.mark_verified(request.user)
-                self.message_user(request, f"Order {order.order_reference_id} marked as verified")
-            except Exception as e:
-                self.message_user(request, f"Error verifying {order.order_reference_id}: {str(e)}", level='error')
-    mark_as_verified.short_description = "Mark as Verified"
+    # def mark_as_verified(self, request, queryset):
+    #     for order in queryset:
+    #         try:
+    #             order.mark_verified(request.user)
+    #             self.message_user(request, f"Order {order.order_reference_id} marked as verified")
+    #         except Exception as e:
+    #             self.message_user(request, f"Error verifying {order.order_reference_id}: {str(e)}", level='error')
+    # mark_as_verified.short_description = "Mark as Verified"
 
 
 @admin.register(OrderItem)

@@ -10,6 +10,7 @@ from django.conf import settings
 
 from core.utils.display import try_generate_unique_display_code
 from apps.common.models.verification import RequiresVerificationModel
+from apps.common.models.softdelete import SoftDeleteModel
 
 from .product import ProductVariant
 
@@ -39,7 +40,7 @@ class OrderStatusChoices(models.TextChoices):
 #  4. Once fulfilled, order status changes to 'completed'
 #  If cancelled at any point before completion, status changes to 'cancelled'
 
-class Order(RequiresVerificationModel): # orders may require verification before processing # no admin model
+class Order(SoftDeleteModel): # no admin model
     '''
     Order model to handle customer orders for products.
     '''

@@ -64,6 +64,44 @@ class PaymentMixin:
                 status=PaymentStatusChoices.COMPLETED
             )
         return qs
+    
+    @property
+    def payment(self):
+        """
+        Returns the first associated Payment object, or None if none exist.
+        Assumes a GenericForeignKey relationship.
+        """
+        payments = self.payments.filter()
+        if payments.count() > 1:
+            # Log a warning if multiple payments exist
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"Multiple payments found for {self.__class__.__name__} id={self.pk}. Returning the first one."
+            )
+        return payments.first() if payments.exists() else None
+
+
+    def add_payment(self, payment):
+        """
+        Associates a Payment object with this instance.
+        Assumes a GenericForeignKey relationship.
+        """
+        payment.target_type = ContentType.objects.get_for_model(self.__class__)
+        payment.target_id = self.pk
+        payment.full_clean()
+        payment.save(
+            update_fields=['target_type', 'target_id']
+        )
+        return payment
+        
+    def remove_payment(self, payment):
+        """
+        Removes the association of a Payment object from this instance.
+        Assumes a GenericForeignKey relationship.
+        """
+        for p in self.payments.filter(payment_id=payment.payment_id):
+            p.delete()
 
 class PayableModel(models.Model, DiscountMixin, PaymentMixin):
     """
