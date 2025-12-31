@@ -1430,8 +1430,8 @@ class OrderModelTest(TestCase):
             order=order,
             product_variant=variant,
             quantity=3,
-            unit_price=Money(30, 'GBP'),
-            total_price=Money(90, 'GBP')
+            unit_price=Money(30, 'GBP'), # after discount
+            total_price=Money(90, 'GBP') # 3 * 30
         )
         
         order.recalculate_total_amount()

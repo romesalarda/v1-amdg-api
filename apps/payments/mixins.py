@@ -140,6 +140,12 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
 
     @property
     def modified_amount(self):
+        '''
+        Calculate the modified amount after applying the percentage modifier to the base amount.
+        
+        :param self: Instance of PayableModel
+        :return: Money representing the modified amount
+        '''
         if not self.base_amount or self.percentage_modifier == 0:
             return self.base_amount
         
@@ -148,7 +154,13 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         )
 
 
-    def total_amount_for_context(self, context):
+    def total_amount_for_context(self, context) -> Money:
+        '''
+        Calculate the total amount payable after applying discounts based on the provided context.
+        
+        :param self: Instance of PayableModel
+        :param context: ContextObject providing context for discount evaluation
+        '''
         price = self.modified_amount
 
         discount = self.calculate_total_discounts(
@@ -190,7 +202,15 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
     def __repr__(self):
         return f"<PayableModel base_amount={self.base_amount}, percentage_modifier={self.percentage_modifier}>"
     
-    def calculate_total_discounts(self, discount_base, context):
+    def calculate_total_discounts(self, discount_base, context) -> Money:
+        '''
+        Calculate the total discounts applicable to this payable model based on the provided context.
+        
+        :param self: Instance of PayableModel
+        :param discount_base: Money representing the amount before discounts
+        :param context: ContextObject providing context for discount evaluation
+        :return: Money representing total discounts applied
+        '''
         from apps.payments.models.discounts import DiscountType
         from apps.payments.evaluator import discount_applies
         from djmoney.money import Money

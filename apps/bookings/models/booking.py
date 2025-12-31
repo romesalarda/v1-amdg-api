@@ -102,17 +102,6 @@ class BookingPackage(PayableModel):
         """
         return self.package_products.select_related('product').all()
     
-    def total_amount_for_context(self, context):
-        booking_ammount = super().total_amount_for_context(context)
-
-        if self.associated_products.exists():
-            for product in self.associated_products:
-                booking_ammount += product.total_amount_for_context(context)
-
-        return booking_ammount
-
-
-    
 # system flow Create attendee(s) -> create booking -> create tickets linked to booking and attendees
     
 class Booking(models.Model):

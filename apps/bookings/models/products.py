@@ -3,7 +3,9 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 
 from apps.common.models import RequiresVerificationModel
-from apps.payments.mixins import DiscountMixin
+from apps.payments.mixins import DiscountMixin, PayableModel
+
+from djmoney.models.fields import MoneyField
 
 from django.contrib.auth import get_user_model
 
@@ -15,11 +17,19 @@ User = get_user_model()
 # 1. standard package: t-shirt + mug (£15) with registration costing £10 and T-shirt costing £10 so £5 discount on package
 # 2. standard package standalone: no products (£10)
 
-class PackageProduct(RequiresVerificationModel, DiscountMixin): # discounts can be applied to package products
+class PackageProduct(PayableModel): # discounts can be applied to package products # needs to be added to admin
     '''
     Model representing products included in a booking package.
     '''
 
+    base_amount = MoneyField(
+        max_digits=10,
+        decimal_places=2,
+        default_currency='GBP',
+        editable=False,
+        verbose_name=_("Base Amount")
+        ), # takes its value from product price * quantity_per_attendee
+    
     booking_package = models.ForeignKey(
         'bookings.BookingPackage',
         on_delete=models.CASCADE,
@@ -59,6 +69,7 @@ class PackageProduct(RequiresVerificationModel, DiscountMixin): # discounts can 
     
     def save(self, *args, **kwargs):
         self.full_clean()
+        self.base_amount = self.product.base_price * self.quantity_per_attendee
         super().save(*args, **kwargs)
 
     def clean(self):
@@ -73,3 +84,4 @@ class PackageProduct(RequiresVerificationModel, DiscountMixin): # discounts can 
         if self.booking_package and self.product and self.booking_package.event_id != self.product.event_id:
             raise ValidationError("Product must belong to the same event as the booking package.")
         
+    # TODO: implement payable model methods to calculate price after discounts etc.

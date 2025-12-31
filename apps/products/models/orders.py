@@ -307,7 +307,20 @@ class OrderItem(models.Model): # no admin model
             raise exceptions.ValidationError("Unit price cannot be negative.")
         if self.total_price.amount != self.unit_price.amount * self.quantity:
             raise exceptions.ValidationError("Total price must equal unit price multiplied by quantity.")
-    
+        
+    def set_unit_price(self, new_unit_price: Money): # needs testing
+        '''
+        Sets a new unit price and updates the total price accordingly.
+
+        @param new_unit_price: The new unit price as a Money instance.
+        '''
+        if new_unit_price.amount < 0:
+            raise exceptions.ValidationError("Unit price cannot be negative.")
+        self.unit_price = new_unit_price
+        self.total_price = (new_unit_price.amount * Decimal(self.quantity)).quantize(Decimal("0.01"))
+        self.full_clean()
+        self.save()
+
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)

@@ -366,6 +366,14 @@ class FullBookingFlowIntegrationTest(TestCase):
         sam_context.metadata['is_event_staff'] = True # TODO: use staff object
         
         sam_price = self.early_bird_package.total_amount_for_context(sam_context)
+        
+        ###########################
+        # TODO: Here is where we would add orders if there is merchandise etc.
+
+
+
+        ###########################
+
         expected_sam_price = Money('9.00', 'GBP')  # £10 - 10% = £9
         self.assertEqual(sam_price, expected_sam_price)
         
