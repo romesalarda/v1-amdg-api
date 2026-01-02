@@ -69,7 +69,9 @@ class PackageProduct(PayableModel): # discounts can be applied to package produc
     
     def save(self, *args, **kwargs):
         self.full_clean()
-        self.base_amount = self.product.base_price * self.quantity_per_attendee
+        # base_amount is the product's base price, not multiplied by quantity
+        # quantity_per_attendee defines the max purchasable, not a price multiplier
+        self.base_amount = self.product.base_amount
         super().save(*args, **kwargs)
 
     def clean(self):
@@ -83,5 +85,53 @@ class PackageProduct(PayableModel): # discounts can be applied to package produc
         
         if self.booking_package and self.product and self.booking_package.event_id != self.product.event_id:
             raise ValidationError("Product must belong to the same event as the booking package.")
+    
+    def total_amount_with_variant(self, variant, context):
+        """
+        Calculate the total amount for this package product with a specific variant selection.
         
-    # TODO: implement payable model methods to calculate price after discounts etc.
+        Pricing calculation order:
+        1. Start with variant's modified_amount (product base + variant modifier)
+        2. Apply package bundle discount (PackageProduct.percentage_modifier)
+        3. Apply discounts from Discount model using context
+        
+        This respects the tested ProductVariant pricing methods and the generic Discount system.
+        
+        :param variant: ProductVariant instance selected by the user
+        :param context: DiscountContext for evaluating discounts
+        :return: Money representing the total amount after all modifiers and discounts
+        """
+        from djmoney.money import Money
+        from decimal import Decimal
+        
+        if not variant:
+            raise ValidationError("Variant must be provided to calculate total.")
+        
+        if variant.product_id != self.product_id:
+            raise ValidationError("Variant must belong to the associated product.")
+        
+        # Step 1: Get variant's modified_amount (product base + variant modifier, NO discounts)
+        # This uses the variant's tested property that applies its percentage_modifier
+        variant_modified_price = variant.modified_amount
+        
+        # Step 2: Apply package bundle discount on top of variant price
+        # e.g., £15 variant price * (1 + (-10/100)) = £15 * 0.9 = £13.50
+        package_modifier = self.percentage_modifier / Decimal('100')
+        bundled_price = variant_modified_price * (Decimal('1') + package_modifier)
+        
+        # Step 3: Apply discounts from the generic Discount model
+        # This uses the tested discount system with rules and context
+        discount_amount = self.calculate_total_discounts(
+            discount_base=bundled_price,
+            context=context
+        )
+        
+        # Calculate final total and ensure non-negative
+        final_total = bundled_price - discount_amount
+        zero = Money(0, bundled_price.currency)
+        result = max(final_total, zero)
+        
+        # Ensure result has exactly 2 decimal places (required by MoneyField)
+        from decimal import Decimal, ROUND_HALF_UP
+        rounded_amount = result.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return Money(rounded_amount, result.currency)

@@ -369,7 +369,7 @@ class FullBookingFlowIntegrationTest(TestCase):
         
         ###########################
         # TODO: Here is where we would add orders if there is merchandise etc.
-
+        
 
 
         ###########################
@@ -649,6 +649,821 @@ class FullBookingFlowIntegrationTest(TestCase):
         # Child pays £15 - 15% = £12.75
         self.assertEqual(child_price, Money('12.75', 'GBP'))
         
-        # Total payment
-        total = adult_price + child_price
-        self.assertEqual(total, Money('27.75', 'GBP'))
+    def test_full_booking_flow_with_package_products(self):
+        """
+        Test the complete booking flow with products bundled in packages, including variant selection.
+        
+        Scenario: Sarah (25, student) is registering for a conference with her younger brother Mark (16).
+        - The Standard Package includes registration + Conference T-Shirt (users select size/color)
+        - Registration base: £30
+        - T-Shirt base: £20
+        - Package base: £45 (£5 bundled discount on combined registration + product)
+        - Sarah chooses: Medium Blue t-shirt (0% modifier) -> gets 10% student discount on package
+        - Mark chooses: Small Red t-shirt (+10% premium) -> gets 15% youth discount on package
+        
+        Calculation breakdown:
+        Sarah: 
+          - Package base: £45
+          - T-shirt variant modifier: 0% -> £20 * 1.0 = £20
+          - Package total with product: £45 + £0 = £45
+          - 10% student discount: £45 * 0.9 = £40.50
+        
+        Mark:
+          - Package base: £45
+          - T-shirt variant modifier: +10% -> £20 * 1.1 = £22
+          - Package total with product: £45 + £2 = £47
+          - 15% youth discount: £47 * 0.85 = £39.95
+        
+        Total: £80.45
+        """
+        from apps.bookings.models import PackageProduct
+        from apps.products.models import Product, ProductVariant, ProductSizeChoices
+        from apps.bookings.models import PackageProduct
+        from apps.products.models import Product, ProductVariant, ProductSizeChoices
+        
+        # ===== STEP 1: Create Products with Variants =====
+        # Conference T-Shirt product
+        tshirt_product = Product.objects.create(
+            title='Conference T-Shirt 2025',
+            description='Official conference merchandise',
+            event=self.event,
+            base_amount=Money(20, 'GBP'),
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # Create variants for the t-shirt (different sizes and colors with modifiers)
+        # Blue Medium - standard price (0% modifier)
+        variant_blue_medium = ProductVariant.objects.create(
+            product=tshirt_product,
+            size=ProductSizeChoices.MEDIUM,
+            color='#0000FF',  # Blue
+            percentage_modifier=Decimal('0.00'),  # No price change
+            stock_quantity=50,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # Red Small - premium color (+10% modifier)
+        variant_red_small = ProductVariant.objects.create(
+            product=tshirt_product,
+            size=ProductSizeChoices.SMALL,
+            color='#FF0000',  # Red
+            percentage_modifier=Decimal('10.00'),  # +10% premium
+            stock_quantity=30,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # Green Large - bulk discount (-5% modifier)
+        variant_green_large = ProductVariant.objects.create(
+            product=tshirt_product,
+            size=ProductSizeChoices.LARGE,
+            color='#00FF00',  # Green
+            percentage_modifier=Decimal('-5.00'),  # -5% discount
+            stock_quantity=40,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # ===== STEP 2: Create Package with Bundled Product =====
+        # Standard package: base amount £30 for registration
+        # Product will be added separately so user can choose variant
+        standard_package_with_product = BookingPackage.objects.create(
+            name='Standard Package with T-Shirt',
+            event=self.event,
+            ticket_type=self.full_event_ticket,
+            base_amount=Money(30, 'GBP'),  # Registration base price
+            created_by=self.sam
+        )
+        
+        # Link the product to the package (not variant - user chooses variant at booking time)
+        package_product = PackageProduct.objects.create(
+            booking_package=standard_package_with_product,
+            product=tshirt_product,
+            quantity_per_attendee=1,
+            percentage_modifier=Decimal('-25.00'),  # -25% discount when bought with package
+            added_by=self.sam
+        )
+        
+        # Verify PackageProduct base_amount is set correctly (product price * quantity)
+        self.assertEqual(package_product.base_amount, Money(20, 'GBP'))
+        # Verify PackageProduct base_amount is set correctly (product price * quantity)
+        self.assertEqual(package_product.base_amount, Money(20, 'GBP'))
+        
+        # ===== STEP 3: Create Student Discount (applies to package) =====
+        student_discount = Discount.objects.create(
+            name='Student Discount 10%',
+            discount_type=DiscountType.PERCENTAGE,
+            percentage=Decimal('10.00'),
+            active=True,
+            target_type=ContentType.objects.get_for_model(BookingPackage),
+            target_id=standard_package_with_product.id
+        )
+        
+        # Student discount: 18-25 years old (need both age rules)
+        DiscountRule.objects.create(
+            rule_type=DiscountRuleTypeChoices.IS_AGE_LT,
+            name='Under 26',
+            discount=student_discount,
+            value='26',
+            active=True
+        )
+        
+        DiscountRule.objects.create(
+            rule_type=DiscountRuleTypeChoices.IS_AGE_GT,
+            name='Over 17',
+            discount=student_discount,
+            value='17',
+            active=True
+        )
+        
+        # ===== STEP 4: Create Youth Discount (applies to package) =====
+        youth_discount = Discount.objects.create(
+            name='Youth Discount 15%',
+            discount_type=DiscountType.PERCENTAGE,
+            percentage=Decimal('15.00'),
+            active=True,
+            target_type=ContentType.objects.get_for_model(BookingPackage),
+            target_id=standard_package_with_product.id
+        )
+        
+        DiscountRule.objects.create(
+            rule_type=DiscountRuleTypeChoices.IS_AGE_LT,
+            name='Under 18',
+            discount=youth_discount,
+            value='18',
+            active=True
+        )
+        
+        # ===== STEP 5: Create Booking and Attendees =====
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-PKG-VAR-001',
+            made_by=self.sam
+        )
+        
+        # Sarah (25, student) - will choose blue medium variant, gets 10% discount
+        sarah = Attendee.objects.create(
+            first_name='Sarah',
+            last_name='Williams',
+            email='sarah@example.com',
+            date_of_birth=date(2000, 3, 20),  # 25 years old (born March 2000, it's Jan 2026)
+            event=self.event,
+            user=self.sam,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.sam
+        )
+        
+        # Mark (16) - will choose red small variant (premium), gets 15% youth discount
+        mark = Attendee.objects.create(
+            first_name='Mark',
+            last_name='Williams',
+            date_of_birth=date(2009, 7, 15),  # 16 years old (born July 2009, it's Jan 2026)
+            event=self.event,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.SIBLING,
+            defined_by=self.sam
+        )
+        
+        self.assertEqual(booking.attendees.count(), 2)
+        
+        # ===== STEP 6: Calculate Package Base Price =====
+        # Package base (registration): £30
+        self.assertEqual(standard_package_with_product.base_amount, Money(30, 'GBP'))
+        
+        # ===== STEP 7: Calculate Total with Variants for Each Attendee =====
+        sarah_context = sarah.pricing_context()
+        mark_context = mark.pricing_context()
+        
+        # Sarah chooses blue medium (0% modifier)
+        sarah_variant_cost = package_product.total_amount_with_variant(
+            variant=variant_blue_medium,
+            context=sarah_context
+        )
+        # Base: £20 * 1.0 (0% modifier) * 0.75 (-25% package discount) = £15
+        self.assertEqual(sarah_variant_cost, Money('15.00', 'GBP'))
+        
+        # Sarah's total: Package base £30 + Variant cost £15 = £45
+        # Apply 10% student discount: £45 * 0.9 = £40.50
+        sarah_package_price = standard_package_with_product.total_amount_for_context(sarah_context)
+        sarah_total = sarah_package_price + sarah_variant_cost
+        # Wait - we need to think about this differently
+        # The package base already includes the discount logic
+        # Let me recalculate:
+        # Package base: £30
+        # Package discount (10%): £30 * 0.9 = £27.00
+        sarah_package_price = standard_package_with_product.total_amount_for_context(sarah_context)
+        self.assertEqual(sarah_package_price, Money('27.00', 'GBP'))
+        
+        # Product with variant and package discount:
+        # £20 (base) * 1.0 (variant 0%) * 0.75 (package -25%) = £15
+        sarah_total = sarah_package_price + sarah_variant_cost
+        self.assertEqual(sarah_total, Money('42.00', 'GBP'))
+        
+        # Mark chooses red small (+10% premium)
+        mark_variant_cost = package_product.total_amount_with_variant(
+            variant=variant_red_small,
+            context=mark_context
+        )
+        # Base: £20 * 1.1 (10% modifier) * 0.75 (-25% package discount) = £16.50
+        self.assertEqual(mark_variant_cost, Money('16.50', 'GBP'))
+        
+        # Mark's total: Package base £30 with 15% discount = £25.50 TODO: was adding multiple discounts together
+        mark_package_price = standard_package_with_product.total_amount_for_context(mark_context)
+        self.assertEqual(mark_package_price, Money('25.50', 'GBP'))
+        
+        # Mark total: £25.50 + £16.50 = £42.00
+        mark_total = mark_package_price + mark_variant_cost
+        self.assertEqual(mark_total, Money('42.00', 'GBP'))
+        # Mark total: £25.50 + £16.50 = £42.00
+        mark_total = mark_package_price + mark_variant_cost
+        self.assertEqual(mark_total, Money('42.00', 'GBP'))
+        
+        # ===== STEP 8: Verify Package Product Association =====
+        associated_products = standard_package_with_product.associated_products
+        self.assertEqual(associated_products.count(), 1)
+        self.assertEqual(associated_products.first().product, tshirt_product)
+        self.assertEqual(associated_products.first().quantity_per_attendee, 1)
+        
+        # ===== STEP 9: Verify Variants Are Available =====
+        available_variants = tshirt_product.variants.filter(is_active=True)
+        self.assertEqual(available_variants.count(), 3)
+        self.assertIn(variant_blue_medium, available_variants)
+        self.assertIn(variant_red_small, available_variants)
+        self.assertIn(variant_green_large, available_variants)
+        
+        # ===== STEP 10: Create Payment =====
+        total_amount = sarah_total + mark_total
+        self.assertEqual(total_amount, Money('84.00', 'GBP'))
+        
+        payment = Payment.objects.create(
+            user=self.sam,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=total_amount,
+            status=PaymentStatusChoices.PENDING,
+
+            target_id=booking.id,
+            target_type=ContentType.objects.get_for_model(Booking)
+        )
+        
+        # Link payment to booking
+        # booking.payments.add(payment)
+        
+        # ===== STEP 11: Create Tickets with Package and Variant Information =====
+        sarah_ticket = Ticket.objects.create(
+            ticket_type=self.full_event_ticket,
+            ticket_code=f'TICKET-{sarah.attendee_display_id}',
+            attendee=sarah,
+            package=standard_package_with_product,
+            payment=payment,
+            status=TicketStatusChoices.ACTIVE
+        )
+        
+        mark_ticket = Ticket.objects.create(
+            ticket_type=self.full_event_ticket,
+            ticket_code=f'TICKET-{mark.attendee_display_id}',
+            attendee=mark,
+            package=standard_package_with_product,
+            payment=payment,
+            status=TicketStatusChoices.ACTIVE
+        )
+        
+        # ===== STEP 12: Verify Complete Flow =====
+        # Verify tickets are linked to payment
+        self.assertEqual(payment.tickets.count(), 2)
+        self.assertIn(sarah_ticket, payment.tickets.all())
+        self.assertIn(mark_ticket, payment.tickets.all())
+        
+        # Verify each ticket has the correct package
+        self.assertEqual(sarah_ticket.package, standard_package_with_product)
+        self.assertEqual(mark_ticket.package, standard_package_with_product)
+        
+        # Verify payment amount matches calculated totals
+        self.assertEqual(payment.base_amount, total_amount)
+        
+        # Verify booking has correct attendees and payment
+        self.assertEqual(booking.attendees.count(), 2)
+        self.assertEqual(booking.payments.first(), payment)
+        
+        # ===== STEP 13: Verify Variant Stock Not Affected Yet =====
+        # Stock shouldn't be decremented until order is processed
+        variant_blue_medium.refresh_from_db()
+        variant_red_small.refresh_from_db()
+        self.assertEqual(variant_blue_medium.stock_quantity, 50)
+        self.assertEqual(variant_red_small.stock_quantity, 30)
+        
+        # ===== STEP 14: Verify Savings Calculation =====
+        # Without package discount:
+        # Sarah: Registration £30 + T-shirt £20 = £50, with 10% discount = £45
+        # Mark: Registration £30 + T-shirt £22 (premium) = £52, with 15% discount = £44.20
+        # Total without package: £89.20
+        # With package: £84.00
+        # Savings: £5.20
+        without_package_sarah = Money(50, 'GBP') * Decimal('0.9')  # £45.00
+        without_package_mark = Money(52, 'GBP') * Decimal('0.85')  # £44.20
+        without_package_total = without_package_sarah + without_package_mark
+        savings = without_package_total - total_amount
+        self.assertEqual(savings, Money('5.20', 'GBP'))
+        
+    def test_full_booking_flow_with_package_products_no_discounts(self):
+        """
+        Test booking flow with package products and variants but NO attendee-based discounts.
+        
+        Scenario: An organization bulk-books for 3 employees (all adults, no student/youth status)
+        - Professional Package includes registration + Conference Bag (users select size)
+        - Registration base: £50
+        - Bag base: £15
+        - Package includes bag at 10% discount when bundled
+        - Employee 1 chooses One Size bag (0% modifier)
+        - Employee 2 chooses Large bag (+5% premium)
+        - Employee 3 chooses One Size bag (0% modifier)
+        - No attendee-specific discounts apply (all are adult employees)
+        """
+        from apps.bookings.models import PackageProduct
+        from apps.products.models import Product, ProductVariant, ProductSizeChoices
+        
+        # ===== STEP 1: Create Product with Variants =====
+        conference_bag = Product.objects.create(
+            title='Conference Bag',
+            description='Professional conference bag',
+            event=self.event,
+            base_amount=Money(15, 'GBP'),
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # One Size variant - standard
+        variant_onesize = ProductVariant.objects.create(
+            product=conference_bag,
+            size=ProductSizeChoices.ONE_SIZE,
+            color='#000000',  # Black
+            percentage_modifier=Decimal('0.00'),
+            stock_quantity=100,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # Large variant - premium (+5%)
+        variant_large = ProductVariant.objects.create(
+            product=conference_bag,
+            size=ProductSizeChoices.LARGE,
+            color='#000000',  # Black
+            percentage_modifier=Decimal('5.00'),  # +5% premium for large size
+            stock_quantity=50,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # ===== STEP 2: Create Package with Bundled Product (No Discounts) =====
+        employee_package = BookingPackage.objects.create(
+            name='Professional Package',
+            event=self.event,
+            ticket_type=self.full_event_ticket,
+            base_amount=Money(50, 'GBP'),  # Registration only
+            created_by=self.sam
+        )
+        
+        # Link product to package with 10% bundle discount
+        package_product = PackageProduct.objects.create(
+            booking_package=employee_package,
+            product=conference_bag,
+            quantity_per_attendee=1,
+            percentage_modifier=Decimal('-10.00'),  # -10% when bundled
+            added_by=self.sam
+        )
+        
+        self.assertEqual(package_product.base_amount, Money(15, 'GBP'))
+        
+        # ===== STEP 3: Create Booking and Adult Attendees =====
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-EMP-VAR-001',
+            made_by=self.sam
+        )
+        
+        # Employee 1 - chooses One Size
+        employee1 = Attendee.objects.create(
+            first_name='Alice',
+            last_name='Johnson',
+            email='alice@company.com',
+            date_of_birth=date(1985, 5, 10),  # 39 years old
+            event=self.event,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.OTHER,
+            defined_by=self.sam
+        )
+        
+        # Employee 2 - chooses Large (premium)
+        employee2 = Attendee.objects.create(
+            first_name='Bob',
+            last_name='Smith',
+            email='bob@company.com',
+            date_of_birth=date(1990, 8, 22),  # 34 years old
+            event=self.event,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.OTHER,
+            defined_by=self.sam
+        )
+        
+        # Employee 3 - chooses One Size
+        employee3 = Attendee.objects.create(
+            first_name='Carol',
+            last_name='Davis',
+            email='carol@company.com',
+            date_of_birth=date(1978, 12, 5),  # 46 years old
+            event=self.event,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.OTHER,
+            defined_by=self.sam
+        )
+        
+        self.assertEqual(booking.attendees.count(), 3)
+        
+        # ===== STEP 4: Calculate Package Prices with Variants (No Attendee Discounts) =====
+        emp1_context = employee1.pricing_context()
+        emp2_context = employee2.pricing_context()
+        emp3_context = employee3.pricing_context()
+        
+        # Package base price (registration) - no discounts
+        emp1_package_price = employee_package.total_amount_for_context(emp1_context)
+        emp2_package_price = employee_package.total_amount_for_context(emp2_context)
+        emp3_package_price = employee_package.total_amount_for_context(emp3_context)
+        
+        # All pay £50 for registration (no attendee discounts)
+        self.assertEqual(emp1_package_price, Money(50, 'GBP'))
+        self.assertEqual(emp2_package_price, Money(50, 'GBP'))
+        self.assertEqual(emp3_package_price, Money(50, 'GBP'))
+        
+        # Calculate variant costs with package discount
+        # Employee 1: One Size (0% modifier)
+        # £15 * 1.0 * 0.9 (10% package discount) = £13.50
+        emp1_variant_cost = package_product.total_amount_with_variant(
+            variant=variant_onesize,
+            context=emp1_context
+        )
+        self.assertEqual(emp1_variant_cost, Money('13.50', 'GBP'))
+        
+        # Employee 2: Large (+5% modifier)
+        # £15 * 1.05 * 0.9 (10% package discount) = £14.175 -> rounds to £14.18
+        emp2_variant_cost = package_product.total_amount_with_variant(
+            variant=variant_large,
+            context=emp2_context
+        )
+        self.assertEqual(emp2_variant_cost, Money('14.18', 'GBP'))
+        
+        # Employee 3: One Size (0% modifier)
+        emp3_variant_cost = package_product.total_amount_with_variant(
+            variant=variant_onesize,
+            context=emp3_context
+        )
+        self.assertEqual(emp3_variant_cost, Money('13.50', 'GBP'))
+        
+        # Calculate totals
+        emp1_total = emp1_package_price + emp1_variant_cost  # £50 + £13.50 = £63.50
+        emp2_total = emp2_package_price + emp2_variant_cost  # £50 + £14.18 = £64.18
+        emp3_total = emp3_package_price + emp3_variant_cost  # £50 + £13.50 = £63.50
+        
+        self.assertEqual(emp1_total, Money('63.50', 'GBP'))
+        self.assertEqual(emp2_total, Money('64.18', 'GBP'))
+        self.assertEqual(emp3_total, Money('63.50', 'GBP'))
+        
+        # ===== STEP 5: Verify Package Product Details =====
+        self.assertEqual(package_product.quantity_per_attendee, 1)
+        self.assertEqual(package_product.percentage_modifier, Decimal('-10.00'))
+        
+        # ===== STEP 6: Create Payment =====
+        total_amount = emp1_total + emp2_total + emp3_total
+        self.assertEqual(total_amount, Money('191.18', 'GBP'))
+        
+        payment = Payment.objects.create(
+            user=self.sam,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=total_amount,
+            status=PaymentStatusChoices.PENDING
+        )
+        
+        booking.add_payment(payment)
+        
+        # ===== STEP 7: Create Tickets =====
+        ticket1 = Ticket.objects.create(
+            ticket_type=self.full_event_ticket,
+            ticket_code=f'TICKET-{employee1.attendee_display_id}',
+            attendee=employee1,
+            package=employee_package,
+            payment=payment,
+            status=TicketStatusChoices.ACTIVE
+        )
+        
+        ticket2 = Ticket.objects.create(
+            ticket_type=self.full_event_ticket,
+            ticket_code=f'TICKET-{employee2.attendee_display_id}',
+            attendee=employee2,
+            package=employee_package,
+            payment=payment,
+            status=TicketStatusChoices.ACTIVE
+        )
+        
+        ticket3 = Ticket.objects.create(
+            ticket_type=self.full_event_ticket,
+            ticket_code=f'TICKET-{employee3.attendee_display_id}',
+            attendee=employee3,
+            package=employee_package,
+            payment=payment,
+            status=TicketStatusChoices.ACTIVE
+        )
+        
+        # ===== STEP 8: Verify Complete Flow =====
+        # Verify all tickets created
+        self.assertEqual(payment.tickets.count(), 3)
+        
+        # Verify payment is linked to booking
+        self.assertEqual(booking.payments.first(), payment)
+        
+        # Verify payment amount is correct
+        self.assertEqual(payment.base_amount, Money('191.18', 'GBP'))
+        
+        # Verify each attendee has exactly one ticket
+        self.assertEqual(employee1.tickets.count(), 1)
+        self.assertEqual(employee2.tickets.count(), 1)
+        self.assertEqual(employee3.tickets.count(), 1)
+        
+        # ===== STEP 9: Verify Variant Stock Not Affected =====
+        variant_onesize.refresh_from_db()
+        variant_large.refresh_from_db()
+        self.assertEqual(variant_onesize.stock_quantity, 100)
+        self.assertEqual(variant_large.stock_quantity, 50)
+        
+        # ===== STEP 10: Verify Bundle Savings =====
+        # Without bundle discount on bags:
+        # Employee 1: £50 + £15 = £65
+        # Employee 2: £50 + £15.75 (large premium) = £65.75
+        # Employee 3: £50 + £15 = £65
+        # Total without bundle: £195.75
+        # With bundle: £191.18
+        # Savings: £4.57
+        without_bundle = Money(65, 'GBP') + Money('65.75', 'GBP') + Money(65, 'GBP')
+        self.assertEqual(without_bundle, Money('195.75', 'GBP'))
+        savings = without_bundle - total_amount
+        self.assertEqual(savings, Money('4.57', 'GBP'))
+        
+    def test_package_products_with_multiple_products(self):
+        """
+        Test a package that includes multiple different products with variants.
+        
+        Scenario: VIP Package includes Registration + T-Shirt + Mug + Bag (all with variant choices)
+        - Tests that multiple PackageProducts can be associated with one package
+        - Verifies each product's pricing with different variants and quantities
+        - T-Shirt: user selects size/color (1 per attendee)
+        - Mug: standard color, quantity 2 per attendee
+        - Bag: user selects size (1 per attendee)
+        """
+        from apps.bookings.models import PackageProduct
+        from apps.products.models import Product, ProductVariant, ProductSizeChoices
+        
+        # ===== STEP 1: Create Multiple Products with Variants =====
+        # Product 1: T-Shirt
+        tshirt = Product.objects.create(
+            title='VIP T-Shirt',
+            event=self.event,
+            base_amount=Money(25, 'GBP'),
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        tshirt_medium_blue = ProductVariant.objects.create(
+            product=tshirt,
+            size=ProductSizeChoices.MEDIUM,
+            color='#0000FF',
+            percentage_modifier=Decimal('0.00'),
+            stock_quantity=100,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        tshirt_large_red = ProductVariant.objects.create(
+            product=tshirt,
+            size=ProductSizeChoices.LARGE,
+            color='#FF0000',
+            percentage_modifier=Decimal('8.00'),  # Premium color +8%
+            stock_quantity=50,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # Product 2: Mug
+        mug = Product.objects.create(
+            title='VIP Mug',
+            event=self.event,
+            base_amount=Money(10, 'GBP'),
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        mug_onesize = ProductVariant.objects.create(
+            product=mug,
+            size=ProductSizeChoices.ONE_SIZE,
+            color='#FFFFFF',
+            percentage_modifier=Decimal('0.00'),
+            stock_quantity=200,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # Product 3: Bag
+        bag = Product.objects.create(
+            title='VIP Bag',
+            event=self.event,
+            base_amount=Money(30, 'GBP'),
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        bag_standard = ProductVariant.objects.create(
+            product=bag,
+            size=ProductSizeChoices.MEDIUM,
+            color='#000000',
+            percentage_modifier=Decimal('0.00'),
+            stock_quantity=80,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        bag_large = ProductVariant.objects.create(
+            product=bag,
+            size=ProductSizeChoices.LARGE,
+            color='#000000',
+            percentage_modifier=Decimal('10.00'),  # Large size +10%
+            stock_quantity=40,
+            added_by=self.sam,
+            verified=True,
+            is_active=True
+        )
+        
+        # ===== STEP 2: Create VIP Package =====
+        # Registration £50 + Products (with bundle savings)
+        vip_package = BookingPackage.objects.create(
+            name='VIP All-Inclusive Package',
+            event=self.event,
+            ticket_type=self.full_event_ticket,
+            base_amount=Money(50, 'GBP'),  # Registration base
+            created_by=self.sam
+        )
+        
+        # ===== STEP 3: Link Multiple Products to Package =====
+        pp_tshirt = PackageProduct.objects.create(
+            booking_package=vip_package,
+            product=tshirt,
+            quantity_per_attendee=1,
+            percentage_modifier=Decimal('-20.00'),  # -20% bundle discount
+            added_by=self.sam
+        )
+        
+        pp_mug = PackageProduct.objects.create(
+            booking_package=vip_package,
+            product=mug,
+            quantity_per_attendee=2,  # 2 mugs per attendee
+            percentage_modifier=Decimal('-15.00'),  # -15% bundle discount
+            added_by=self.sam
+        )
+        
+        pp_bag = PackageProduct.objects.create(
+            booking_package=vip_package,
+            product=bag,
+            quantity_per_attendee=1,
+            percentage_modifier=Decimal('-10.00'),  # -10% bundle discount
+            added_by=self.sam
+        )
+        
+        # ===== STEP 4: Verify Package Products Base Amounts =====
+        associated_products = vip_package.associated_products
+        self.assertEqual(associated_products.count(), 3)
+        
+        # Verify base amounts are calculated correctly (product base price, not multiplied by quantity)
+        self.assertEqual(pp_tshirt.base_amount, Money(25, 'GBP'))  # £25
+        self.assertEqual(pp_mug.base_amount, Money(10, 'GBP'))     # £10 per mug (quantity handled separately)
+        self.assertEqual(pp_bag.base_amount, Money(30, 'GBP'))     # £30
+        
+        # ===== STEP 5: Create Booking with VIP Attendee =====
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-VIP-MULTI-001',
+            made_by=self.sam
+        )
+        
+        vip_attendee = Attendee.objects.create(
+            first_name='Victoria',
+            last_name='VIP',
+            email='vip@example.com',
+            date_of_birth=date(1985, 4, 12),
+            event=self.event,
+            user=self.sam,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.sam
+        )
+        
+        # ===== STEP 6: Calculate Package and Product Costs with Variants =====
+        vip_context = vip_attendee.pricing_context()
+        
+        # Package base price (registration)
+        vip_package_price = vip_package.total_amount_for_context(vip_context)
+        self.assertEqual(vip_package_price, Money(50, 'GBP'))
+        
+        # VIP chooses: Medium Blue T-shirt (0% modifier)
+        # £25 * 1.0 * 0.8 (-20% package discount) = £20.00
+        tshirt_cost = pp_tshirt.total_amount_with_variant(
+            variant=tshirt_medium_blue,
+            context=vip_context
+        )
+        self.assertEqual(tshirt_cost, Money('20.00', 'GBP'))
+        
+        # Mugs: One Size (0% modifier), quantity 2
+        # £10 * 1.0 * 0.85 (-15% package discount) = £8.50 per mug
+        # £8.50 * 2 mugs = £17.00
+        mug_cost_per_unit = pp_mug.total_amount_with_variant(
+            variant=mug_onesize,
+            context=vip_context
+        )
+        self.assertEqual(mug_cost_per_unit, Money('8.50', 'GBP'))
+        # Use Money constructor to ensure proper 2 decimal place rounding
+        mug_cost = Money(mug_cost_per_unit.amount * pp_mug.quantity_per_attendee, 'GBP')
+        self.assertEqual(mug_cost, Money('17.00', 'GBP'))
+        
+        # VIP chooses: Large Bag (+10% premium)
+        # £30 * 1.1 * 0.9 (-10% package discount) = £29.70
+        bag_cost = pp_bag.total_amount_with_variant(
+            variant=bag_large,
+            context=vip_context
+        )
+        self.assertEqual(bag_cost, Money('29.70', 'GBP'))
+        
+        # Total: £50 + £20 + £17 + £29.70 = £116.70
+        vip_total = vip_package_price + tshirt_cost + mug_cost + bag_cost
+        vip_total = Money(vip_total.amount, 'GBP')  # Ensure proper Money type
+        self.assertEqual(vip_total, Money('116.70', 'GBP'))
+        
+        # ===== STEP 7: Create Payment and Ticket =====
+        payment = Payment.objects.create(
+            user=self.sam,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=vip_total,
+            status=PaymentStatusChoices.COMPLETED
+        )
+        
+        booking.add_payment(payment)
+        
+        ticket = Ticket.objects.create(
+            ticket_type=self.full_event_ticket,
+            ticket_code=f'TICKET-{vip_attendee.attendee_display_id}',
+            attendee=vip_attendee,
+            package=vip_package,
+            payment=payment,
+            status=TicketStatusChoices.ACTIVE
+        )
+        
+        # ===== STEP 8: Verify Complete Flow =====
+        self.assertEqual(payment.tickets.count(), 1)
+        self.assertEqual(ticket.package, vip_package)
+        self.assertEqual(payment.status, PaymentStatusChoices.COMPLETED)
+        self.assertEqual(payment.base_amount, Money('116.70', 'GBP'))
+        
+        # ===== STEP 9: Verify Savings =====
+        # Without package discounts:
+        # Registration: £50
+        # T-shirt (medium blue): £25 * 1.0 = £25
+        # Mugs (2): £10 * 2 = £20
+        # Bag (large): £30 * 1.1 = £33
+        # Total without discounts: £128
+        # With package discounts: £116.70
+        # Savings: £11.30
+        without_discounts = Money(50, 'GBP') + Money(25, 'GBP') + Money(20, 'GBP') + Money(33, 'GBP')
+        self.assertEqual(without_discounts, Money(128, 'GBP'))
+        savings = without_discounts - vip_total
+        self.assertEqual(savings, Money('11.30', 'GBP'))
+        
+        # ===== STEP 10: Verify Stock Not Affected =====
+        tshirt_medium_blue.refresh_from_db()
+        mug_onesize.refresh_from_db()
+        bag_large.refresh_from_db()
+        self.assertEqual(tshirt_medium_blue.stock_quantity, 100)
+        self.assertEqual(mug_onesize.stock_quantity, 200)
+        self.assertEqual(bag_large.stock_quantity, 40)

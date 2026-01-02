@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
-from apps.payments.mixins import PayableModel
+from apps.payments.mixins import PayableModel, PaymentMixin
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 
@@ -104,7 +104,7 @@ class BookingPackage(PayableModel):
     
 # system flow Create attendee(s) -> create booking -> create tickets linked to booking and attendees
     
-class Booking(models.Model):
+class Booking(models.Model, PaymentMixin):
     """
     Model representing a booking intent made by a user for an event.
     Represents a moment in time when a user has booked tickets for an event. This can be for one or more attendees.

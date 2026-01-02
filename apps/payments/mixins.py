@@ -47,7 +47,7 @@ class DiscountMixin:
 class PaymentMixin:
     
     @property
-    def payments(self, completed_only=True):
+    def payments(self):
         """
         Returns a queryset of Payment objects associated with this instance.
         Assumes a GenericForeignKey relationship.
@@ -59,10 +59,10 @@ class PaymentMixin:
             target_type=content_type,
             target_id=self.pk,
         )
-        if completed_only:
-            qs = qs.filter(
-                status=PaymentStatusChoices.COMPLETED
-            )
+        # if completed_only:
+        #     qs = qs.filter(
+        #         status=PaymentStatusChoices.COMPLETED
+        #     )
         return qs
     
     @property
