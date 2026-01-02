@@ -42,6 +42,7 @@ from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.bookings.models import Booking
 from apps.common.models.resource import Resource, ResourceTypeChoices
 from apps.payments.evaluator import DiscountContext
+from apps.organisations.models import Organisation
 
 User = get_user_model()
 
@@ -66,6 +67,11 @@ class FullProductPurchaseFlowTest(TestCase):
             code='TECH',
             created_by=self.emma
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Tech Conference Org',
+            created_by=self.emma
+        )
         
         self.event = Event.objects.create(
             title='Annual Tech Conference 2025',
@@ -75,7 +81,8 @@ class FullProductPurchaseFlowTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         # Create booking and attendee for Emma
@@ -594,6 +601,11 @@ class ProductImageIntegrationTest(TestCase):
             created_by=self.user
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Image Test Organisation',
+            created_by=self.user    
+        )
+        
         self.event = Event.objects.create(
             title='Image Test Event',
             display_code='ITE2025',
@@ -602,7 +614,8 @@ class ProductImageIntegrationTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.product = Product.objects.create(

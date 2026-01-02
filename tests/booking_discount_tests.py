@@ -39,6 +39,11 @@ class PayableModelDiscountCalculationTest(TestCase):
             code='TEST',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Organisation',
+            created_by=self.user    
+        )
         
         self.event = Event.objects.create(
             title='Discount Test Event',
@@ -48,7 +53,8 @@ class PayableModelDiscountCalculationTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.ticket_type = TicketType.objects.create(

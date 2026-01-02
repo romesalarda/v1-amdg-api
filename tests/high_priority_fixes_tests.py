@@ -22,6 +22,7 @@ from apps.products.models import (
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.bookings.models import Booking
+from apps.organisations.models import Organisation
 
 User = get_user_model()
 
@@ -42,6 +43,11 @@ class StockRestorationOnCancellationTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Organisation',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Stock Test Event',
@@ -51,7 +57,8 @@ class StockRestorationOnCancellationTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.booking = Booking.objects.create(
@@ -211,6 +218,10 @@ class TransactionBoundaryTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+        self.oganisation = Organisation.objects.create(
+            title='Test Organisation',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Transaction Test Event',
@@ -220,7 +231,8 @@ class TransactionBoundaryTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.oganisation
         )
         
         self.booking = Booking.objects.create(
@@ -298,6 +310,11 @@ class OrderTotalValidationTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Validation Organisation',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Validation Test Event',
@@ -307,7 +324,8 @@ class OrderTotalValidationTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.booking = Booking.objects.create(
@@ -400,6 +418,11 @@ class OptimizedQueryTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Validation Organisation',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Query Test Event',
@@ -409,7 +432,8 @@ class OptimizedQueryTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.booking = Booking.objects.create(
