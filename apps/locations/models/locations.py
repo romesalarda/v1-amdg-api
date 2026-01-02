@@ -158,7 +158,7 @@ class AreaLocation (models.Model):
     def save(self, *args, **kwargs):
         if self.area_code is None:
             self.area_code = str(self.area_name[:3]).upper()
-        self.area_name = slugify(self.area_name).capitalize().strip()
+        self.area_name = self.area_name.strip().title() 
         
         super().save(*args, **kwargs)
     
