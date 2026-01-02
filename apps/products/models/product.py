@@ -185,7 +185,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
             raise exceptions.ValidationError("Stock quantity cannot be negative.")
         if not self.product:
             raise exceptions.ValidationError("ProductVariant must be associated with a Product.")
-        
+            
         # check unique constraint manually to provide better error message
         existing_variants = ProductVariant.objects.filter(
             product=self.product,

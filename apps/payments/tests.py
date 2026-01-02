@@ -8,6 +8,7 @@ from apps.payments.models import Discount, DiscountRule, DiscountRuleTypeChoices
 from apps.payments.evaluator import DiscountRuleEvaluator, DiscountContext, discount_applies
 from apps.users.models import CommunityUser
 from apps.events.models import Event, EventType
+from apps.organisations.models import Organisation
 
 
 class DiscountRuleEvaluatorTestCase(TestCase):
@@ -23,6 +24,12 @@ class DiscountRuleEvaluatorTestCase(TestCase):
             username='testuser',
             email='testuser@example.com',
             password='testpass123'
+        )
+        
+        # Create test organisation
+        self.organisation = Organisation.objects.create(
+            title='Discount Rule Test Organisation',
+            created_by=self.user
         )
         
         # Create test event type and event
@@ -41,7 +48,8 @@ class DiscountRuleEvaluatorTestCase(TestCase):
             display_code='TC2026',
             display_identifier='TC2026-TEST',
             start_datetime=start_time,
-            end_datetime=end_time
+            end_datetime=end_time,
+            organisation=self.organisation
         )
         
         # Create a dummy discount target (we'll use Event as the target)
@@ -465,6 +473,11 @@ class DiscountAppliesTestCase(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Discount Applies Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Test Conference 2',
             code='TESTC'
@@ -480,7 +493,8 @@ class DiscountAppliesTestCase(TestCase):
             display_code='TC2027',
             display_identifier='TC2027-TEST',
             start_datetime=start_time,
-            end_datetime=end_time
+            end_datetime=end_time,
+            organisation=self.organisation
         )
         
         content_type = ContentType.objects.get_for_model(Event)

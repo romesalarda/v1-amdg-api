@@ -627,6 +627,10 @@ class InvolvedEventOrganisationTest(TestCase):
             title='Catholic Charities',
             created_by=self.admin
         )
+        self.event_organisation = Organisation.objects.create(
+            title='Event Host Organisation',
+            created_by=self.admin
+        )
         self.event_type = EventType.objects.create(
             title='Retreat',
             code='RET',
@@ -638,7 +642,8 @@ class InvolvedEventOrganisationTest(TestCase):
             created_by=self.admin,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.event_organisation
         )
     
     def test_create_involved_organisation(self):
@@ -727,6 +732,10 @@ class EventSponsorTest(TestCase):
             title='Local Business Ltd',
             created_by=self.admin
         )
+        self.event_organisation = Organisation.objects.create(
+            title='Event Sponsor Test Organisation',
+            created_by=self.admin
+        )
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -738,7 +747,8 @@ class EventSponsorTest(TestCase):
             created_by=self.admin,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=60),
-            end_datetime=timezone.now() + timedelta(days=62)
+            end_datetime=timezone.now() + timedelta(days=62),
+            organisation=self.event_organisation
         )
     
     def test_create_event_sponsor(self):
@@ -769,6 +779,10 @@ class EventSponsorPackageTest(TestCase):
             title='Sponsor Corp',
             created_by=self.admin
         )
+        self.event_organisation = Organisation.objects.create(
+            title='Event Package Test Organisation',
+            created_by=self.admin
+        )
         self.event_type = EventType.objects.create(
             title='Festival',
             code='FEST',
@@ -780,7 +794,8 @@ class EventSponsorPackageTest(TestCase):
             created_by=self.admin,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=90),
-            end_datetime=timezone.now() + timedelta(days=93)
+            end_datetime=timezone.now() + timedelta(days=93),
+            organisation=self.event_organisation
         )
         self.sponsor = EventSponsor.objects.create(
             name='Gold Sponsor',

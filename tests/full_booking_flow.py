@@ -852,10 +852,7 @@ class FullBookingFlowIntegrationTest(TestCase):
         # Sarah's total: Package base £30 + Variant cost £15 = £45
         # Apply 10% student discount: £45 * 0.9 = £40.50
         sarah_package_price = standard_package_with_product.total_amount_for_context(sarah_context)
-        sarah_total = sarah_package_price + sarah_variant_cost
-        # Wait - we need to think about this differently
-        # The package base already includes the discount logic
-        # Let me recalculate:
+        sarah_total = sarah_package_price + sarah_variant_cost #! out of method important calculation
         # Package base: £30
         # Package discount (10%): £30 * 0.9 = £27.00
         sarah_package_price = standard_package_with_product.total_amount_for_context(sarah_context)

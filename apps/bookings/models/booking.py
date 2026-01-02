@@ -78,6 +78,8 @@ class BookingPackage(PayableModel):
         """
         Check if the given attendee can use this booking package based on its rules.
         Intended to be called before saving a booking with this package.
+
+        Uses attendee's pricing context for evaluation.
         
         @param user: User instance making the booking
         @param attendee: Attendee instance for whom the booking is being made (need personal data like age)

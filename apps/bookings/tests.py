@@ -29,6 +29,11 @@ class BookingFlowIntegrationTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Flow Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -43,7 +48,8 @@ class BookingFlowIntegrationTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.ticket_type = TicketType.objects.create(
@@ -164,6 +170,11 @@ class BookingPackageRuleIntegrationTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Package Rule Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -177,7 +188,8 @@ class BookingPackageRuleIntegrationTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.ticket_type = TicketType.objects.create(
@@ -586,6 +598,11 @@ class TicketTypeModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Ticket Type Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -600,7 +617,8 @@ class TicketTypeModelTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
     def test_ticket_type_creation(self):
@@ -689,6 +707,11 @@ class TicketModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Ticket Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -702,7 +725,8 @@ class TicketModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.ticket_type = TicketType.objects.create(
@@ -832,7 +856,8 @@ class TicketModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         # Create attendee for other event
@@ -875,6 +900,11 @@ class BookingPackageModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Package Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -888,7 +918,8 @@ class BookingPackageModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.ticket_type = TicketType.objects.create(
@@ -978,7 +1009,8 @@ class BookingPackageModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         # Create ticket type for other event
@@ -1016,6 +1048,11 @@ class BookingPackageRuleModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Rule Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1029,7 +1066,8 @@ class BookingPackageRuleModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.ticket_type = TicketType.objects.create(
@@ -1127,6 +1165,11 @@ class BookingModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Booking Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1140,7 +1183,8 @@ class BookingModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
     def test_booking_creation(self):

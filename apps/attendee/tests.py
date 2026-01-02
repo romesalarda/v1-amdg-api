@@ -39,6 +39,11 @@ class AttendeeModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -53,7 +58,8 @@ class AttendeeModelTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.country = CountryLocation.objects.create(
@@ -707,6 +713,11 @@ class AttendeeGuardianModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Guardian Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -720,7 +731,8 @@ class AttendeeGuardianModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -767,6 +779,11 @@ class AttendeeActionModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Action Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -780,7 +797,8 @@ class AttendeeActionModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -836,6 +854,11 @@ class FamilyGroupModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Family Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -849,7 +872,8 @@ class FamilyGroupModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
     def test_family_group_creation(self):
@@ -944,6 +968,11 @@ class AttendeeMessageModelTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Message Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Message Event',
@@ -952,7 +981,8 @@ class AttendeeMessageModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -1008,6 +1038,11 @@ class AccessibilityRequirementModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Access Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1021,7 +1056,8 @@ class AccessibilityRequirementModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -1077,6 +1113,11 @@ class DietaryRequirementModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Diet Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1090,7 +1131,8 @@ class DietaryRequirementModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -1144,6 +1186,11 @@ class MedicalConditionModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Medical Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1157,7 +1204,8 @@ class MedicalConditionModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -1211,6 +1259,11 @@ class EmergencyContactModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Emergency Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1224,7 +1277,8 @@ class EmergencyContactModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -1279,6 +1333,11 @@ class ConsentModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Consent Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1292,7 +1351,8 @@ class ConsentModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -1370,6 +1430,11 @@ class EventAttendanceModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Attendance Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1383,7 +1448,8 @@ class EventAttendanceModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -1448,6 +1514,11 @@ class AttendeeOrganisationModelTest(TestCase):
             password='testpass123'
         )
         
+        self.organisation = Organisation.objects.create(
+            title='Test Organisation',
+            created_by=self.user
+        )
+        
         self.event_type = EventType.objects.create(
             title='Conference',
             code='CONF',
@@ -1461,7 +1532,8 @@ class AttendeeOrganisationModelTest(TestCase):
             created_by=self.user,
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32)
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
         )
         
         self.attendee = Attendee.objects.create(
@@ -1472,11 +1544,6 @@ class AttendeeOrganisationModelTest(TestCase):
             relationship_to_user=AttendeeRelationship.SELF,
             defined_by=self.user,
             date_of_birth=date(1990, 1, 1)
-        )
-        
-        self.organisation = Organisation.objects.create(
-            title='Test Organisation',
-            created_by=self.user
         )
         
     def test_attendee_organisation_creation(self):

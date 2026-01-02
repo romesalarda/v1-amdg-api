@@ -105,7 +105,10 @@ class PaymentMixin:
 
 class PayableModel(models.Model, DiscountMixin, PaymentMixin):
     """
-    Mixin for models that represent a payable monetary value.
+    Abstract model mixin that provides payable functionality with base amount,
+    percentage modifier, and discount calculations.
+
+    Assumes a GenericForeignKey relationship for discounts.
     """
     base_amount = MoneyField(
         max_digits=14,
@@ -117,8 +120,8 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         max_digits=5,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text="Percentage adjustment applied to the base amount (e.g. -10 for 10% discount)."
-    )
+        help_text="Percentage adjustment applied to the base amount (1.1 for +1%, -2.5 for -2.5%)"
+    ) # products for a specific object variant (e.g., size/color) may have different prices.
 
     class Meta:
         abstract = True
@@ -205,6 +208,7 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
     def calculate_total_discounts(self, discount_base, context) -> Money:
         '''
         Calculate the total discounts applicable to this payable model based on the provided context.
+        Returns the minimum of the total discounts and the discount base to avoid negative totals.
         
         :param self: Instance of PayableModel
         :param discount_base: Money representing the amount before discounts
