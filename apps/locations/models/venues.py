@@ -107,4 +107,4 @@ class VenueMetadata(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"Metadata: {self.key} for Venue: {self.venue.poi.name}"
+        return f"Metadata: {self.label} for Venue: {self.venue.poi.name}"

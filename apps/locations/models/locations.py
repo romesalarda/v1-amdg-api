@@ -73,6 +73,9 @@ class CountryLocation (models.Model):
     
     def __str__(self):
         return f"{self.general_sector} -> {self.specific_sector} -> {self.country}"
+
+    def __repr__(self):
+        return f"CountryLocation(country={self.country}, general_sector={self.general_sector}, specific_sector={self.specific_sector})"
     
 class ClusterLocation (models.Model):
     
@@ -92,11 +95,14 @@ class ClusterLocation (models.Model):
     def save(self, *args, **kwargs):
         if not self.cluster_code:
             self.cluster_code = str(self.cluster_name[:3]).upper()
-        self.cluster_name = slugify(self.cluster_name).capitalize().strip()
+        self.cluster_name = self.cluster_name.strip().title()
         return super().save(*args, **kwargs)
     
     def __str__(self):
         return f"{self.country} -> {self.cluster_name}"
+    
+    def __repr__(self):
+        return f"ClusterLocation(cluster_name={self.cluster_name}, country={self.country})"
   
         
 class ChapterLocation (models.Model):
@@ -121,12 +127,14 @@ class ChapterLocation (models.Model):
     def save(self, *args, **kwargs):
         if self.chapter_code is None:
             self.chapter_code = str(self.chapter_name[:3]).upper()
-        self.chapter_name = slugify(self.chapter_name).capitalize().strip()
+        self.chapter_name = self.chapter_name.strip().title()
         super().save(*args, **kwargs)
     
     def __str__(self):
         return f"{self.cluster} -> {self.chapter_name}"
 
+    def __repr__(self):
+        return f"ChapterLocation(chapter_name={self.chapter_name}, cluster={self.cluster})"
     
 class AreaLocation (models.Model):
     '''
@@ -152,7 +160,7 @@ class AreaLocation (models.Model):
         ]
         
     def clean(self):
-        if self.chapter is None:
+        if self.chapter_id is None:
             raise ValidationError("Chapter must be set for AreaLocation.")
         
     def save(self, *args, **kwargs):
@@ -165,11 +173,22 @@ class AreaLocation (models.Model):
     def __str__(self):
         return f"{self.chapter} -> {self.area_name}"
     
-class RelativeArea(models.Model):
+    def __repr__(self):
+        return f"AreaLocation(area_name={self.area_name}, chapter={self.chapter})"
     
+class RelativeArea(models.Model):
+    '''
+    assisting model for relative locations
+    '''
     name = models.CharField(verbose_name=_("name of relative location"), max_length=100) 
     relative_area = models.ForeignKey(AreaLocation, on_delete=models.SET_NULL, null=True, related_name="relative_search_areas")
     
     def save(self, *args, **kwargs):
-        self.name = slugify(self.name).capitalize().strip()
+        self.name = self.name.strip().title()
         return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} -> {self.relative_area}"
+    
+    def __repr__(self):
+        return f"RelativeArea(name={self.name}, relative_area={self.relative_area})"
