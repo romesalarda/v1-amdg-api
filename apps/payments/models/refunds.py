@@ -2,6 +2,12 @@ from django.db import models
 from django.core import validators, exceptions
 from django.contrib.auth import get_user_model
 from djmoney.models.fields import MoneyField
+
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
+
+from djmoney.money import Money
+
 from django.conf import settings
 
 from apps.common.models.verification import RequiresVerificationModel
@@ -17,6 +23,7 @@ User = get_user_model()
 # 2. Admin reviews request -> marks as 'verified' or 'rejected'
 # 3. If 'verified', admin processes refund externally -> marks as 'processed'
 
+REFUND_TARGET_ID = 'refund_amount'  # The property/method name to get refunded amount from associated objects
 class RefundRequest(RequiresVerificationModel):
     '''
     RefundRequest model to handle refund requests for payments.
@@ -89,3 +96,90 @@ class RefundRequest(RequiresVerificationModel):
             raise exceptions.ValidationError("Refund amount must be greater than zero.")
         if self.amount > self.payment.amount:
             raise exceptions.ValidationError("Refund amount cannot exceed the original payment amount.")
+        
+    def associate_with(self, obj):
+        '''
+        Associate this refund request with another entity (e.g., order, booking).
+
+        @param obj: The object to associate with (must be a model instance).
+        @return: RefundAssociation instance linking the refund request to the object.
+        '''
+        from apps.payments.mixins import PayableModel
+
+        if not isinstance(obj, PayableModel):
+            raise ValueError("The provided object must be an instance of PayableModel.")
+
+        if self._get_refund_amount(obj) > self.payment.amount - self.total_refunded_amount:
+            raise ValueError("Cannot associate refund: refunded amount exceeds available payment amount.")        
+
+        refund = RefundAssociation.objects.create(
+            refund_request=self,
+            content_object=obj
+        )
+        return refund
+    
+    def _get_refund_amount(self, obj) -> 'Money':
+        '''
+        Helper method to get the refunded amount from an associated object.
+
+        @param obj: The associated object.
+        @return: Refunded amount as a Money object.
+        '''
+        if hasattr(obj, REFUND_TARGET_ID):
+            if callable(getattr(obj, REFUND_TARGET_ID)):
+                return getattr(obj, REFUND_TARGET_ID)()
+            else:
+                return getattr(obj, REFUND_TARGET_ID)
+        else:
+            raise NotImplementedError(f"The target object of type {type(obj)} does not implement '{REFUND_TARGET_ID}' property.")
+    
+    @property
+    def total_refunded_amount(self):
+        '''
+        Calculate the total amount refunded for this refund request.
+
+        @return: Total refunded amount as a Money object.
+        '''
+        total = 0
+        associations = self.associations.all()
+        for assoc in associations:
+            refunded_amount = self._get_refund_amount(assoc.target_object)
+            total += refunded_amount    
+
+        return total
+        
+class RefundAssociation(models.Model):
+    '''
+    Model to associate refunds with various entities like orders or bookings.
+    '''
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    refund_request = models.ForeignKey(
+        RefundRequest,
+        on_delete=models.CASCADE,
+        related_name='associations'
+    )
+    content_type = models.ForeignKey(
+        'contenttypes.ContentType',
+        on_delete=models.CASCADE
+    )
+    target_id = models.PositiveIntegerField()
+    target_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.CASCADE,
+        related_name='refund_association_targets'
+    )
+    target_object = GenericForeignKey('target_type', 'target_id')
+
+    description = models.TextField(blank=True, null=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name = 'Refund Association'
+        verbose_name_plural = 'Refund Associations'
+        unique_together = ('refund_request', 'target_type', 'target_id')
+
+    def __str__(self):
+        return f"RefundAssociation(refund_request={self.refund_request.id}, object={self.target_object})"
+    
+    def __repr__(self):
+        return f"<RefundAssociation refund_request={self.refund_request.id} object={self.target_object}>"

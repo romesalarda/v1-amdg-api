@@ -323,7 +323,8 @@ class FullProductPurchaseFlowTest(TestCase):
             method=self.payment_method,
             base_amount=order.total_amount,
             status=PaymentStatusChoices.PENDING,
-            target=order
+            target=order,
+            metadata=order.get_metadata(), # TODO: TESTME
         )
         
         self.assertIsNotNone(payment.payment_reference)

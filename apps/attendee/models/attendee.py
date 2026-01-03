@@ -348,6 +348,21 @@ class Attendee(SoftDeleteModel):
             performed_by=None, # system action,
             notes=notes
         )
+
+    def get_metadata(self):
+        '''
+        Get metadata dictionary for this attendee.
+        '''
+        return {
+            "attendee_id": str(self.attendee_id),
+            "attendee_display_id": self.attendee_display_id,
+            "full_name": self.full_name,
+            "age": self.age,
+            "relationship_to_user": self.relationship_to_user,
+            "is_event_staff": self.is_event_staff,
+            "staff_roles": self.staff_role_names,
+            "added_at": self.created_at.isoformat(),
+        }
     
 class AttendeeGuardian(models.Model):
     

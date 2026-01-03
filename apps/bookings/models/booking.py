@@ -150,7 +150,19 @@ class Booking(models.Model, PaymentMixin):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
-    
+
+    def get_metadata(self):
+
+        attendee_metadata = []
+        for attendee in self.attendees.all():
+            attendee_metadata.append(attendee.get_metadata())
+
+        return {
+            'booking_id': str(self.id),
+            'booking_reference': self.booking_reference,
+            'event_id': str(self.event.id),
+            'attendees': attendee_metadata,
+        }    
     class Meta:
         ordering = ['-booked_at']
         verbose_name = 'Booking'

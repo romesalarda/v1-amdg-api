@@ -274,6 +274,39 @@ class Order(SoftDeleteModel): # no admin model
         Cancels the order, transitioning it to 'cancelled' status.
         '''
         self.transition_to(OrderStatusChoices.CANCELLED)
+
+    def get_metadata(self) -> dict:
+        '''
+        Returns metadata about the order for auditing/logging purposes.
+        Takes into account the attendee and products in the order.
+        '''
+        product_metadata = []
+        for item in self.order_items.all():
+            product_metadata.append({
+                'product_variant_id': item.product_variant.id if item.product_variant else None,
+                'quantity': item.quantity,
+                'unit_price': str(item.unit_price),
+                'total_price': str(item.total_price),
+                'final_price_for_attendee': str(item.product_variant.get_attendee_final_price(self.attendee)) if item.product_variant else None
+            })
+
+        return {
+            'order_id': str(self.order_id),
+            'order_reference_id': self.order_reference_id,
+            'customer_id': self.customer.id if self.customer else None,
+            'attendee_id': self.attendee.id if self.attendee else None,
+            'status': self.status,
+            'total_amount': str(self.total_amount),
+            'products': product_metadata
+        }
+    
+    @property
+    def refunded_amount(self) -> Money:
+        '''
+        Returns the total amount refunded for this order.
+        @return: Refunded amount as a Money instance.
+        '''
+        return self.total_amount        
 class OrderItem(models.Model): # no admin model
     '''
     OrderItem model to represent individual items within an order.
@@ -325,4 +358,11 @@ class OrderItem(models.Model): # no admin model
         self.clean()
         super().save(*args, **kwargs)
 
+    @property
+    def refund_amount(self) -> Money:
+        '''
+        Returns the amount refunded for this order item.
+        @return: Refunded amount as a Money instance.
+        '''
+        return self.total_price
     

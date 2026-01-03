@@ -123,7 +123,8 @@ class Payment(PayableModel):
                 and self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
                 and not self.bank_transfer_reference
             ):
-                self.bank_transfer_reference = generate_alphanumeric_id(MAX_LENGTH_BANK_REF)
+                #! must generate bank transfer reference only if payment method is bank transfer
+                self.bank_transfer_reference = generate_alphanumeric_id(MAX_LENGTH_BANK_REF) # TODO: change this to make it somewhat obvious incase someone needs to type it instead of copy/paste
 
             try:
                 with transaction.atomic():
