@@ -1,5 +1,5 @@
 from .discounts import DiscountType, Discount, DiscountRule, DiscountRuleTypeChoices
-from .payments import Payment, PaymentStatusChoices
+from .payments import Payment, PaymentStatusChoices, PaymentHistoryAction
 from .methods import PaymentMethod, PaymentMethodTypeChoices
 from .refunds import RefundRequest, RefundAssociation
 from .donations import Donation

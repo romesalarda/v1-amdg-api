@@ -1,3 +1,4 @@
+from decimal import Decimal
 from apps.payments.mixins import PayableModel
 from django.db import models
 from django.contrib.auth import get_user_model
@@ -5,6 +6,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from djmoney.money import Money
 
 from core.utils.display import generate_human_readable_id, generate_alphanumeric_id
 from core.utils.data import save_with_unique_field
@@ -34,10 +36,10 @@ ALLOWED_STATUS_TRANSITIONS = {
         PaymentStatusChoices.CANCELLED,
     ],
     PaymentStatusChoices.COMPLETED: [
-        PaymentStatusChoices.PENDING_REFUND,
+        PaymentStatusChoices.PENDING_REFUND, # pending full refund
     ],
     PaymentStatusChoices.PENDING_REFUND: [
-        PaymentStatusChoices.REFUNDED,
+        PaymentStatusChoices.REFUNDED, # full refund completed
     ],
 }
 
@@ -60,7 +62,7 @@ class Payment(PayableModel):
     stripe_payment_intent = models.CharField(max_length=255, blank=True, null=True)
     stripe_charge_id = models.CharField(max_length=255, blank=True, null=True)
     bank_transfer_reference = models.CharField(max_length=255, blank=True, null=True)
-    metadata = models.JSONField(blank=True, null=True)
+    metadata = models.JSONField(blank=True, null=True) # data of info when the payment was made (ABSOLUTE)
     
     status = models.CharField(
         max_length=20,
@@ -149,4 +151,46 @@ class Payment(PayableModel):
                     raise ValidationError(
                         f"Invalid status transition from {old_payment.status} to {self.status}."
                     )
+        if self.percentage_modifier is not None:
+            raise ValidationError("Payments cannot have percentage modifiers.")
         super().clean()
+
+    def absolute_amount(self) -> Money:
+        '''
+        Returns the absolute amount of the payment, ignoring any modifiers.
+        '''
+        return Decimal(self.base_amount.amount).quantize(Decimal('0.01'))
+
+class PaymentHistoryAction(models.Model):
+    '''
+    Model representing an action taken on a payment for history tracking.
+    '''
+    action_id = models.UUIDField(default=uuid.uuid4, editable=False)
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.CASCADE,
+        related_name='history_actions'
+    )
+    description = models.TextField()
+    metadata = models.JSONField(blank=True, null=True, default=dict) # extra data about the action
+    action = models.CharField(max_length=100) # e.g., 'STATUS_CHANGED',
+    performed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payment_history_actions'
+    )
+    timestamp = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True, null=True)
+    
+    class Meta:
+        ordering = ['-timestamp']
+        verbose_name = 'Payment History Action'
+        verbose_name_plural = 'Payment History Actions'
+        
+    def __str__(self):
+        return f"PaymentHistoryAction {self.action} on Payment {self.payment.payment_reference}"
+    
+    def __repr__(self):
+        return f"<PaymentHistoryAction id={self.id} action={self.action} payment={self.payment.payment_reference}>"

@@ -5,6 +5,7 @@ from djmoney.models.fields import MoneyField
 
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+from django.utils import timezone
 
 from djmoney.money import Money
 
@@ -13,7 +14,7 @@ from django.conf import settings
 from apps.common.models.verification import RequiresVerificationModel
 
 from core.utils.display import try_generate_unique_code
-
+from decimal import Decimal
 import uuid
 
 User = get_user_model()
@@ -85,7 +86,8 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
             self.tracking_reference = try_generate_unique_code(
                 model_class=RefundRequest,
                 length=10,
-                max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS
+                max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS,
+                lookup_field='tracking_reference'
             )
         except ValueError:
             raise exceptions.ValidationError("Could not generate a unique acceptance code. Please try again.")
@@ -95,9 +97,9 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
         super().save(*args, **kwargs)
     
     def clean(self):
-        if self.amount <= 0:
+        if self.amount.amount <= 0:
             raise exceptions.ValidationError("Refund amount must be greater than zero.")
-        if self.amount > self.payment.amount:
+        if self.amount > self.payment.base_amount:
             raise exceptions.ValidationError("Refund amount cannot exceed the original payment amount.")
         
     def associate_with(self, obj):
@@ -107,17 +109,17 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
         @param obj: The object to associate with (must be a model instance).
         @return: RefundAssociation instance linking the refund request to the object.
         '''
-        from apps.payments.mixins import PayableModel
+        if not isinstance(obj, models.Model):
+            raise ValueError("Can only associate with Django model instances.")
 
-        if not isinstance(obj, PayableModel):
-            raise ValueError("The provided object must be an instance of PayableModel.")
-
-        if self._get_refund_amount(obj) > self.payment.amount - self.total_refunded_amount:
+        if self._get_refund_amount(obj) > self.payment.base_amount - self.get_refund_amount():
             raise ValueError("Cannot associate refund: refunded amount exceeds available payment amount.")        
 
         refund = RefundAssociation.objects.create(
             refund_request=self,
-            content_object=obj
+            target_object=obj,
+            target_type=ContentType.objects.get_for_model(obj),
+            target_id=obj.pk
         )
         return refund
     
@@ -142,13 +144,23 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
 
         @return: Total refunded amount as a Money object.
         '''
-        total = 0
+        total = Money(0, self.payment.base_amount.currency)
         associations = self.associations.all()
         for assoc in associations:
             refunded_amount = self._get_refund_amount(assoc.target_object)
             total += refunded_amount    
 
         return total
+    
+    def absolute_amount(self) -> Money:
+        '''
+        Returns the absolute amount of the refund request.
+
+        @return: Absolute amount as a Money object.
+        '''
+        # 2 d.p
+        return Decimal(self.amount.amount).quantize(Decimal('0.01'))
+
     
     @property
     def is_partial(self):
@@ -157,7 +169,7 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
 
         @return: True if partial refund, False if full refund.
         '''
-        return self.amount < self.payment.amount
+        return self.amount < self.payment.base_amount
     
     @property
     def is_full(self):
@@ -166,7 +178,24 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
 
         @return: True if full refund, False if partial refund.
         '''
-        return self.amount == self.payment.amount
+        return self.amount == self.payment.base_amount
+    
+    def is_refundable(self, datetime: timezone.datetime) -> bool: # TODO: Test me
+        '''
+        Check if the payment is eligible for a refund within the event's refund window.
+
+        @return: True if refundable, False otherwise.
+        '''
+        from apps.common.models import AvailabilityTypeChoices
+        from apps.payments.models.payments import PaymentStatusChoices
+
+        if not self.payment.status == PaymentStatusChoices.COMPLETED or not self.payment.event.settings.refunds_enabled:
+            return False
+        
+        return self.payment.event.is_within_availability_window(
+            AvailabilityTypeChoices.REFUNDS, datetime,
+            true_if_non_existent=True
+            )
         
 class RefundAssociation(models.Model):
     '''
@@ -177,10 +206,6 @@ class RefundAssociation(models.Model):
         RefundRequest,
         on_delete=models.CASCADE,
         related_name='associations'
-    )
-    content_type = models.ForeignKey(
-        'contenttypes.ContentType',
-        on_delete=models.CASCADE
     )
     target_id = models.PositiveIntegerField()
     target_type = models.ForeignKey(

@@ -24,7 +24,7 @@ def generate_alphanumeric_id(length):
     characters = string.ascii_uppercase + string.digits
     return ''.join(random.choices(characters, k=length))
 
-def try_generate_unique_code(model_class, length, max_attempts=5):
+def try_generate_unique_code(model_class, length, max_attempts=5, lookup_field='code'):
     """
     Tries to generate a unique alphanumeric code for the given model class.
     Retries up to max_attempts times to avoid collisions.
@@ -32,7 +32,7 @@ def try_generate_unique_code(model_class, length, max_attempts=5):
     attempts = 0
     while attempts < max_attempts:
         code = generate_alphanumeric_id(length)
-        if not model_class.objects.filter(code=code).exists():
+        if not model_class.objects.filter(**{lookup_field: code}).exists():
             return code
         attempts += 1
     raise ValueError("Could not generate a unique code after multiple attempts.")

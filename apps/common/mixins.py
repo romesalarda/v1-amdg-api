@@ -1,6 +1,6 @@
 from django.contrib.contenttypes.models import ContentType
 from apps.common.models.resource import Resource
-from apps.common.models.availability import AvailabilityWindow
+from apps.common.models.availability import AvailabilityWindow, AvailabilityTypeChoices
 from apps.common.models.rules import AccessRule
 
 from apps.common.evaluator import BaseEvaluator, BaseContext, rules_apply
@@ -83,7 +83,8 @@ class HasAvailabilityMixin:
     '''
     Mixin to add availability window functionality to a model.
     '''
-    
+    AVAILABILITY_CHOICES = AvailabilityTypeChoices
+
     @property
     def availability_windows(self):
         ct = ContentType.objects.get_for_model(self, for_concrete_model=False)
@@ -111,11 +112,14 @@ class HasAvailabilityMixin:
             return True
         return False
     
-    def is_within_availability_window(self, availability_type, check_datetime) -> bool:
+    def is_within_availability_window(self, availability_type, check_datetime, true_if_non_existent=False) -> bool:
         '''
         Checks if the given datetime is within the specified availability window type for this event.
         '''
         windows = self.availability_windows.filter(availability_type=availability_type)
+        if not windows.exists():
+            return true_if_non_existent
+
         for window in windows:
             if window.within_window(check_datetime):
                 return True
