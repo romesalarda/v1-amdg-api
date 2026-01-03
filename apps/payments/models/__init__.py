@@ -1,7 +1,7 @@
 from .discounts import DiscountType, Discount, DiscountRule, DiscountRuleTypeChoices
 from .payments import Payment, PaymentStatusChoices
 from .methods import PaymentMethod, PaymentMethodTypeChoices
-from .refunds import RefundRequest
+from .refunds import RefundRequest, RefundAssociation
 from .donations import Donation
 
 __all__ = [
@@ -15,4 +15,5 @@ __all__ = [
     'PaymentMethodTypeChoices',
     'RefundRequest',
     'Donation',
+    'RefundAssociation',
 ]

@@ -303,7 +303,7 @@ class Order(SoftDeleteModel): # no admin model
     @property
     def refunded_amount(self) -> Money:
         '''
-        Returns the total amount refunded for this order.
+        Returns the amount to be used in a refund scenario.
         @return: Refunded amount as a Money instance.
         '''
         return self.total_amount        
@@ -350,7 +350,7 @@ class OrderItem(models.Model): # no admin model
         if new_unit_price.amount < 0:
             raise exceptions.ValidationError("Unit price cannot be negative.")
         self.unit_price = new_unit_price
-        self.total_price = (new_unit_price.amount * Decimal(self.quantity)).quantize(Decimal("0.01"))
+        self.total_price = Money((new_unit_price.amount * Decimal(self.quantity)).quantize(Decimal("0.01")), new_unit_price.currency)
         self.full_clean()
         self.save()
 

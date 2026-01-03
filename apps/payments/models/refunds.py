@@ -24,7 +24,7 @@ User = get_user_model()
 # 3. If 'verified', admin processes refund externally -> marks as 'processed'
 
 REFUND_TARGET_ID = 'refund_amount'  # The property/method name to get refunded amount from associated objects
-class RefundRequest(RequiresVerificationModel):
+class RefundRequest(RequiresVerificationModel): # inherits verification fields 
     '''
     RefundRequest model to handle refund requests for payments.
 
@@ -37,6 +37,7 @@ class RefundRequest(RequiresVerificationModel):
 
     refund_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True) # Public identifier
     tracking_reference = models.CharField(max_length=100, unique=True) # e.g., participant reference or order number
+
     payment = models.ForeignKey(
         'payments.Payment',
         on_delete=models.CASCADE,
@@ -88,7 +89,9 @@ class RefundRequest(RequiresVerificationModel):
             )
         except ValueError:
             raise exceptions.ValidationError("Could not generate a unique acceptance code. Please try again.")
-        
+        if not self.amount or self.amount.amount == 0:
+            self.amount = Money(self.get_refund_amount(), self.payment.amount.currency)
+
         super().save(*args, **kwargs)
     
     def clean(self):
@@ -133,10 +136,9 @@ class RefundRequest(RequiresVerificationModel):
         else:
             raise NotImplementedError(f"The target object of type {type(obj)} does not implement '{REFUND_TARGET_ID}' property.")
     
-    @property
-    def total_refunded_amount(self):
+    def get_refund_amount(self):
         '''
-        Calculate the total amount refunded for this refund request.
+        Returns the total amount refunded across all associated entities.
 
         @return: Total refunded amount as a Money object.
         '''
@@ -147,6 +149,24 @@ class RefundRequest(RequiresVerificationModel):
             total += refunded_amount    
 
         return total
+    
+    @property
+    def is_partial(self):
+        '''
+        Check if the refund request is for a partial amount.
+
+        @return: True if partial refund, False if full refund.
+        '''
+        return self.amount < self.payment.amount
+    
+    @property
+    def is_full(self):
+        '''
+        Check if the refund request is for the full amount.
+
+        @return: True if full refund, False if partial refund.
+        '''
+        return self.amount == self.payment.amount
         
 class RefundAssociation(models.Model):
     '''
@@ -183,3 +203,11 @@ class RefundAssociation(models.Model):
     
     def __repr__(self):
         return f"<RefundAssociation refund_request={self.refund_request.id} object={self.target_object}>"
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        if not self.description:
+            self.description = f"Association of refund request {self.refund_request.id} with {self.target_object}."
+        super().save(*args, **kwargs)
+
+    

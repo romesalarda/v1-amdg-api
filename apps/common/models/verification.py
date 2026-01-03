@@ -30,7 +30,7 @@ class RequiresVerificationModel(models.Model):
         null=True,
         blank=True
     )
-    processed_at = models.DateTimeField(null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True) # can be auto if done by system
     processed_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -38,6 +38,7 @@ class RequiresVerificationModel(models.Model):
         null=True,
         blank=True
     )
+    auto_processed = models.BooleanField(default=False) # indicates if processing was automatic/system-driven
     
     class Meta:
         abstract = True
@@ -60,13 +61,16 @@ class RequiresVerificationModel(models.Model):
         self.verified_by = None
         self.save()
 
-    def mark_processed(self, processor):
+    def mark_processed(self, processor=None):
         if not self.is_verified:
             raise ValidationError("Only verified items can be marked as processed.")
 
         self.verification_status = VerificationStatus.PROCESSED
         self.processed_at = timezone.now()
-        self.processed_by = processor
+        if processor:
+            self.processed_by = processor
+        else:
+            self.auto_processed = True
         self.save()
         
     @property
