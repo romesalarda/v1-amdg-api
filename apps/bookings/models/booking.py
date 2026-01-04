@@ -151,13 +151,16 @@ class Booking(models.Model, PaymentMixin):
         self.clean()
         super().save(*args, **kwargs)
 
-    def get_metadata(self, include_ticket_pricing=False):
+    def get_metadata(self, include_ticket_pricing=False, ticket_prices=None):
         """
-        Get booking metadata including attendees.
+        Get booking metadata including attendees and frozen ticket pricing.
         
-        @param include_ticket_pricing: If True, includes ticket pricing breakdown from tickets.
+        @param include_ticket_pricing: If True, includes ticket pricing breakdown.
                                        Use when creating payments to freeze refund amounts.
-        @return: Dict with booking details and optionally ticket pricing
+        @param ticket_prices: Dict mapping ticket_id -> Money amount for frozen pricing.
+                             If not provided and include_ticket_pricing=True, you must
+                             manually add amounts to the metadata after ticket creation.
+        @return: Dict with booking details and optionally frozen ticket pricing
         """
         attendee_metadata = []
         ticket_breakdown = {}
@@ -173,13 +176,24 @@ class Booking(models.Model, PaymentMixin):
                 ).select_related('package', 'ticket_type')
                 
                 for ticket in attendee_tickets:
-                    ticket_breakdown[str(ticket.ticket_id)] = {
+                    ticket_id = str(ticket.ticket_id)
+                    
+                    # Get frozen amount from provided ticket_prices dict
+                    frozen_amount = None
+                    if ticket_prices and ticket_id in ticket_prices:
+                        amount = ticket_prices[ticket_id]
+                        frozen_amount = str(amount.amount)
+                        currency = amount.currency.code
+                    
+                    ticket_breakdown[ticket_id] = {
+                        'ticket_id': ticket_id,
                         'attendee_id': str(attendee.attendee_id),
                         'attendee_name': attendee.full_name,
-                        'ticket_type': ticket.ticket_type.title,
+                        'ticket_type': ticket.ticket_type.title if ticket.ticket_type else 'Unknown',
+                        'ticket_type_code': ticket.ticket_type.code if ticket.ticket_type else None,
                         'package': ticket.package.name if ticket.package else None,
-                        # Note: Amount should be set externally when creating payment
-                        # as we don't store frozen prices in tickets
+                        'amount': frozen_amount,
+                        'currency': currency if frozen_amount else 'GBP',
                     }
             
             attendee_metadata.append(attendee_data)
@@ -189,6 +203,7 @@ class Booking(models.Model, PaymentMixin):
             'booking_reference': self.booking_reference,
             'event_id': str(self.event.id),
             'attendees': attendee_metadata,
+            'payment_type': 'booking_tickets',
         }
         
         if include_ticket_pricing:

@@ -151,7 +151,7 @@ class Payment(PayableModel):
                     raise ValidationError(
                         f"Invalid status transition from {old_payment.status} to {self.status}."
                     )
-        if self.percentage_modifier is not None:
+        if self.percentage_modifier != 0:
             raise ValidationError("Payments cannot have percentage modifiers.")
         super().clean()
 

@@ -400,7 +400,7 @@ class FullBookingFlowIntegrationTest(TestCase):
         expected_total = Money('58.50', 'GBP')
         self.assertEqual(total_amount, expected_total)
         
-        # ===== STEP 5: Create Payment =====
+        # ===== STEP 5: Create Payment with Proper Metadata =====
         payment = Payment.objects.create(
             user=self.sam,
             event=self.event,
@@ -411,13 +411,45 @@ class FullBookingFlowIntegrationTest(TestCase):
             status=PaymentStatusChoices.PENDING,
             metadata={
                 'booking_reference': booking.booking_reference,
+                'booking_id': str(booking.id),
+                'payment_type': 'booking_tickets',
                 'attendee_count': 5,
-                'breakdown': {
-                    'sam': str(sam_price),
-                    'mum': str(mum_price),
-                    'dad': str(dad_price),
-                    'brother': str(brother_price),
-                    'sister': str(sister_price)
+                'attendee_breakdown': {
+                    'sam': {
+                        'attendee_id': str(sam_attendee.attendee_id),
+                        'attendee_name': sam_attendee.full_name,
+                        'package': self.early_bird_package.name,
+                        'amount': str(sam_price.amount),
+                        'currency': sam_price.currency.code
+                    },
+                    'mum': {
+                        'attendee_id': str(mum_attendee.attendee_id),
+                        'attendee_name': mum_attendee.full_name,
+                        'package': self.single_day_package.name,
+                        'amount': str(mum_price.amount),
+                        'currency': mum_price.currency.code
+                    },
+                    'dad': {
+                        'attendee_id': str(dad_attendee.attendee_id),
+                        'attendee_name': dad_attendee.full_name,
+                        'package': self.single_day_package.name,
+                        'amount': str(dad_price.amount),
+                        'currency': dad_price.currency.code
+                    },
+                    'brother': {
+                        'attendee_id': str(brother_attendee.attendee_id),
+                        'attendee_name': brother_attendee.full_name,
+                        'package': self.standard_package.name,
+                        'amount': str(brother_price.amount),
+                        'currency': brother_price.currency.code
+                    },
+                    'sister': {
+                        'attendee_id': str(sister_attendee.attendee_id),
+                        'attendee_name': sister_attendee.full_name,
+                        'package': self.standard_package.name,
+                        'amount': str(sister_price.amount),
+                        'currency': sister_price.currency.code
+                    }
                 }
             }
         )
@@ -895,7 +927,7 @@ class FullBookingFlowIntegrationTest(TestCase):
         self.assertIn(variant_red_small, available_variants)
         self.assertIn(variant_green_large, available_variants)
         
-        # ===== STEP 10: Create Payment =====
+        # ===== STEP 10: Create Payment with Frozen Metadata =====
         total_amount = sarah_total + mark_total
         self.assertEqual(total_amount, Money('84.00', 'GBP'))
         
@@ -905,9 +937,36 @@ class FullBookingFlowIntegrationTest(TestCase):
             method=self.payment_method,
             base_amount=total_amount,
             status=PaymentStatusChoices.PENDING,
-
             target_id=booking.id,
-            target_type=ContentType.objects.get_for_model(Booking)
+            target_type=ContentType.objects.get_for_model(Booking),
+            metadata={
+                'booking_reference': booking.booking_reference,
+                'booking_id': str(booking.id),
+                'payment_type': 'booking_tickets',
+                'attendee_count': 2,
+                'attendee_breakdown': {
+                    'sarah': {
+                        'attendee_id': str(sarah.attendee_id),
+                        'attendee_name': sarah.full_name,
+                        'package': standard_package_with_product.name,
+                        'amount': str(sarah_total.amount),
+                        'currency': sarah_total.currency.code,
+                        'package_amount': str(sarah_package_price.amount),
+                        'product_variant_amount': str(sarah_variant_cost.amount),
+                        'variant': 'Medium Blue'
+                    },
+                    'mark': {
+                        'attendee_id': str(mark.attendee_id),
+                        'attendee_name': mark.full_name,
+                        'package': standard_package_with_product.name,
+                        'amount': str(mark_total.amount),
+                        'currency': mark_total.currency.code,
+                        'package_amount': str(mark_package_price.amount),
+                        'product_variant_amount': str(mark_variant_cost.amount),
+                        'variant': 'Small Red'
+                    }
+                }
+            }
         )
         
         # Link payment to booking
@@ -1138,7 +1197,7 @@ class FullBookingFlowIntegrationTest(TestCase):
         self.assertEqual(package_product.quantity_per_attendee, 1)
         self.assertEqual(package_product.percentage_modifier, Decimal('-10.00'))
         
-        # ===== STEP 6: Create Payment =====
+        # ===== STEP 6: Create Payment with Frozen Metadata =====
         total_amount = emp1_total + emp2_total + emp3_total
         self.assertEqual(total_amount, Money('191.18', 'GBP'))
         
@@ -1147,7 +1206,36 @@ class FullBookingFlowIntegrationTest(TestCase):
             event=self.event,
             method=self.payment_method,
             base_amount=total_amount,
-            status=PaymentStatusChoices.PENDING
+            status=PaymentStatusChoices.PENDING,
+            metadata={
+                'booking_reference': booking.booking_reference,
+                'booking_id': str(booking.id),
+                'payment_type': 'booking_tickets',
+                'attendee_count': 3,
+                'attendee_breakdown': {
+                    'employee1': {
+                        'attendee_id': str(employee1.attendee_id),
+                        'attendee_name': employee1.full_name,
+                        'package': employee_package.name,
+                        'amount': str(emp1_total.amount),
+                        'currency': emp1_total.currency.code
+                    },
+                    'employee2': {
+                        'attendee_id': str(employee2.attendee_id),
+                        'attendee_name': employee2.full_name,
+                        'package': employee_package.name,
+                        'amount': str(emp2_total.amount),
+                        'currency': emp2_total.currency.code
+                    },
+                    'employee3': {
+                        'attendee_id': str(employee3.attendee_id),
+                        'attendee_name': employee3.full_name,
+                        'package': employee_package.name,
+                        'amount': str(emp3_total.amount),
+                        'currency': emp3_total.currency.code
+                    }
+                }
+            }
         )
         
         booking.add_payment(payment)
@@ -1417,13 +1505,34 @@ class FullBookingFlowIntegrationTest(TestCase):
         vip_total = Money(vip_total.amount, 'GBP')  # Ensure proper Money type
         self.assertEqual(vip_total, Money('116.70', 'GBP'))
         
-        # ===== STEP 7: Create Payment and Ticket =====
+        # ===== STEP 7: Create Payment with Frozen Metadata =====
         payment = Payment.objects.create(
             user=self.sam,
             event=self.event,
             method=self.payment_method,
             base_amount=vip_total,
-            status=PaymentStatusChoices.COMPLETED
+            status=PaymentStatusChoices.COMPLETED,
+            metadata={
+                'booking_reference': booking.booking_reference,
+                'booking_id': str(booking.id),
+                'payment_type': 'booking_tickets',
+                'attendee_count': 1,
+                'attendee_breakdown': {
+                    'vip': {
+                        'attendee_id': str(vip_attendee.attendee_id),
+                        'attendee_name': vip_attendee.full_name,
+                        'package': vip_package.name,
+                        'amount': str(vip_total.amount),
+                        'currency': vip_total.currency.code,
+                        'breakdown': {
+                            'package_base': str(vip_package_price.amount),
+                            'tshirt': str(tshirt_cost.amount),
+                            'mugs': str(mug_cost.amount),
+                            'bag': str(bag_cost.amount)
+                        }
+                    }
+                }
+            }
         )
         
         booking.add_payment(payment)
