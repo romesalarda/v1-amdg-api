@@ -151,18 +151,50 @@ class Booking(models.Model, PaymentMixin):
         self.clean()
         super().save(*args, **kwargs)
 
-    def get_metadata(self):
-
+    def get_metadata(self, include_ticket_pricing=False):
+        """
+        Get booking metadata including attendees.
+        
+        @param include_ticket_pricing: If True, includes ticket pricing breakdown from tickets.
+                                       Use when creating payments to freeze refund amounts.
+        @return: Dict with booking details and optionally ticket pricing
+        """
         attendee_metadata = []
+        ticket_breakdown = {}
+        
         for attendee in self.attendees.all():
-            attendee_metadata.append(attendee.get_metadata())
+            attendee_data = attendee.get_metadata()
+            
+            # If requested, include ticket pricing information
+            if include_ticket_pricing:
+                # Get tickets for this attendee
+                attendee_tickets = attendee.tickets.filter(
+                    status='ACTIVE'  # Only active tickets
+                ).select_related('package', 'ticket_type')
+                
+                for ticket in attendee_tickets:
+                    ticket_breakdown[str(ticket.ticket_id)] = {
+                        'attendee_id': str(attendee.attendee_id),
+                        'attendee_name': attendee.full_name,
+                        'ticket_type': ticket.ticket_type.title,
+                        'package': ticket.package.name if ticket.package else None,
+                        # Note: Amount should be set externally when creating payment
+                        # as we don't store frozen prices in tickets
+                    }
+            
+            attendee_metadata.append(attendee_data)
 
-        return {
+        metadata = {
             'booking_id': str(self.id),
             'booking_reference': self.booking_reference,
             'event_id': str(self.event.id),
             'attendees': attendee_metadata,
-        }    
+        }
+        
+        if include_ticket_pricing:
+            metadata['ticket_breakdown'] = ticket_breakdown
+        
+        return metadata    
     class Meta:
         ordering = ['-booked_at']
         verbose_name = 'Booking'

@@ -102,53 +102,56 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
         if self.amount > self.payment.base_amount:
             raise exceptions.ValidationError("Refund amount cannot exceed the original payment amount.")
         
-    def associate_with(self, obj):
+    def associate_with(self, obj, amount, metadata=None):
         '''
-        Associate this refund request with another entity (e.g., order, booking).
+        Associate this refund request with another entity with a FROZEN amount.
+        
+        SECURITY: Amount must come from payment.metadata (frozen at payment time)
+        to prevent dynamic recalculation vulnerabilities.
 
         @param obj: The object to associate with (must be a model instance).
+        @param amount: Money object - FROZEN amount from payment metadata
+        @param metadata: Optional dict with frozen pricing details from payment metadata
         @return: RefundAssociation instance linking the refund request to the object.
         '''
         if not isinstance(obj, models.Model):
             raise ValueError("Can only associate with Django model instances.")
+        
+        if not isinstance(amount, Money):
+            raise ValueError("Amount must be a Money object.")
+        
+        if amount.amount <= 0:
+            raise ValueError("Refund amount must be greater than zero.")
 
-        if self._get_refund_amount(obj) > self.payment.base_amount - self.get_refund_amount():
-            raise ValueError("Cannot associate refund: refunded amount exceeds available payment amount.")        
+        # Check if total refunds would exceed payment amount
+        current_refunded = self.get_refund_amount()
+        if amount > (self.payment.base_amount - current_refunded):
+            raise ValueError(
+                f"Cannot associate refund: total refunds ({current_refunded + amount}) "
+                f"would exceed payment amount ({self.payment.base_amount})."
+            )
 
         refund = RefundAssociation.objects.create(
             refund_request=self,
             target_object=obj,
             target_type=ContentType.objects.get_for_model(obj),
-            target_id=obj.pk
+            target_id=obj.pk,
+            amount=amount,  # Store frozen amount
+            metadata=metadata or {}
         )
         return refund
-    
-    def _get_refund_amount(self, obj) -> 'Money':
-        '''
-        Helper method to get the refunded amount from an associated object.
-
-        @param obj: The associated object.
-        @return: Refunded amount as a Money object.
-        '''
-        if hasattr(obj, REFUND_TARGET_ID):
-            if callable(getattr(obj, REFUND_TARGET_ID)):
-                return getattr(obj, REFUND_TARGET_ID)()
-            else:
-                return getattr(obj, REFUND_TARGET_ID)
-        else:
-            raise NotImplementedError(f"The target object of type {type(obj)} does not implement '{REFUND_TARGET_ID}' property.")
     
     def get_refund_amount(self):
         '''
         Returns the total amount refunded across all associated entities.
+        Uses FROZEN amounts stored in RefundAssociation, never recalculates.
 
         @return: Total refunded amount as a Money object.
         '''
         total = Money(0, self.payment.base_amount.currency)
         associations = self.associations.all()
         for assoc in associations:
-            refunded_amount = self._get_refund_amount(assoc.target_object)
-            total += refunded_amount    
+            total += assoc.amount  # Use frozen amount from association
 
         return total
     
@@ -196,10 +199,23 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
             AvailabilityTypeChoices.REFUNDS, datetime,
             true_if_non_existent=True
             )
+    
+    def mark_verified(self, verifier):
+        self.is_active
+        return super().mark_verified(verifier)
+    
+    def mark_processed(self, processor=None):
+        self.is_active = False
+        return super().mark_processed(processor)
+    
+    def mark_rejected(self, verifier):
+        self.is_active = False
+        return super().mark_rejected(verifier)
         
 class RefundAssociation(models.Model):
     '''
     Model to associate refunds with various entities like orders or bookings.
+    Stores a frozen snapshot of the refund amount to prevent dynamic recalculation vulnerabilities.
     '''
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     refund_request = models.ForeignKey(
@@ -207,16 +223,29 @@ class RefundAssociation(models.Model):
         on_delete=models.CASCADE,
         related_name='associations'
     )
-    target_id = models.PositiveIntegerField()
+    target_id = models.CharField(max_length=255)  # Support both integer and UUID IDs
     target_type = models.ForeignKey(
         ContentType,
         on_delete=models.CASCADE,
         related_name='refund_association_targets'
     )
     target_object = GenericForeignKey('target_type', 'target_id')
+    
+    # Frozen amount from payment metadata - NEVER recalculated dynamically
+    amount = MoneyField(
+        max_digits=10,
+        decimal_places=2,
+        default_currency='GBP',
+        help_text='Frozen refund amount from payment metadata at time of payment',
+        default=Money(0, 'GBP')
+    )
 
     description = models.TextField(blank=True, null=True)
-    metadata = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Frozen metadata snapshot from payment, including pricing breakdown'
+    )
 
     class Meta:
         verbose_name = 'Refund Association'
@@ -232,7 +261,15 @@ class RefundAssociation(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         if not self.description:
-            self.description = f"Association of refund request {self.refund_request.id} with {self.target_object}."
+            self.description = (
+                f"Refund of {self.amount} for {self.target_object} "
+                f"(Request: {self.refund_request.tracking_reference})"
+            )
         super().save(*args, **kwargs)
+    
+    def clean(self):
+        """Validate frozen amount is positive"""
+        if hasattr(self, 'amount') and self.amount and self.amount.amount <= 0:
+            raise exceptions.ValidationError("Refund association amount must be greater than zero.")
 
     

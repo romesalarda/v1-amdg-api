@@ -942,15 +942,31 @@ class RefundFlowTest(TestCase):
         self.assertTrue(refund_request.is_active)
         
         # ===== ASSOCIATE REFUND WITH ORDER ITEMS =====
-        # Associate the refund with all order items
+        # Associate the refund with all order items using FROZEN amounts from payment
         order_items = order.order_items.all()
         self.assertEqual(order_items.count(), 2)
         
         for item in order_items:
-            refund_association = refund_request.associate_with(item)
+            # Use frozen amount from order item (which was frozen at order creation)
+            frozen_amount = item.total_price
+            frozen_metadata = {
+                'item_id': item.id,
+                'product_title': item.product_variant.product.title if item.product_variant else 'Unknown',
+                'quantity': item.quantity,
+                'unit_price': str(item.unit_price.amount),
+                'total_price': str(item.total_price.amount),
+                'frozen_at_payment': True
+            }
+            
+            refund_association = refund_request.associate_with(
+                item,
+                amount=frozen_amount,
+                metadata=frozen_metadata
+            )
             self.assertIsNotNone(refund_association)
             self.assertEqual(refund_association.refund_request, refund_request)
             self.assertEqual(refund_association.target_object, item)
+            self.assertEqual(refund_association.amount, frozen_amount)
         
         # Verify associations were created
         associations = refund_request.associations.all()
@@ -1096,10 +1112,26 @@ class RefundFlowTest(TestCase):
         self.assertFalse(refund_request.is_full)
         
         # ===== ASSOCIATE REFUND WITH SHIRT ITEM ONLY =====
-        refund_association = refund_request.associate_with(shirt_item)
+        # Use frozen amount from order item
+        frozen_shirt_amount = shirt_item.total_price
+        frozen_metadata = {
+            'item_id': shirt_item.id,
+            'product_title': shirt_item.product_variant.product.title,
+            'quantity': shirt_item.quantity,
+            'unit_price': str(shirt_item.unit_price.amount),
+            'total_price': str(shirt_item.total_price.amount),
+            'refund_reason': 'Shirt size not available'
+        }
+        
+        refund_association = refund_request.associate_with(
+            shirt_item,
+            amount=frozen_shirt_amount,
+            metadata=frozen_metadata
+        )
         
         self.assertIsNotNone(refund_association)
         self.assertEqual(refund_association.target_object, shirt_item)
+        self.assertEqual(refund_association.amount, frozen_shirt_amount)
         
         # Verify only one association exists
         associations = refund_request.associations.all()
@@ -1208,8 +1240,30 @@ class RefundFlowTest(TestCase):
         # In this test, we're refunding the full amount of both order items
         # In a real scenario, you might create separate OrderItems for each quantity
         # or implement a quantity field in RefundAssociation
-        bag_association = refund_request.associate_with(bag_item)
-        shirt_association = refund_request.associate_with(shirt_item)
+        
+        # Get frozen amounts from payment metadata
+        payment_metadata = payment.metadata
+        order_items = payment_metadata.get('order', {}).get('order_items', [])
+        
+        # Find amounts for each item
+        bag_frozen = None
+        shirt_frozen = None
+        for item_data in order_items:
+            if item_data['order_item_id'] == bag_item.id:
+                bag_frozen = Money(item_data['total_amount'], item_data['currency'])
+            elif item_data['order_item_id'] == shirt_item.id:
+                shirt_frozen = Money(item_data['total_amount'], item_data['currency'])
+        
+        bag_association = refund_request.associate_with(
+            bag_item,
+            amount=bag_frozen,
+            metadata={'item_name': 'Bag', 'original_price': str(bag_frozen)}
+        )
+        shirt_association = refund_request.associate_with(
+            shirt_item,
+            amount=shirt_frozen,
+            metadata={'item_name': 'Shirt', 'original_price': str(shirt_frozen)}
+        )
         
         self.assertEqual(refund_request.associations.count(), 2)
         
@@ -1293,7 +1347,18 @@ class RefundFlowTest(TestCase):
         
         # Associate with order item
         order_item = order.order_items.first()
-        refund_request.associate_with(order_item)
+        
+        # Get frozen amount from payment metadata
+        payment_metadata = payment.metadata
+        order_items = payment_metadata.get('order', {}).get('order_items', [])
+        item_data = order_items[0]
+        frozen_amount = Money(item_data['total_amount'], item_data['currency'])
+        
+        refund_request.associate_with(
+            order_item,
+            amount=frozen_amount,
+            metadata={'item_name': 'Bag', 'original_price': str(frozen_amount)}
+        )
         
         # Verify initial status
         self.assertTrue(refund_request.is_pending)
@@ -1469,7 +1534,18 @@ class RefundFlowTest(TestCase):
         )
         
         order_item = order.order_items.first()
-        refund_request.associate_with(order_item)
+        
+        # Get frozen amount from payment metadata
+        payment_metadata = payment.metadata
+        order_items = payment_metadata.get('order', {}).get('order_items', [])
+        item_data = order_items[0]
+        frozen_amount = Money(item_data['total_amount'], item_data['currency'])
+        
+        refund_request.associate_with(
+            order_item,
+            amount=frozen_amount,
+            metadata={'item_name': 'Bag', 'original_price': str(frozen_amount)}
+        )
         
         # Admin rejects the refund
         admin = User.objects.create_user(

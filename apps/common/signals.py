@@ -12,6 +12,6 @@ def delete_related_resources(sender, instance, **kwargs):
     content_type = ContentType.objects.get_for_model(sender)
     Resource.objects.filter( # delete only unprotected resources
         target_type=content_type,
-        target_id=instance.id,
+        target_id=instance.pk,
         protected=False
     ).delete()

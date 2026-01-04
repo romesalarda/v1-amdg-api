@@ -279,14 +279,21 @@ class Order(SoftDeleteModel): # no admin model
         '''
         Returns metadata about the order for auditing/logging purposes.
         Takes into account the attendee and products in the order.
+        Includes frozen pricing information for refund security.
+
+        @return: Dictionary containing order metadata.
         '''
-        product_metadata = []
+        order_items = []
         for item in self.order_items.all():
-            product_metadata.append({
+            order_items.append({
+                'order_item_id': item.id,
                 'product_variant_id': item.product_variant.id if item.product_variant else None,
+                'product_title': item.product_variant.product.title if item.product_variant else 'Unknown',
                 'quantity': item.quantity,
-                'unit_price': str(item.unit_price),
-                'total_price': str(item.total_price),
+                'unit_price': str(item.unit_price.amount),
+                'total_price': str(item.total_price.amount),
+                'total_amount': str(item.total_price.amount),  # Frozen amount for refunds
+                'currency': item.total_price.currency.code,
                 'final_price_for_attendee': str(item.product_variant.get_attendee_final_price(self.attendee)) if item.product_variant else None
             })
 
@@ -297,7 +304,9 @@ class Order(SoftDeleteModel): # no admin model
             'attendee_id': self.attendee.id if self.attendee else None,
             'status': self.status,
             'total_amount': str(self.total_amount),
-            'products': product_metadata
+            'order': {
+                'order_items': order_items
+            }
         }
     
     @property

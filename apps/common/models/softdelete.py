@@ -29,7 +29,6 @@ class SoftDeleteModel(models.Model):
     def soft_delete(self):
         if self.deleted_at:
             raise ValidationError("Object is already deleted.")
-        self.is_deleted = True
         self.deleted_at = timezone.now()
         self.save(update_fields=['deleted_at'])
         
