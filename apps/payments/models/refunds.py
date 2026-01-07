@@ -12,6 +12,7 @@ from djmoney.money import Money
 from django.conf import settings
 
 from apps.common.models.verification import RequiresVerificationModel
+from apps.common.mixins import HasAvailabilityMixin
 
 from core.utils.display import try_generate_unique_code
 from decimal import Decimal
@@ -271,5 +272,83 @@ class RefundAssociation(models.Model):
         """Validate frozen amount is positive"""
         if hasattr(self, 'amount') and self.amount and self.amount.amount <= 0:
             raise exceptions.ValidationError("Refund association amount must be greater than zero.")
+        
+class RefundPolicyTypeChoices(models.TextChoices):
+    FULL_REFUND = 'full_refund', 'Full Refund'
+    PARTIAL_REFUND = 'partial_refund', 'Partial Refund'
+    NON_REFUNDABLE = 'non_refundable', 'Non-Refundable'
+class RefundPolicy(models.Model):
+    '''
+    Model to define refund policies for events.
+    '''
+    event = models.OneToOneField(
+        'events.Event',
+        on_delete=models.CASCADE,
+        related_name='refund_policy'
+    )
+    policy_type = models.CharField(
+        max_length=20,
+        choices=RefundPolicyTypeChoices.choices,
+        default=RefundPolicyTypeChoices.FULL_REFUND
+    )
+    refundable_within_days = models.PositiveIntegerField(
+        default=14,
+        help_text='Number of days before event start date when full refunds are allowed.'
+    )
 
+    percentage_refund = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=100.00,
+        help_text='Percentage of the original amount to refund for partial refunds.'
+    )
+    notes = models.TextField(
+        blank=True,
+        help_text='Additional notes regarding the refund policy.'
+    )
+
+    class Meta:
+        verbose_name = 'Refund Policy'
+        verbose_name_plural = 'Refund Policies'
+
+    def __str__(self):
+        return f"RefundPolicy(event={self.event.name})"
     
+    def __repr__(self):
+        return f"<RefundPolicy event={self.event.name}>"
+    
+    def is_refundable(self, request_date: timezone.datetime) -> bool:
+        '''
+        Check if a refund is allowed based on the request date.
+
+        @param request_date: The date when the refund is requested.
+        @return: True if refundable, False otherwise.
+        '''
+        timezone = self.event.timezone
+        tz_aware_request_date = timezone.localize(request_date.replace(tzinfo=None))
+        event_start_date = self.event.start_datetime.astimezone(timezone)
+        days_before_event = (event_start_date - tz_aware_request_date).days
+        if self.event.settings.refunds_enabled is False:
+            return False
+        
+        if self.policy_type == RefundPolicyTypeChoices.NON_REFUNDABLE:
+            return False
+        elif self.policy_type == RefundPolicyTypeChoices.FULL_REFUND:
+            return days_before_event >= self.refundable_within_days
+        elif self.policy_type == RefundPolicyTypeChoices.PARTIAL_REFUND:
+            return days_before_event >= 0  # Allow partial refunds up to event start
+        
+    def calculate_refund_amount(self, original_amount: Money) -> Money:
+        '''
+        Calculate the refund amount based on the policy.
+
+        @param original_amount: The original payment amount.
+        @return: The calculated refund amount as a Money object.
+        '''
+        if self.policy_type == RefundPolicyTypeChoices.NON_REFUNDABLE:
+            return Money(0, original_amount.currency)
+        elif self.policy_type == RefundPolicyTypeChoices.FULL_REFUND:
+            return original_amount
+        elif self.policy_type == RefundPolicyTypeChoices.PARTIAL_REFUND:
+            refund_amount = (original_amount.amount * (self.percentage_refund / 100)).quantize(Decimal('0.01'))
+            return Money(refund_amount, original_amount.currency)
