@@ -4,11 +4,12 @@ from django.core.exceptions import ValidationError
 class PhoneNumberValidator(RegexValidator):
     """
     Validator for phone numbers. Validates international and local formats.
+    Allows spaces, dashes, parentheses for formatting.
     """
-    regex = r'^\+?1?\d{9,15}$'
+    regex = r'^[\+]?[(]?[0-9]{1,4}[)]?[-\s\.]?[(]?[0-9]{1,4}[)]?[-\s\.]?[0-9]{1,5}[-\s\.]?[0-9]{1,6}$'
     message = (
-        "Enter a valid phone number. Up to 15 digits allowed. "
-        "It may start with a '+' sign followed by country code."
+        "Enter a valid phone number. Accepts international format with spaces, "
+        "dashes, or parentheses (e.g., +44 1234 567890, (555) 123-4567)."
     )
     flags = 0
 

@@ -29,7 +29,7 @@ class Resource(models.Model):
                            null=True, help_text=_("Tag for categorizing the resource, e.g., LANDING_PHOTO, SCHEDULE_PDF, SPEAKER_BIO, etc. Database only.")
                            ) # LANDING_PHOTO, SCHEDULE_PDF, SPEAKER_BIO, etc. db only
     target_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
-    target_id = models.PositiveIntegerField()
+    target_id = models.CharField(max_length=255)
     target = GenericForeignKey('target_type', 'target_id')
     
     public = models.BooleanField(default=True)
@@ -40,9 +40,9 @@ class Resource(models.Model):
         default=ResourceTypeChoices.DOCUMENT
     )
     
-    file = models.FileField(upload_to='resources/files/', blank=True, null=True)
-    link = models.URLField(blank=True, null=True)
-    image = models.ImageField(upload_to='resources/images/', blank=True, null=True)
+    file = models.FileField(upload_to='resources/files/', blank=True, null=True, max_length=500)
+    link = models.URLField(blank=True, null=True, max_length=500)
+    image = models.ImageField(upload_to='resources/images/', blank=True, null=True, max_length=500)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
