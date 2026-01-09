@@ -467,7 +467,54 @@ class UserViewSet(viewsets.ModelViewSet):
 @extend_schema_view(
     list=extend_schema(
         summary="List profiles",
-        description="Retrieve a paginated list of user profiles.",
+        description="Retrieve a paginated list of user profiles with advanced filtering.",
+        parameters=[
+            OpenApiParameter(
+                name='preferred_name',
+                type=OpenApiTypes.STR,
+                description='Filter by preferred name (case-insensitive partial match)'
+            ),
+            OpenApiParameter(
+                name='contact_phone',
+                type=OpenApiTypes.STR,
+                description='Filter by contact phone (partial match)'
+            ),
+            OpenApiParameter(
+                name='timezone',
+                type=OpenApiTypes.STR,
+                description='Filter by timezone (exact match, e.g., Europe/London)'
+            ),
+            OpenApiParameter(
+                name='preferred_language',
+                type=OpenApiTypes.STR,
+                description='Filter by preferred language (en, es, fr)'
+            ),
+            OpenApiParameter(
+                name='has_profile_picture',
+                type=OpenApiTypes.BOOL,
+                description='Filter by whether profile has a picture'
+            ),
+            OpenApiParameter(
+                name='area_from',
+                type=OpenApiTypes.INT,
+                description='Filter by area location ID'
+            ),
+            OpenApiParameter(
+                name='search',
+                type=OpenApiTypes.STR,
+                description='Search by email, username, preferred name, or contact phone'
+            ),
+            OpenApiParameter(
+                name='ordering',
+                type=OpenApiTypes.STR,
+                description='Order by field (created_at, updated_at). Use - prefix for descending'
+            ),
+            OpenApiParameter(
+                name='page_size',
+                type=OpenApiTypes.INT,
+                description='Number of results per page (max 100)'
+            ),
+        ],
         responses={200: ProfileSerializer(many=True)}
     ),
     retrieve=extend_schema(
