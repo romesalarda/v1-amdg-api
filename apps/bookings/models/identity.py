@@ -141,11 +141,11 @@ class AttendeeAlternativeSigninIdentifier(models.Model):
         return f"{self.attendee} - {self.identifier}"
     
     def __repr__(self):
-        return f"<AttendeeAlternativeSigninIdentifier(attendee_id={self.attendee_id}, identifier={self.identifier})>"
+        return f"<AttendeeAlternativeSigninIdentifier(attendee_id={self.attendee.attendee_display_id}, identifier={self.identifier})>"
 
     def save(self, *args, **kwargs):
-        self.full_clean()
         self.identifier = self.identifier.strip()
+        self.full_clean()
         super().save(*args, **kwargs)
 
     def clean(self):
@@ -153,12 +153,13 @@ class AttendeeAlternativeSigninIdentifier(models.Model):
             raise ValidationError({"identifier": _("Identifier cannot be empty.")})
         if self.event_alternative_signin and not self.event_alternative_signin.validate_code_format(self.identifier):
             raise ValidationError({"identifier": _("Identifier does not match the required format.")})
-
-        if self.event_alternative_signin.event_id != self.ticket.event_id:
-            raise ValidationError({"event_alternative_signin": _("The event alternative sign-in identifier must belong to the same event as the ticket.")})
         
-        if not self.ticket.attendee_id == self.attendee_id:
-            raise ValidationError({"ticket": _("The ticket must belong to the same attendee.")})
+        if self.ticket and self.event_alternative_signin:
+            if self.event_alternative_signin.event_id != self.ticket.attendee.event_id:
+                raise ValidationError({"event_alternative_signin": _("The event alternative sign-in identifier must belong to the same event as the ticket.")})
+        
+            if not self.ticket.attendee_id == self.attendee_id:
+                raise ValidationError({"ticket": _("The ticket must belong to the same attendee.")})
         
         if not self.event_alternative_signin.is_valid:
             raise ValidationError({"event_alternative_signin": _("The event alternative sign-in identifier is not active.")})

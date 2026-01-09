@@ -2,7 +2,9 @@ from django.contrib import admin
 from django.utils.html import format_html
 from apps.bookings.models import (
     Booking, BookingPackage, BookingPackageRule,
-    TicketType, Ticket
+    TicketType, Ticket,
+    EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
+    PackageProduct
 )
 
 
@@ -130,3 +132,146 @@ class BookingAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related(
             'event', 'made_by'
         ).prefetch_related('attendees')
+
+
+class AttendeeAlternativeSigninInline(admin.TabularInline):
+    model = AttendeeAlternativeSigninIdentifier
+    extra = 0
+    fields = ('identifier', 'event_alternative_signin', 'ticket', 'uses', 'defined_by', 'defined_at')
+    readonly_fields = ('sign_id', 'defined_at', 'updated_at', 'uses')
+    autocomplete_fields = ['ticket', 'event_alternative_signin', 'defined_by']
+
+
+@admin.register(EventAlternativeSigninIdentifier)
+class EventAlternativeSigninIdentifierAdmin(admin.ModelAdmin):
+    list_display = (
+        'title', 'event', 'is_active', 'verification_status',
+        'max_uses_per_signin', 'created_at'
+    )
+    list_filter = (
+        'is_active', 'verification_status', 'event', 'created_at'
+    )
+    search_fields = ('title', 'description', 'event__title', 'event__display_code')
+    readonly_fields = (
+        'id', 'created_at', 'updated_at', 'verified_updated_at',
+        'processed_at'
+    )
+    inlines = [AttendeeAlternativeSigninInline]
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('id', 'title', 'description', 'event')
+        }),
+        ('Configuration', {
+            'fields': ('format_match', 'max_uses_per_signin', 'is_active')
+        }),
+        ('Verification Status', {
+            'fields': (
+                'verification_status', 'verified_by', 'verified_updated_at',
+                'processed_by', 'processed_at', 'auto_processed'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'event', 'verified_by', 'processed_by'
+        )
+
+
+@admin.register(AttendeeAlternativeSigninIdentifier)
+class AttendeeAlternativeSigninIdentifierAdmin(admin.ModelAdmin):
+    list_display = (
+        'identifier', 'attendee', 'event_alternative_signin',
+        'uses', 'has_ticket', 'is_valid_status', 'defined_at'
+    )
+    list_filter = (
+        'event_alternative_signin__event',
+        'event_alternative_signin',
+        'defined_at'
+    )
+    search_fields = (
+        'identifier', 'attendee__first_name', 'attendee__last_name',
+        'attendee__attendee_display_id', 'ticket__ticket_code',
+        'event_alternative_signin__title'
+    )
+    readonly_fields = (
+        'sign_id', 'defined_at', 'updated_at', 'uses'
+    )
+    autocomplete_fields = ['attendee', 'ticket', 'event_alternative_signin', 'defined_by']
+    
+    fieldsets = (
+        ('Identifier Information', {
+            'fields': ('sign_id', 'identifier', 'event_alternative_signin')
+        }),
+        ('Associated Records', {
+            'fields': ('attendee', 'ticket')
+        }),
+        ('Usage Tracking', {
+            'fields': ('uses',)
+        }),
+        ('Metadata', {
+            'fields': ('defined_by', 'defined_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def has_ticket(self, obj):
+        return obj.has_ticket
+    has_ticket.boolean = True
+    has_ticket.short_description = 'Has Ticket'
+    
+    def is_valid_status(self, obj):
+        return obj.is_valid
+    is_valid_status.boolean = True
+    is_valid_status.short_description = 'Valid'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'attendee', 'ticket', 'event_alternative_signin',
+            'event_alternative_signin__event', 'defined_by'
+        )
+
+
+@admin.register(PackageProduct)
+class PackageProductAdmin(admin.ModelAdmin):
+    list_display = (
+        'booking_package', 'product', 'quantity_per_attendee',
+        'base_amount', 'percentage_modifier', 'modified_amount',
+        'added_at'
+    )
+    list_filter = (
+        'booking_package__event', 'booking_package', 'added_at'
+    )
+    search_fields = (
+        'booking_package__name', 'product__name',
+        'booking_package__event__title'
+    )
+    readonly_fields = (
+        'base_amount', 'modified_amount', 'added_at', 'updated_at'
+    )
+    autocomplete_fields = ['booking_package', 'product', 'added_by']
+    
+    fieldsets = (
+        ('Package Product Information', {
+            'fields': ('booking_package', 'product', 'quantity_per_attendee')
+        }),
+        ('Pricing', {
+            'fields': ('base_amount', 'percentage_modifier', 'modified_amount')
+        }),
+        ('Metadata', {
+            'fields': ('added_by', 'added_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'booking_package', 'product', 'booking_package__event', 'added_by'
+        )
+

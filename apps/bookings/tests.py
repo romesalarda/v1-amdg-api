@@ -9,11 +9,13 @@ from djmoney.money import Money
 from apps.bookings.models import (
     Booking, BookingPackage, BookingPackageRule,
     TicketType, Ticket, TicketScopeChoices, TicketStatusChoices,
-    PackageRuleTypeChoices
+    PackageRuleTypeChoices,
+    EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier
 )
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.organisations.models import Organisation
+from apps.common.models.verification import VerificationStatus
 
 User = get_user_model()
 
@@ -1288,4 +1290,763 @@ class TicketStatusChoicesTest(TestCase):
         
         for status in expected_statuses:
             self.assertTrue(hasattr(TicketStatusChoices, status))
+
+
+class EventAlternativeSigninIdentifierModelTest(TestCase):
+    """Test cases for EventAlternativeSigninIdentifier model"""
+    
+    def setUp(self):
+        """Set up test data"""
+        self.user = User.objects.create_user(
+            username='signinuser',
+            email='signin@example.com',
+            password='testpass123'
+        )
+        
+        self.organisation = Organisation.objects.create(
+            title='Signin Test Organisation',
+            created_by=self.user
+        )
+        
+        self.event_type = EventType.objects.create(
+            title='Youth Event',
+            code='YOUTH',
+            created_by=self.user
+        )
+        
+        self.event = Event.objects.create(
+            title='YFC Youth Event',
+            display_code='YFC001',
+            display_identifier='YFC001YOUTH',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
+        )
+    
+    def test_alternative_signin_creation(self):
+        """Test creating an alternative sign-in identifier"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC YIM Number',
+            description='Youth in Mission membership number',
+            event=self.event,
+            format_match=r'^YIM\d{6}$',
+            max_uses_per_signin=3,
+            is_active=True
+        )
+        
+        self.assertIsNotNone(alt_signin.id)
+        self.assertEqual(alt_signin.title, 'Yfc Yim Number')  # Title case
+        self.assertEqual(alt_signin.event, self.event)
+        self.assertEqual(alt_signin.max_uses_per_signin, 3)
+        self.assertTrue(alt_signin.is_active)
+    
+    def test_alternative_signin_str_method(self):
+        """Test __str__ method returns title"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC YIM Number',
+            event=self.event
+        )
+        
+        self.assertEqual(str(alt_signin), 'Yfc Yim Number')
+    
+    def test_alternative_signin_repr_method(self):
+        """Test __repr__ method"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC YIM Number',
+            event=self.event
+        )
+        
+        repr_str = repr(alt_signin)
+        self.assertIn('EventAlternativeSigninIdentifier', repr_str)
+        self.assertIn('Yfc Yim Number', repr_str)
+        self.assertIn(str(self.event.id), repr_str)
+    
+    def test_alternative_signin_unique_together(self):
+        """Test unique_together constraint on event and title"""
+        EventAlternativeSigninIdentifier.objects.create(
+            title='YFC Number',
+            event=self.event
+        )
+        
+        with self.assertRaises(Exception):  # IntegrityError
+            EventAlternativeSigninIdentifier.objects.create(
+                title='YFC Number',
+                event=self.event
+            )
+    
+    def test_alternative_signin_title_validation(self):
+        """Test that empty title raises ValidationError"""
+        alt_signin = EventAlternativeSigninIdentifier(
+            title='',
+            event=self.event
+        )
+        
+        with self.assertRaises(ValidationError) as cm:
+            alt_signin.save()
+        
+        self.assertIn('title', cm.exception.message_dict)
+    
+    def test_alternative_signin_title_stripping_and_title_case(self):
+        """Test that title is stripped and converted to title case"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='  yfc yim number  ',
+            event=self.event
+        )
+        
+        self.assertEqual(alt_signin.title, 'Yfc Yim Number')
+    
+    def test_alternative_signin_is_valid_property(self):
+        """Test is_valid property returns is_active status"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='Active Signin',
+            event=self.event,
+            is_active=True
+        )
+        
+        self.assertTrue(alt_signin.is_valid)
+        
+        alt_signin.is_active = False
+        self.assertFalse(alt_signin.is_valid)
+    
+    def test_validate_code_format_with_regex(self):
+        """Test validate_code_format with regex pattern"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC YIM Number',
+            event=self.event,
+            format_match=r'^YIM\d{6}$'  # Pattern: YIM followed by 6 digits
+        )
+        
+        # Valid codes
+        self.assertTrue(alt_signin.validate_code_format('YIM123456'))
+        self.assertTrue(alt_signin.validate_code_format('YIM000000'))
+        
+        # Invalid codes
+        self.assertFalse(alt_signin.validate_code_format('YIM12345'))  # Too short
+        self.assertFalse(alt_signin.validate_code_format('YIM1234567'))  # Too long
+        self.assertFalse(alt_signin.validate_code_format('yim123456'))  # Wrong case
+        self.assertFalse(alt_signin.validate_code_format('ABC123456'))  # Wrong prefix
+    
+    def test_validate_code_format_without_regex(self):
+        """Test validate_code_format returns True when no format_match is set"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='Flexible ID',
+            event=self.event,
+            format_match=None
+        )
+        
+        # Any code should be valid
+        self.assertTrue(alt_signin.validate_code_format('anything'))
+        self.assertTrue(alt_signin.validate_code_format('12345'))
+        self.assertTrue(alt_signin.validate_code_format(''))
+    
+    def test_verification_status_defaults_to_pending(self):
+        """Test that verification_status defaults to PENDING (from RequiresVerificationModel)"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='Pending Signin',
+            event=self.event
+        )
+        
+        self.assertEqual(alt_signin.verification_status, VerificationStatus.PENDING)
+    
+    def test_mark_verified_updates_status(self):
+        """Test mark_verified method from RequiresVerificationModel"""
+        alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='To Be Verified',
+            event=self.event
+        )
+        
+        alt_signin.mark_verified(self.user)
+        
+        self.assertEqual(alt_signin.verification_status, VerificationStatus.VERIFIED)
+        self.assertEqual(alt_signin.verified_by, self.user)
+        self.assertIsNotNone(alt_signin.verified_updated_at)
+
+
+class AttendeeAlternativeSigninIdentifierModelTest(TestCase):
+    """Test cases for AttendeeAlternativeSigninIdentifier model"""
+    
+    def setUp(self):
+        """Set up test data"""
+        self.user = User.objects.create_user(
+            username='attendeeuser',
+            email='attendee@example.com',
+            password='testpass123'
+        )
+        
+        self.organisation = Organisation.objects.create(
+            title='Attendee Signin Organisation',
+            created_by=self.user
+        )
+        
+        self.event_type = EventType.objects.create(
+            title='Youth Event',
+            code='YOUTH',
+            created_by=self.user
+        )
+        
+        self.event = Event.objects.create(
+            title='YFC Youth Conference',
+            display_code='YFCCONF',
+            display_identifier='YFCCONFYOUTH',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
+        )
+        
+        self.ticket_type = TicketType.objects.create(
+            event=self.event,
+            code='YOUTH',
+            title='Youth Pass',
+            scope=TicketScopeChoices.FULL_EVENT,
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timedelta(days=60),
+            created_by=self.user
+        )
+        
+        self.booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-SIGNIN-001',
+            made_by=self.user
+        )
+        
+        self.attendee = Attendee.objects.create(
+            first_name='John',
+            last_name='Youth',
+            event=self.event,
+            user=self.user,
+            booking=self.booking,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(2010, 5, 15)
+        )
+        
+        self.ticket = Ticket.objects.create(
+            ticket_type=self.ticket_type,
+            attendee=self.attendee,
+            uses=1
+        )
+        
+        self.event_alt_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC Number',
+            description='YFC membership number',
+            event=self.event,
+            format_match=r'^YFC\d{6}$',
+            max_uses_per_signin=3,
+            is_active=True
+        )
+    
+    def test_attendee_alternative_signin_creation(self):
+        """Test creating an attendee alternative sign-in identifier"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        self.assertIsNotNone(attendee_signin.sign_id)
+        self.assertEqual(attendee_signin.attendee, self.attendee)
+        self.assertEqual(attendee_signin.ticket, self.ticket)
+        self.assertEqual(attendee_signin.identifier, 'YFC123456')
+        self.assertEqual(attendee_signin.uses, 0)
+    
+    def test_attendee_alternative_signin_str_method(self):
+        """Test __str__ method"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        expected = f"{self.attendee} - YFC123456"
+        self.assertEqual(str(attendee_signin), expected)
+    
+    def test_attendee_alternative_signin_repr_method(self):
+        """Test __repr__ method"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        repr_str = repr(attendee_signin)
+        self.assertIn('AttendeeAlternativeSigninIdentifier', repr_str)
+        self.assertIn(str(self.attendee.attendee_display_id), repr_str)
+        self.assertIn('YFC123456', repr_str)
+    
+    def test_identifier_stripping(self):
+        """Test that identifier is stripped of whitespace"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='  YFC123456  ',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        self.assertEqual(attendee_signin.identifier, 'YFC123456')
+    
+    def test_empty_identifier_validation(self):
+        """Test that empty identifier raises ValidationError"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        with self.assertRaises(ValidationError) as cm:
+            attendee_signin.save()
+        
+        self.assertIn('identifier', cm.exception.message_dict)
+    
+    def test_identifier_format_validation(self):
+        """Test that identifier is validated against event's format_match"""
+        # Valid format
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        self.assertIsNotNone(attendee_signin.pk)
+        
+        # Invalid format
+        invalid_signin = AttendeeAlternativeSigninIdentifier(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='INVALID123',  # Doesn't match YFC\d{6} pattern
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        with self.assertRaises(ValidationError) as cm:
+            invalid_signin.save()
+        
+        self.assertIn('identifier', cm.exception.message_dict)
+    
+    def test_event_mismatch_validation(self):
+        """Test that event_alternative_signin must belong to same event as ticket"""
+        # Create another event
+        other_event = Event.objects.create(
+            title='Other Event',
+            display_code='OTHER',
+            display_identifier='OTHERYOUTH',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
+        )
+        
+        other_event_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='Other Number',
+            event=other_event,
+            is_active=True
+        )
+        
+        attendee_signin = AttendeeAlternativeSigninIdentifier(
+            attendee=self.attendee,
+            ticket=self.ticket,  # ticket is for self.event
+            identifier='ABC123',
+            event_alternative_signin=other_event_signin,  # but this is for other_event
+            defined_by=self.user
+        )
+        
+        with self.assertRaises(ValidationError) as cm:
+            attendee_signin.save()
+        
+        self.assertIn('event_alternative_signin', cm.exception.message_dict)
+    
+    def test_ticket_attendee_mismatch_validation(self):
+        """Test that ticket must belong to the same attendee"""
+        # Create another attendee
+        other_attendee = Attendee.objects.create(
+            first_name='Jane',
+            last_name='Smith',
+            event=self.event,
+            booking=self.booking,
+            relationship_to_user=AttendeeRelationship.FRIEND,
+            defined_by=self.user,
+            date_of_birth=date(2008, 3, 20)
+        )
+        
+        attendee_signin = AttendeeAlternativeSigninIdentifier(
+            attendee=other_attendee,  # Different attendee
+            ticket=self.ticket,  # But ticket belongs to self.attendee
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        with self.assertRaises(ValidationError) as cm:
+            attendee_signin.save()
+        
+        self.assertIn('ticket', cm.exception.message_dict)
+    
+    def test_inactive_event_signin_validation(self):
+        """Test that event_alternative_signin must be active"""
+        self.event_alt_signin.is_active = False
+        self.event_alt_signin.save()
+        
+        attendee_signin = AttendeeAlternativeSigninIdentifier(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        with self.assertRaises(ValidationError) as cm:
+            attendee_signin.save()
+        
+        self.assertIn('event_alternative_signin', cm.exception.message_dict)
+    
+    def test_unique_together_constraint(self):
+        """Test unique_together constraint on attendee, event_alternative_signin, identifier"""
+        AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        with self.assertRaises(Exception):  # IntegrityError or ValidationError
+            AttendeeAlternativeSigninIdentifier.objects.create(
+                attendee=self.attendee,
+                ticket=self.ticket,
+                identifier='YFC123456',
+                event_alternative_signin=self.event_alt_signin,
+                defined_by=self.user
+            )
+    
+    def test_has_ticket_property(self):
+        """Test has_ticket property"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        self.assertTrue(attendee_signin.has_ticket)
+        
+        # Test with null ticket
+        attendee_signin.ticket = None
+        self.assertFalse(attendee_signin.has_ticket)
+    
+    def test_is_valid_property_basic(self):
+        """Test is_valid property with active event signin"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        self.assertTrue(attendee_signin.is_valid)
+    
+    def test_is_valid_property_inactive_event_signin(self):
+        """Test is_valid returns False when event signin is inactive"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        self.event_alt_signin.is_active = False
+        self.event_alt_signin.save()
+        attendee_signin.refresh_from_db()
+        
+        self.assertFalse(attendee_signin.is_valid)
+    
+    def test_is_valid_property_max_uses_reached(self):
+        """Test is_valid returns False when max uses is reached"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        # max_uses_per_signin is 3
+        attendee_signin.uses = 3
+        attendee_signin.save()
+        
+        self.assertFalse(attendee_signin.is_valid)
+    
+    def test_is_valid_property_no_ticket(self):
+        """Test is_valid returns False when no ticket is linked"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=None,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        self.assertFalse(attendee_signin.is_valid)
+    
+    def test_use_method_increments_uses(self):
+        """Test use() method increments the uses count"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        self.assertEqual(attendee_signin.uses, 0)
+        
+        attendee_signin.use()
+        self.assertEqual(attendee_signin.uses, 1)
+        
+        attendee_signin.use()
+        self.assertEqual(attendee_signin.uses, 2)
+    
+    def test_use_method_respects_max_uses(self):
+        """Test use() method raises ValidationError when max uses reached"""
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        # Use it 3 times (max_uses_per_signin = 3)
+        attendee_signin.use()
+        attendee_signin.use()
+        attendee_signin.use()
+        
+        # 4th use should fail
+        with self.assertRaises(ValidationError):
+            attendee_signin.use()
+    
+    def test_use_method_unlimited_uses(self):
+        """Test use() method works when max_uses_per_signin is None (unlimited)"""
+        self.event_alt_signin.max_uses_per_signin = None
+        self.event_alt_signin.save()
+        
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=self.attendee,
+            ticket=self.ticket,
+            identifier='YFC123456',
+            event_alternative_signin=self.event_alt_signin,
+            defined_by=self.user
+        )
+        
+        # Should be able to use many times
+        for i in range(10):
+            attendee_signin.use()
+        
+        self.assertEqual(attendee_signin.uses, 10)
+        self.assertTrue(attendee_signin.is_valid)
+
+
+class AlternativeSigninIntegrationTest(TestCase):
+    """Integration tests for the alternative sign-in flow"""
+    
+    def setUp(self):
+        """Set up test data"""
+        self.user = User.objects.create_user(
+            username='integuser',
+            email='integ@example.com',
+            password='testpass123'
+        )
+        
+        self.organisation = Organisation.objects.create(
+            title='Integration Test Organisation',
+            created_by=self.user
+        )
+        
+        self.event_type = EventType.objects.create(
+            title='Youth Event',
+            code='YOUTH',
+            created_by=self.user
+        )
+        
+        self.event = Event.objects.create(
+            title='Multi-Signin Event',
+            display_code='MULTI',
+            display_identifier='MULTIYOUTH',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
+        )
+        
+        self.ticket_type = TicketType.objects.create(
+            event=self.event,
+            code='FULL',
+            title='Full Access',
+            scope=TicketScopeChoices.FULL_EVENT,
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timedelta(days=60),
+            created_by=self.user
+        )
+    
+    def test_complete_alternative_signin_flow(self):
+        """Test complete flow: Event setup -> Booking -> Ticket -> Alternative signin"""
+        # Step 1: Create event alternative signin identifiers
+        yfc_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC Number',
+            description='YFC membership',
+            event=self.event,
+            format_match=r'^YFC\d{6}$',
+            is_active=True
+        )
+        
+        scout_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='Scout ID',
+            description='Scout membership',
+            event=self.event,
+            format_match=r'^SCT\d{5}$',
+            is_active=True
+        )
+        
+        # Step 2: Create booking and attendee
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-MULTI-001',
+            made_by=self.user
+        )
+        
+        attendee = Attendee.objects.create(
+            first_name='Multi',
+            last_name='Signin',
+            event=self.event,
+            user=self.user,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(2005, 6, 10)
+        )
+        
+        # Step 3: Create ticket
+        ticket = Ticket.objects.create(
+            ticket_type=self.ticket_type,
+            attendee=attendee,
+            uses=1
+        )
+        
+        # Step 4: Add multiple alternative signin identifiers for the attendee
+        yfc_attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=attendee,
+            ticket=ticket,
+            identifier='YFC654321',
+            event_alternative_signin=yfc_signin,
+            defined_by=self.user
+        )
+        
+        scout_attendee_signin = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=attendee,
+            ticket=ticket,
+            identifier='SCT12345',
+            event_alternative_signin=scout_signin,
+            defined_by=self.user
+        )
+        
+        # Verify both alternative signins are linked to the same attendee and ticket
+        self.assertEqual(attendee.alternative_signins.count(), 2)
+        self.assertEqual(ticket.attendee_alternative_signins.count(), 2)
+        
+        # Verify both are valid
+        self.assertTrue(yfc_attendee_signin.is_valid)
+        self.assertTrue(scout_attendee_signin.is_valid)
+    
+    def test_multiple_attendees_same_event_signin_type(self):
+        """Test multiple attendees can use the same event signin type with different identifiers"""
+        yfc_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC Number',
+            event=self.event,
+            format_match=r'^YFC\d{6}$',
+            is_active=True
+        )
+        
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-MULTI-ATT-001',
+            made_by=self.user
+        )
+        
+        # Create two attendees
+        attendee1 = Attendee.objects.create(
+            first_name='First',
+            last_name='Attendee',
+            event=self.event,
+            user=self.user,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+            date_of_birth=date(2005, 1, 1)
+        )
+        
+        attendee2 = Attendee.objects.create(
+            first_name='Second',
+            last_name='Attendee',
+            event=self.event,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.FRIEND,
+            defined_by=self.user,
+            date_of_birth=date(2006, 2, 2)
+        )
+        
+        # Create tickets for both
+        ticket1 = Ticket.objects.create(
+            ticket_type=self.ticket_type,
+            attendee=attendee1,
+            uses=1
+        )
+        
+        ticket2 = Ticket.objects.create(
+            ticket_type=self.ticket_type,
+            attendee=attendee2,
+            uses=1
+        )
+        
+        # Both can have YFC numbers (but different ones)
+        signin1 = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=attendee1,
+            ticket=ticket1,
+            identifier='YFC111111',
+            event_alternative_signin=yfc_signin,
+            defined_by=self.user
+        )
+        
+        signin2 = AttendeeAlternativeSigninIdentifier.objects.create(
+            attendee=attendee2,
+            ticket=ticket2,
+            identifier='YFC222222',
+            event_alternative_signin=yfc_signin,
+            defined_by=self.user
+        )
+        
+        self.assertNotEqual(signin1.identifier, signin2.identifier)
+        self.assertTrue(signin1.is_valid)
+        self.assertTrue(signin2.is_valid)
+
 
