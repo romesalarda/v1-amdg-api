@@ -20,7 +20,7 @@ from apps.common.api.serializers import (
     AvailabilityWindowSerializer, 
     ResourceSerializer
 )
-
+import pytz
 User = get_user_model()
 
 
@@ -31,6 +31,10 @@ class EventTypeSerializer(serializers.ModelSerializer):
         model = EventType
         fields = ('id', 'title', 'code', 'description', 'created_at', 'created_by', 'updated_at', '_links')
         read_only_fields = ('id', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -60,7 +64,7 @@ class EventTypeSerializer(serializers.ModelSerializer):
 
 
 class EventSettingsSerializer(serializers.ModelSerializer):
-    default_timezone = serializers.CharField()
+    default_timezone = serializers.ChoiceField(choices=[(tz, tz) for tz in pytz.all_timezones])
     _links = serializers.SerializerMethodField()
     
     class Meta:
@@ -116,6 +120,7 @@ class EventListSerializer(serializers.ModelSerializer):
             'timezone', 'created_at', 'created_by', '_links'
         )
         read_only_fields = ('event_id', 'url_safe_title', 'created_at')
+
     
     @extend_schema_field({
         'type': 'object',
@@ -167,7 +172,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
     organisation_name = serializers.CharField(source='organisation.title', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
-    timezone = serializers.CharField()
+    timezone = serializers.ChoiceField(choices=[(tz, tz) for tz in pytz.all_timezones], required=False)
     duration_days = serializers.IntegerField(read_only=True)
     is_ongoing = serializers.BooleanField(read_only=True)
     is_approved = serializers.BooleanField(read_only=True)
@@ -203,6 +208,14 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'updated_at', 'duration_days', 'is_ongoing', 'is_approved', 
             'can_participants_register', 'number_of_attendees', 'deleted_at', 'deleted_by'
         )
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+            'deleted_at': {'default': None},
+            'start_datetime': {'default': None},
+            'end_datetime': {'default': None},
+            'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
+        }
     
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_is_deleted(self, obj):
@@ -277,6 +290,9 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
             'start_datetime', 'end_datetime', 'organisation', 'created_by', '_links'
         )
         read_only_fields = ('event_id', 'created_by', '_links')
+        extra_kwargs = {
+            'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -393,6 +409,9 @@ class EventAuthorizationSerializer(serializers.ModelSerializer):
             'reviewed_by_email', 'reviewed_at', 'status', 'status_display', 'reason', 'notes', '_links'
         )
         read_only_fields = ('id', 'review_id', 'review_code', 'reviewed_by', 'reviewed_at')
+        extra_kwargs = {
+            'reviewed_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -446,6 +465,10 @@ class EventPermissionSerializer(serializers.ModelSerializer):
             'category_display', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'permission_id', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -480,6 +503,9 @@ class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
             'permission_name', 'assigned_at', 'assigned_by', 'assigned_by_email', '_links'
         )
         read_only_fields = ('id', 'assigned_at', 'assigned_by')
+        extra_kwargs = {
+            'assigned_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -549,6 +575,10 @@ class EventReviewSerializer(serializers.ModelSerializer):
             'rating', 'comment', 'approved', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'user', 'approved', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -634,6 +664,10 @@ class EventRoleSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -668,6 +702,9 @@ class EventRoleAssignmentSerializer(serializers.ModelSerializer):
             'assigned_at', 'assigned_by', 'assigned_by_email', '_links'
         )
         read_only_fields = ('id', 'assigned_at', 'assigned_by')
+        extra_kwargs = {
+            'assigned_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -733,6 +770,12 @@ class EventStaffAvailabilitySerializer(serializers.ModelSerializer):
             'id', 'staff', 'available_from', 'available_to', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+            'available_from': {'default': None},
+            'available_to': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -781,6 +824,9 @@ class EventStaffSerializer(serializers.ModelSerializer):
             'assigned_at', 'assigned_by', 'assigned_by_email', 'notes', 'availabilities', '_links'
         )
         read_only_fields = ('staff_id', 'assigned_at', 'assigned_by')
+        extra_kwargs = {
+            'assigned_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -846,6 +892,10 @@ class EventQuestionOptionSerializer(serializers.ModelSerializer):
         model = EventQuestionOption
         fields = ('id', 'question', 'option_text', 'order', 'created_at', 'updated_at', '_links')
         read_only_fields = ('id', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -895,6 +945,10 @@ class EventQuestionSerializer(serializers.ModelSerializer):
             'max_value', 'min_value', 'options', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -964,6 +1018,9 @@ class EventQuestionAnswerChoiceSerializer(serializers.ModelSerializer):
         model = EventQuestionAnswerChoice
         fields = ('id', 'answer', 'option', 'option_text', 'selected_at', '_links')
         read_only_fields = ('id', 'selected_at')
+        extra_kwargs = {
+            'selected_at': {'default': None},
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -1011,6 +1068,10 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
             'answer_text', 'selected_options', 'submitted_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'submitted_at', 'updated_at')
+        extra_kwargs = {
+            'submitted_at': {'default': None},
+            'updated_at': {'default': None},
+        }
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_attendee_name(self, obj):

@@ -1,0 +1,384 @@
+"""
+Production-grade permissions for the payments app.
+
+Provides comprehensive permission classes for payment management with
+support for event-based ADMINISTRATIVE roles, Django staff, and superusers.
+
+Permission Classes:
+    - IsAdministrativeStaff: Checks for ADMINISTRATIVE event role, staff, or superuser
+    - IsPaymentOwner: Checks if user owns the payment
+    - IsPaymentOwnerOrAdministrative: Combined permission for payment operations
+    - IsRefundRequestOwnerOrAdministrative: Permission for refund operations
+
+Author: AMDG Platform Team
+Version: 1.0.0
+"""
+from rest_framework import permissions
+from django.contrib.auth import get_user_model
+from typing import Any
+
+from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+
+User = get_user_model()
+
+
+class IsAdministrativeStaff(permissions.BasePermission):
+    """
+    Permission class to check if user has administrative access.
+    
+    Grants access if user is:
+    1. Django superuser (is_superuser=True)
+    2. Django staff (is_staff=True)
+    3. Has EventRoleAssignment with ADMINISTRATIVE category role for the relevant event
+    
+    This permission should be used for operations that require administrative oversight
+    such as viewing all payments, processing refunds, or managing payment methods.
+    
+    Example:
+        ```python
+        class PaymentViewSet(viewsets.ModelViewSet):
+            permission_classes = [IsAuthenticated, IsAdministrativeStaff]
+        ```
+    """
+    
+    message = "You must be an administrator, staff member, or have an administrative event role to perform this action."
+    
+    def has_permission(self, request, view) -> bool:
+        """
+        Check if user has administrative privileges at the object-independent level.
+        
+        Args:
+            request: The request object
+            view: The view being accessed
+            
+        Returns:
+            bool: True if user has administrative access, False otherwise
+        """
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Django superusers and staff always have access
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        
+        # For event-specific checks, we need the event context
+        # This will be further refined in has_object_permission
+        return True  # Allow through to object-level check
+    
+    def has_object_permission(self, request, view, obj) -> bool:
+        """
+        Check if user has administrative privileges for the specific object.
+        
+        Args:
+            request: The request object
+            view: The view being accessed
+            obj: The object being accessed (Payment, RefundRequest, etc.)
+            
+        Returns:
+            bool: True if user has administrative access, False otherwise
+        """
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Django superusers and staff always have access
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        
+        # Get the event from the object
+        event = self._get_event_from_object(obj)
+        if not event:
+            return False
+        
+        # Check if user has an ADMINISTRATIVE role for this event
+        return self._user_has_administrative_role(request.user, event)
+    
+    def _get_event_from_object(self, obj) -> Any:
+        """
+        Extract the event from various object types.
+        
+        Args:
+            obj: The object (Payment, RefundRequest, PaymentMethod, etc.)
+            
+        Returns:
+            Event object or None
+        """
+        # Direct event attribute
+        if hasattr(obj, 'event'):
+            return obj.event
+        
+        # Event through payment (for RefundRequest, Donation)
+        if hasattr(obj, 'payment') and hasattr(obj.payment, 'event'):
+            return obj.payment.event
+        
+        # Event through discount target
+        if hasattr(obj, 'target') and hasattr(obj.target, 'event'):
+            return obj.target.event
+        
+        return None
+    
+    def _user_has_administrative_role(self, user, event) -> bool:
+        """
+        Check if user has an ADMINISTRATIVE role assignment for the event.
+        
+        Args:
+            user: The user to check
+            event: The event to check against
+            
+        Returns:
+            bool: True if user has ADMINISTRATIVE role, False otherwise
+        """
+        return EventRoleAssignment.objects.filter(
+            user=user,
+            event=event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+        ).exists()
+
+
+class IsPaymentOwner(permissions.BasePermission):
+    """
+    Permission class to check if user owns the payment.
+    
+    Grants access if the user is the owner of the payment object.
+    Used for operations where users should only access their own payments.
+    
+    Example:
+        ```python
+        class MyPaymentsViewSet(viewsets.ReadOnlyModelViewSet):
+            permission_classes = [IsAuthenticated, IsPaymentOwner]
+        ```
+    """
+    
+    message = "You can only access your own payments."
+    
+    def has_object_permission(self, request, view, obj) -> bool:
+        """
+        Check if user owns the payment object.
+        
+        Args:
+            request: The request object
+            view: The view being accessed
+            obj: The payment object
+            
+        Returns:
+            bool: True if user owns the payment, False otherwise
+        """
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Get the user from the object
+        payment_user = self._get_payment_user(obj)
+        if not payment_user:
+            return False
+        
+        return payment_user == request.user
+    
+    def _get_payment_user(self, obj) -> Any:
+        """
+        Extract the payment owner from various object types.
+        
+        Args:
+            obj: The object (Payment, RefundRequest, Donation, etc.)
+            
+        Returns:
+            User object or None
+        """
+        # Direct user attribute (Payment)
+        if hasattr(obj, 'user'):
+            return obj.user
+        
+        # User through payment (RefundRequest, Donation)
+        if hasattr(obj, 'payment') and hasattr(obj.payment, 'user'):
+            return obj.payment.user
+        
+        return None
+
+
+class IsPaymentOwnerOrAdministrative(permissions.BasePermission):
+    """
+    Combined permission: owner OR administrative staff.
+    
+    Grants access if user is either:
+    - The owner of the payment, OR
+    - Has administrative privileges (superuser, staff, or ADMINISTRATIVE event role)
+    
+    This is the most commonly used permission for payment operations,
+    allowing users to manage their own payments while giving admins full access.
+    
+    Example:
+        ```python
+        class PaymentViewSet(viewsets.ModelViewSet):
+            permission_classes = [IsAuthenticated, IsPaymentOwnerOrAdministrative]
+        ```
+    """
+    
+    message = "You must own this payment or have administrative privileges."
+    
+    def has_permission(self, request, view) -> bool:
+        """Check basic authentication."""
+        return request.user and request.user.is_authenticated
+    
+    def has_object_permission(self, request, view, obj) -> bool:
+        """
+        Check if user is owner OR has administrative access.
+        
+        Args:
+            request: The request object
+            view: The view being accessed
+            obj: The object being accessed
+            
+        Returns:
+            bool: True if user is owner or admin, False otherwise
+        """
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Check if owner
+        owner_check = IsPaymentOwner()
+        if owner_check.has_object_permission(request, view, obj):
+            return True
+        
+        # Check if administrative
+        admin_check = IsAdministrativeStaff()
+        if admin_check.has_object_permission(request, view, obj):
+            return True
+        
+        return False
+
+
+class IsRefundRequestOwnerOrAdministrative(permissions.BasePermission):
+    """
+    Permission for refund request operations.
+    
+    Grants access if user is:
+    - The owner of the payment being refunded, OR
+    - Has administrative privileges (superuser, staff, or ADMINISTRATIVE event role)
+    
+    This permission is specifically designed for refund request creation and viewing,
+    where the payment owner can request refunds for their own payments, and admins
+    can view and process all refund requests.
+    
+    Example:
+        ```python
+        class RefundRequestViewSet(viewsets.ModelViewSet):
+            permission_classes = [IsAuthenticated, IsRefundRequestOwnerOrAdministrative]
+            
+            def get_permissions(self):
+                if self.action in ['verify', 'process']:
+                    # Only admins can verify/process
+                    return [IsAuthenticated(), IsAdministrativeStaff()]
+                return super().get_permissions()
+        ```
+    """
+    
+    message = "You must own the payment or have administrative privileges to manage refund requests."
+    
+    def has_permission(self, request, view) -> bool:
+        """Check basic authentication and creation permissions."""
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # For creation, check if user is owner of the payment or admin
+        if view.action == 'create':
+            # Will be validated in serializer that payment belongs to user
+            return True
+        
+        return True  # Allow through to object-level check
+    
+    def has_object_permission(self, request, view, obj) -> bool:
+        """
+        Check if user can access the refund request.
+        
+        For viewing: owner or admin
+        For updates (verify/process/reject): admin only
+        
+        Args:
+            request: The request object
+            view: The view being accessed
+            obj: The RefundRequest object
+            
+        Returns:
+            bool: True if user has access, False otherwise
+        """
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # For status updates, only admins
+        if view.action in ['update', 'partial_update', 'verify', 'process', 'reject']:
+            admin_check = IsAdministrativeStaff()
+            return admin_check.has_object_permission(request, view, obj)
+        
+        # For viewing, owner or admin
+        owner_check = IsPaymentOwner()
+        if owner_check.has_object_permission(request, view, obj):
+            return True
+        
+        admin_check = IsAdministrativeStaff()
+        return admin_check.has_object_permission(request, view, obj)
+
+
+class IsAdministrativeStaffOnly(permissions.BasePermission):
+    """
+    Strict administrative-only permission.
+    
+    Only grants access to Django superusers, Django staff, or users with
+    ADMINISTRATIVE event roles. Payment owners do NOT have access.
+    
+    Use this for sensitive operations like:
+    - Creating/editing payment methods
+    - Managing discount rules
+    - Processing payments
+    - Viewing all payment history
+    
+    Example:
+        ```python
+        class PaymentMethodViewSet(viewsets.ModelViewSet):
+            permission_classes = [IsAuthenticated, IsAdministrativeStaffOnly]
+        ```
+    """
+    
+    message = "Only administrators and staff can perform this action."
+    
+    def has_permission(self, request, view) -> bool:
+        """Check if user has administrative privileges."""
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Django superusers and staff always have access
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        
+        # Check for administrative event role
+        # For list views, we check if user has ANY administrative role
+        has_any_admin_role = EventRoleAssignment.objects.filter(
+            user=request.user,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+        ).exists()
+        
+        return has_any_admin_role
+    
+    def has_object_permission(self, request, view, obj) -> bool:
+        """Check administrative access for specific object."""
+        admin_check = IsAdministrativeStaff()
+        return admin_check.has_object_permission(request, view, obj)
+
+
+class IsReadOnly(permissions.BasePermission):
+    """
+    Permission class that only allows read-only operations.
+    
+    Can be combined with other permissions for read-only access patterns.
+    
+    Example:
+        ```python
+        class PublicPaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
+            permission_classes = [IsAuthenticated, IsReadOnly]
+        ```
+    """
+    
+    def has_permission(self, request, view) -> bool:
+        """Only allow safe methods."""
+        return request.method in permissions.SAFE_METHODS
+    
+    def has_object_permission(self, request, view, obj) -> bool:
+        """Only allow safe methods."""
+        return request.method in permissions.SAFE_METHODS

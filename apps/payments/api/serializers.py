@@ -1,0 +1,1039 @@
+"""
+Production-grade serializers for the payments app.
+
+Provides comprehensive serializers for payment management with HATEOAS support,
+extensive validation, and separation of concerns (list/detail/create/update).
+
+Serializers:
+    Payment: PaymentListSerializer, PaymentDetailSerializer, PaymentCreateSerializer, PaymentUpdateSerializer
+    PaymentMethod: PaymentMethodSerializer, PaymentMethodDetailSerializer, PaymentMethodCreateUpdateSerializer
+    Discount: DiscountListSerializer, DiscountDetailSerializer, DiscountCreateUpdateSerializer
+    DiscountRule: DiscountRuleSerializer, DiscountRuleCreateUpdateSerializer
+    RefundRequest: RefundRequestListSerializer, RefundRequestDetailSerializer, RefundRequestCreateSerializer
+    RefundAssociation: RefundAssociationSerializer, RefundAssociationCreateSerializer
+    RefundPolicy: RefundPolicySerializer, RefundPolicyCreateUpdateSerializer
+    Donation: DonationListSerializer, DonationDetailSerializer, DonationCreateSerializer
+    PaymentHistoryAction: PaymentHistoryActionSerializer
+
+Author: AMDG Platform Team
+Version: 1.0.0
+"""
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.types import OpenApiTypes
+from djmoney.money import Money
+from djmoney.contrib.django_rest_framework import MoneyField
+from decimal import Decimal
+from typing import Dict, Any, Optional
+
+from apps.payments.models import (
+    Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
+    Discount, DiscountRule, DiscountType, DiscountApplicationChoices, DiscountRuleTypeChoices,
+    RefundRequest, RefundAssociation, RefundPolicy, RefundPolicyTypeChoices,
+    Donation, PaymentHistoryAction
+)
+from apps.common.models import VerificationStatus
+
+User = get_user_model()
+
+
+# ============================================================================
+# PAYMENT METHOD SERIALIZERS
+# ============================================================================
+
+class PaymentMethodSerializer(serializers.ModelSerializer):
+    """List serializer for PaymentMethod with HATEOAS links."""
+    
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = PaymentMethod
+        fields = (
+            'id', 'method_id', 'code', 'title', 'method_type', 'is_active',
+            'event', 'event_name', 'created_by', 'created_by_name',
+            'created_at', 'updated_at', '_links'
+        )
+        read_only_fields = ('id', 'method_id', 'code', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+        }
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+            'created_by': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(f"/api/payments/methods/{obj.method_id}/"),
+            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/")
+        }
+        
+        if obj.created_by:
+            links['created_by'] = request.build_absolute_uri(f"/api/users/{obj.created_by.id}/")
+        
+        return links
+
+
+class PaymentMethodDetailSerializer(PaymentMethodSerializer):
+    """Detailed serializer for PaymentMethod with full information."""
+    
+    class Meta(PaymentMethodSerializer.Meta):
+        fields = PaymentMethodSerializer.Meta.fields + ('description', 'provided_details')
+
+
+class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for PaymentMethod with validation."""
+    
+    class Meta:
+        model = PaymentMethod
+        fields = (
+            'title', 'description', 'event', 'method_type',
+            'provided_details', 'is_active'
+        )
+    
+    def validate_event(self, value):
+        """Ensure event exists and is accessible."""
+        if not value:
+            raise serializers.ValidationError("Event is required.")
+        return value
+    
+    def validate_provided_details(self, value):
+        """Validate provided_details is valid JSON."""
+        if value and not isinstance(value, dict):
+            raise serializers.ValidationError("Provided details must be a valid JSON object.")
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation for payment method configuration."""
+        method_type = attrs.get('method_type')
+        provided_details = attrs.get('provided_details', {})
+        
+        # Validate bank transfer details
+        if method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+            required_fields = ['account_name', 'sort_code', 'account_number']
+            missing = [f for f in required_fields if f not in provided_details]
+            if missing:
+                raise serializers.ValidationError({
+                    'provided_details': f"Bank transfer requires: {', '.join(missing)}"
+                })
+        
+        # Validate Stripe details
+        elif method_type == PaymentMethodTypeChoices.STRIPE:
+            if 'stripe_account_id' not in provided_details and not provided_details.get('use_platform_account'):
+                raise serializers.ValidationError({
+                    'provided_details': "Stripe method requires 'stripe_account_id' or 'use_platform_account'"
+                })
+        
+        return attrs
+
+
+# ============================================================================
+# PAYMENT SERIALIZERS
+# ============================================================================
+
+class PaymentListSerializer(serializers.ModelSerializer):
+    """List serializer for Payment with essential information."""
+    
+    _links = serializers.SerializerMethodField()
+    user_name = serializers.CharField(source='user.username', read_only=True)
+    event_name = serializers.CharField(source='event.name', read_only=True)
+    method_title = serializers.CharField(source='method.title', read_only=True, allow_null=True)
+    amount = serializers.SerializerMethodField(help_text="Final modified payment amount")
+    created_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = Payment
+        fields = (
+            'id', 'payment_id', 'payment_reference', 'user', 'user_name',
+            'event', 'event_name', 'method', 'method_title', 'status',
+            'amount', 'created_at', '_links'
+        )
+        read_only_fields = ('id', 'payment_id', 'payment_reference', 'created_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+        }
+    
+    def get_amount(self, obj) -> str:
+        """Return the modified amount as string."""
+        return str(obj.modified_amount)
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'user': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+            'method': {'type': 'string', 'format': 'uri'},
+            'target': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(f"/api/payments/list/{obj.payment_id}/"),
+            'user': request.build_absolute_uri(f"/api/users/{obj.user.id}/"),
+            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/")
+        }
+        
+        if obj.method:
+            links['method'] = request.build_absolute_uri(f"/api/payments/methods/{obj.method.method_id}/")
+        
+        # Add target link if applicable
+        if obj.target:
+            target_url = self._get_target_url(obj.target, request)
+            if target_url:
+                links['target'] = target_url
+        
+        return links
+    
+    def _get_target_url(self, target, request) -> Optional[str]:
+        """Generate URL for payment target based on its type."""
+        target_type = ContentType.objects.get_for_model(target)
+        app_label = target_type.app_label
+        model_name = target_type.model
+        
+        # Map common models to their API endpoints
+        url_mapping = {
+            'bookings.booking': f"/api/bookings/list/{getattr(target, 'booking_id', target.pk)}/",
+            'products.order': f"/api/products/orders/{getattr(target, 'order_id', target.pk)}/",
+            'attendee.participant': f"/api/attendee/participants/{getattr(target, 'participant_id', target.pk)}/",
+        }
+        
+        url_key = f"{app_label}.{model_name}"
+        if url_key in url_mapping:
+            return request.build_absolute_uri(url_mapping[url_key])
+        
+        return None
+
+
+class PaymentDetailSerializer(PaymentListSerializer):
+    """Detailed serializer for Payment with all information and embedded target."""
+    
+    target_details = serializers.SerializerMethodField(help_text="Embedded target object details")
+    refund_requests = serializers.SerializerMethodField(help_text="Associated refund requests")
+    donations = serializers.SerializerMethodField(help_text="Associated donations")
+    history_actions = serializers.SerializerMethodField(help_text="Recent payment history")
+    base_amount = serializers.SerializerMethodField()
+    modified_amount = serializers.SerializerMethodField()
+    updated_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta(PaymentListSerializer.Meta):
+        fields = PaymentListSerializer.Meta.fields + (
+            'description', 'base_amount', 'percentage_modifier', 'modified_amount',
+            'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference',
+            'metadata', 'target_type', 'target_id', 'target_details',
+            'refund_requests', 'donations', 'history_actions', 'updated_at'
+        )
+    
+    def get_base_amount(self, obj) -> str:
+        return str(obj.base_amount)
+    
+    def get_modified_amount(self, obj) -> str:
+        return str(obj.modified_amount)
+    
+    @extend_schema_field({'type': 'object', 'nullable': True})
+    def get_target_details(self, obj) -> Optional[Dict[str, Any]]:
+        """Return embedded target object with essential fields."""
+        if not obj.target:
+            return None
+        
+        target = obj.target
+        target_type = ContentType.objects.get_for_model(target)
+        
+        basic_info = {
+            'type': f"{target_type.app_label}.{target_type.model}",
+            'id': str(obj.target_id),
+        }
+        
+        # Add common fields if they exist
+        for field in ['name', 'title', 'reference', 'booking_reference', 'order_reference']:
+            if hasattr(target, field):
+                basic_info[field] = getattr(target, field)
+        
+        return basic_info
+    
+    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
+    def get_refund_requests(self, obj) -> list:
+        """Return summary of refund requests."""
+        requests = obj.refund_requests.all()[:5]  # Limit to recent 5
+        return [{
+            'id': str(req.refund_id),
+            'amount': str(req.amount),
+            'status': req.verification_status,
+            'requested_at': req.requested_at.isoformat(),
+        } for req in requests]
+    
+    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
+    def get_donations(self, obj) -> list:
+        """Return summary of donations."""
+        donations = obj.donations.all()[:5]  # Limit to recent 5
+        return [{
+            'id': str(don.donation_id),
+            'amount': str(don.amount),
+            'status': don.verification_status,
+            'donated_at': don.donated_at.isoformat(),
+        } for don in donations]
+    
+    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
+    def get_history_actions(self, obj) -> list:
+        """Return recent payment history actions."""
+        actions = obj.history_actions.all()[:10]  # Limit to recent 10
+        return [{
+            'action': act.action,
+            'description': act.description,
+            'performed_by': act.performed_by.username if act.performed_by else None,
+            'timestamp': act.timestamp.isoformat(),
+        } for act in actions]
+
+
+class PaymentCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for Payment with validation."""
+    
+    base_amount = MoneyField(max_digits=10, decimal_places=2)
+    
+    class Meta:
+        model = Payment
+        fields = (
+            'user', 'event', 'method', 'base_amount', 'description',
+            'target_type', 'target_id', 'metadata'
+        )
+    
+    def validate_base_amount(self, value):
+        """Ensure amount is positive."""
+        if value.amount <= 0:
+            raise serializers.ValidationError("Payment amount must be greater than zero.")
+        return value
+    
+    def validate_method(self, value):
+        """Ensure payment method is active."""
+        if value and not value.is_active:
+            raise serializers.ValidationError("Selected payment method is not active.")
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation for payment creation."""
+        user = attrs.get('user')
+        event = attrs.get('event')
+        method = attrs.get('method')
+        
+        # Ensure method belongs to the same event
+        if method and method.event != event:
+            raise serializers.ValidationError({
+                'method': "Payment method does not belong to the selected event."
+            })
+        
+        # Validate target if provided
+        target_type = attrs.get('target_type')
+        target_id = attrs.get('target_id')
+        
+        if (target_type and not target_id) or (target_id and not target_type):
+            raise serializers.ValidationError(
+                "Both target_type and target_id must be provided together."
+            )
+        
+        if target_type and target_id:
+            try:
+                model_class = target_type.model_class()
+                target_obj = model_class.objects.get(pk=target_id)
+                attrs['_target_obj'] = target_obj  # Store for later use
+            except model_class.DoesNotExist:
+                raise serializers.ValidationError({
+                    'target_id': f"Target object with id {target_id} does not exist."
+                })
+        
+        return attrs
+    
+    def create(self, validated_data):
+        """Create payment with initial DRAFTING status."""
+        validated_data.pop('_target_obj', None)  # Remove temp field
+        
+        # Create payment in DRAFTING status
+        payment = Payment.objects.create(
+            status=PaymentStatusChoices.DRAFTING,
+            **validated_data
+        )
+        
+        # Create history action
+        PaymentHistoryAction.objects.create(
+            payment=payment,
+            action='PAYMENT_CREATED',
+            description=f"Payment created for {validated_data['event'].name}",
+            performed_by=self.context.get('request').user if self.context.get('request') else None
+        )
+        
+        return payment
+
+
+class PaymentUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for Payment with status transition validation."""
+    
+    class Meta:
+        model = Payment
+        fields = ('status', 'method', 'description', 'metadata', 'stripe_payment_intent', 'stripe_charge_id')
+    
+    def validate_status(self, value):
+        """Validate status transition is allowed."""
+        if self.instance:
+            from apps.payments.models.payments import ALLOWED_STATUS_TRANSITIONS
+            
+            current_status = self.instance.status
+            if current_status != value:
+                allowed = ALLOWED_STATUS_TRANSITIONS.get(current_status, [])
+                if value not in allowed:
+                    raise serializers.ValidationError(
+                        f"Cannot transition from {current_status} to {value}. "
+                        f"Allowed transitions: {', '.join(allowed)}"
+                    )
+        return value
+    
+    def update(self, instance, validated_data):
+        """Update payment and log status changes."""
+        old_status = instance.status
+        new_status = validated_data.get('status', old_status)
+        
+        # Update the payment
+        payment = super().update(instance, validated_data)
+        
+        # Log status change
+        if old_status != new_status:
+            PaymentHistoryAction.objects.create(
+                payment=payment,
+                action='STATUS_CHANGED',
+                description=f"Status changed from {old_status} to {new_status}",
+                performed_by=self.context.get('request').user if self.context.get('request') else None,
+                metadata={'old_status': old_status, 'new_status': new_status}
+            )
+        
+        return payment
+
+
+# ============================================================================
+# DISCOUNT SERIALIZERS
+# ============================================================================
+
+class DiscountRuleSerializer(serializers.ModelSerializer):
+    """Serializer for DiscountRule."""
+    
+    added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = DiscountRule
+        fields = (
+            'rule_id', 'rule_type', 'name', 'description', 'value',
+            'active', 'added_by', 'added_by_name', 'created_at', 'updated_at'
+        )
+        read_only_fields = ('rule_id', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+        }
+
+
+class DiscountRuleCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for DiscountRule with validation."""
+    
+    class Meta:
+        model = DiscountRule
+        fields = ('rule_type', 'name', 'description', 'value', 'active', 'discount')
+    
+    def validate(self, attrs):
+        """Validate rule configuration based on type."""
+        rule_type = attrs.get('rule_type')
+        value = attrs.get('value')
+        
+        # Rules that require a value
+        requires_value = [
+            DiscountRuleTypeChoices.IS_AGE_LT,
+            DiscountRuleTypeChoices.IS_AGE_GT,
+            DiscountRuleTypeChoices.ORGANISATION_MATCHES,
+            DiscountRuleTypeChoices.VALUE_MATCHES,
+            DiscountRuleTypeChoices.EVENT_STAFF_ROLE_MATCHES,
+            DiscountRuleTypeChoices.NAME_MATCHES,
+            DiscountRuleTypeChoices.LOCATION_MATCHES,
+            DiscountRuleTypeChoices.CODE_MATCHES,
+        ]
+        
+        if rule_type in requires_value and not value:
+            raise serializers.ValidationError({
+                'value': f"Rule type {rule_type} requires a value."
+            })
+        
+        # Validate age rules have integer values
+        if rule_type in [DiscountRuleTypeChoices.IS_AGE_GT, DiscountRuleTypeChoices.IS_AGE_LT]:
+            try:
+                int(value)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({
+                    'value': "Age rules require an integer value."
+                })
+        
+        return attrs
+
+
+class DiscountListSerializer(serializers.ModelSerializer):
+    """List serializer for Discount."""
+    
+    _links = serializers.SerializerMethodField()
+    discount_value = serializers.SerializerMethodField(help_text="Human-readable discount value")
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = Discount
+        fields = (
+            'id', 'discount_id', 'name', 'discount_type', 'discount_value',
+            'active', 'created_by', 'created_by_name', 'created_at', '_links'
+        )
+        read_only_fields = ('id', 'discount_id', 'created_at')
+        extra_kwargs = {
+            'created_at': {'default': None},
+        }
+    
+    def get_discount_value(self, obj) -> str:
+        """Return human-readable discount value."""
+        return obj.display_value
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'target': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        return {
+            'self': request.build_absolute_uri(f"/api/payments/discounts/{obj.discount_id}/"),
+        }
+
+
+class DiscountDetailSerializer(DiscountListSerializer):
+    """Detailed serializer for Discount with rules."""
+    
+    rules = DiscountRuleSerializer(many=True, read_only=True)
+    target_details = serializers.SerializerMethodField()
+    updated_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta(DiscountListSerializer.Meta):
+        fields = DiscountListSerializer.Meta.fields + (
+            'description', 'percentage', 'amount', 'target_type', 'target_id',
+            'target_details', 'rules', 'updated_at'
+        )
+    
+    @extend_schema_field({'type': 'object', 'nullable': True})
+    def get_target_details(self, obj) -> Optional[Dict[str, Any]]:
+        """Return embedded target information."""
+        if not obj.target:
+            return None
+        
+        target_type = ContentType.objects.get_for_model(obj.target)
+        return {
+            'type': f"{target_type.app_label}.{target_type.model}",
+            'id': str(obj.target_id),
+            'name': str(obj.target) if hasattr(obj.target, '__str__') else None,
+        }
+
+
+class DiscountCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for Discount with validation."""
+    
+    amount = MoneyField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    
+    class Meta:
+        model = Discount
+        fields = (
+            'name', 'description', 'discount_type', 'percentage', 'amount',
+            'target_type', 'target_id', 'active'
+        )
+    
+    def validate(self, attrs):
+        """Cross-field validation for discount configuration."""
+        discount_type = attrs.get('discount_type')
+        percentage = attrs.get('percentage')
+        amount = attrs.get('amount')
+        
+        if discount_type == DiscountType.PERCENTAGE:
+            if percentage is None:
+                raise serializers.ValidationError({
+                    'percentage': "Percentage discount requires a percentage value."
+                })
+            if amount is not None:
+                raise serializers.ValidationError({
+                    'amount': "Percentage discount should not have an amount value."
+                })
+            if not (0 <= percentage <= 100):
+                raise serializers.ValidationError({
+                    'percentage': "Percentage must be between 0 and 100."
+                })
+        
+        elif discount_type == DiscountType.FIXED:
+            if amount is None:
+                raise serializers.ValidationError({
+                    'amount': "Fixed discount requires an amount value."
+                })
+            if percentage is not None:
+                raise serializers.ValidationError({
+                    'percentage': "Fixed discount should not have a percentage value."
+                })
+            if amount.amount <= 0:
+                raise serializers.ValidationError({
+                    'amount': "Discount amount must be greater than zero."
+                })
+        
+        # Validate target exists
+        target_type = attrs.get('target_type')
+        target_id = attrs.get('target_id')
+        
+        if target_type and target_id:
+            try:
+                model_class = target_type.model_class()
+                model_class.objects.get(pk=target_id)
+            except model_class.DoesNotExist:
+                raise serializers.ValidationError({
+                    'target_id': f"Target object does not exist."
+                })
+        
+        return attrs
+
+
+# ============================================================================
+# REFUND SERIALIZERS
+# ============================================================================
+
+class RefundAssociationSerializer(serializers.ModelSerializer):
+    """Serializer for RefundAssociation."""
+    
+    target_details = serializers.SerializerMethodField()
+    amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
+    
+    class Meta:
+        model = RefundAssociation
+        fields = (
+            'id', 'refund_request', 'target_type', 'target_id',
+            'target_details', 'amount', 'description', 'metadata'
+        )
+        read_only_fields = ('id',)
+    
+    @extend_schema_field({'type': 'object', 'nullable': True})
+    def get_target_details(self, obj) -> Optional[Dict[str, Any]]:
+        """Return embedded target information."""
+        if not obj.target_object:
+            return None
+        
+        return {
+            'type': f"{obj.target_type.app_label}.{obj.target_type.model}",
+            'id': str(obj.target_id),
+            'name': str(obj.target_object),
+        }
+
+
+class RefundAssociationCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for RefundAssociation with validation."""
+    
+    amount = MoneyField(max_digits=10, decimal_places=2)
+    
+    class Meta:
+        model = RefundAssociation
+        fields = ('refund_request', 'target_type', 'target_id', 'amount', 'description', 'metadata')
+    
+    def validate_amount(self, value):
+        """Ensure amount is positive."""
+        if value.amount <= 0:
+            raise serializers.ValidationError("Refund amount must be greater than zero.")
+        return value
+    
+    def validate(self, attrs):
+        """Validate refund association doesn't exceed payment amount."""
+        refund_request = attrs.get('refund_request')
+        amount = attrs.get('amount')
+        
+        # Check total doesn't exceed payment
+        current_refunded = refund_request.get_refund_amount()
+        if amount > (refund_request.payment.base_amount - current_refunded):
+            raise serializers.ValidationError({
+                'amount': f"Total refunds would exceed payment amount. "
+                         f"Available: {refund_request.payment.base_amount - current_refunded}"
+            })
+        
+        # Validate target exists
+        target_type = attrs.get('target_type')
+        target_id = attrs.get('target_id')
+        
+        if target_type and target_id:
+            try:
+                model_class = target_type.model_class()
+                model_class.objects.get(pk=target_id)
+            except model_class.DoesNotExist:
+                raise serializers.ValidationError({
+                    'target_id': "Target object does not exist."
+                })
+        
+        return attrs
+
+
+class RefundRequestListSerializer(serializers.ModelSerializer):
+    """List serializer for RefundRequest."""
+    
+    _links = serializers.SerializerMethodField()
+    payment_reference = serializers.CharField(source='payment.payment_reference', read_only=True)
+    requested_by_name = serializers.CharField(source='requested_by.username', read_only=True, allow_null=True)
+    amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
+    requested_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = RefundRequest
+        fields = (
+            'id', 'refund_id', 'tracking_reference', 'payment', 'payment_reference',
+            'amount', 'verification_status', 'requested_by', 'requested_by_name',
+            'requested_at', 'is_active', '_links'
+        )
+        read_only_fields = ('id', 'refund_id', 'tracking_reference', 'requested_at')
+        extra_kwargs = {
+            'requested_at': {'default': None},
+        }
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'payment': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        return {
+            'self': request.build_absolute_uri(f"/api/payments/refunds/{obj.refund_id}/"),
+            'payment': request.build_absolute_uri(f"/api/payments/list/{obj.payment.payment_id}/"),
+        }
+
+
+class RefundRequestDetailSerializer(RefundRequestListSerializer):
+    """Detailed serializer for RefundRequest with associations."""
+    
+    associations = RefundAssociationSerializer(many=True, read_only=True)
+    processed_by_name = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+    verified_by_name = serializers.CharField(source='verified_by.username', read_only=True, allow_null=True)
+    is_partial = serializers.BooleanField(read_only=True)
+    is_full = serializers.BooleanField(read_only=True)
+    processed_at = serializers.DateTimeField(read_only=True)
+    verified_updated_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta(RefundRequestListSerializer.Meta):
+        fields = RefundRequestListSerializer.Meta.fields + (
+            'reason', 'metadata', 'processed_at', 'processed_by', 'processed_by_name',
+            'verified_updated_at', 'verified_by', 'verified_by_name',
+            'is_partial', 'is_full', 'associations'
+        )
+
+
+class RefundRequestCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for RefundRequest with validation."""
+    
+    amount = MoneyField(max_digits=10, decimal_places=2)
+    
+    class Meta:
+        model = RefundRequest
+        fields = ('payment', 'amount', 'reason')
+    
+    def validate_payment(self, value):
+        """Ensure payment is completed and eligible for refund."""
+        if value.status != PaymentStatusChoices.COMPLETED:
+            raise serializers.ValidationError(
+                "Only completed payments can be refunded."
+            )
+        
+        # Check if payment already has an active refund request
+        if value.refund_requests.filter(is_active=True).exists():
+            raise serializers.ValidationError(
+                "This payment already has an active refund request."
+            )
+        
+        return value
+    
+    def validate_amount(self, value):
+        """Ensure amount is positive."""
+        if value.amount <= 0:
+            raise serializers.ValidationError("Refund amount must be greater than zero.")
+        return value
+    
+    def validate_reason(self, value):
+        """Ensure reason meets length requirements."""
+        if len(value) < 10:
+            raise serializers.ValidationError("Reason must be at least 10 characters.")
+        if len(value) > 1000:
+            raise serializers.ValidationError("Reason must not exceed 1000 characters.")
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation for refund request."""
+        payment = attrs.get('payment')
+        amount = attrs.get('amount')
+        
+        # Ensure amount doesn't exceed payment
+        if amount > payment.base_amount:
+            raise serializers.ValidationError({
+                'amount': f"Refund amount cannot exceed payment amount ({payment.base_amount})."
+            })
+        
+        # Check refund policy if exists
+        if hasattr(payment.event, 'refund_policy'):
+            policy = payment.event.refund_policy
+            if not policy.is_refundable(timezone.now()):
+                raise serializers.ValidationError(
+                    "This payment is not eligible for refund according to the event's refund policy."
+                )
+        
+        return attrs
+    
+    def create(self, validated_data):
+        """Create refund request with requesting user."""
+        validated_data['requested_by'] = self.context.get('request').user if self.context.get('request') else None
+        return super().create(validated_data)
+
+
+class RefundRequestUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for RefundRequest status changes."""
+    
+    class Meta:
+        model = RefundRequest
+        fields = ('verification_status', 'metadata')
+    
+    def validate_verification_status(self, value):
+        """Validate status transition."""
+        if self.instance:
+            current = self.instance.verification_status
+            
+            # Define allowed transitions
+            allowed_transitions = {
+                VerificationStatus.PENDING: [VerificationStatus.VERIFIED, VerificationStatus.REJECTED],
+                VerificationStatus.VERIFIED: [VerificationStatus.PROCESSED],
+            }
+            
+            if current != value:
+                allowed = allowed_transitions.get(current, [])
+                if value not in allowed:
+                    raise serializers.ValidationError(
+                        f"Cannot transition from {current} to {value}."
+                    )
+        
+        return value
+    
+    def update(self, instance, validated_data):
+        """Update refund request and handle status changes."""
+        new_status = validated_data.get('verification_status', instance.verification_status)
+        user = self.context.get('request').user if self.context.get('request') else None
+        
+        if new_status == VerificationStatus.VERIFIED and instance.verification_status != new_status:
+            instance.mark_verified(user)
+        elif new_status == VerificationStatus.PROCESSED and instance.verification_status != new_status:
+            instance.mark_processed(user)
+        elif new_status == VerificationStatus.REJECTED and instance.verification_status != new_status:
+            instance.mark_rejected(user)
+        else:
+            instance = super().update(instance, validated_data)
+        
+        return instance
+
+
+class RefundPolicySerializer(serializers.ModelSerializer):
+    """Serializer for RefundPolicy."""
+    
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.name', read_only=True)
+    
+    class Meta:
+        model = RefundPolicy
+        fields = (
+            'id', 'event', 'event_name', 'policy_type', 'refundable_within_days',
+            'percentage_refund', 'notes', '_links'
+        )
+        read_only_fields = ('id',)
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        return {
+            'self': request.build_absolute_uri(f"/api/payments/refund-policies/{obj.id}/"),
+            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
+        }
+
+
+class RefundPolicyCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for RefundPolicy with validation."""
+    
+    class Meta:
+        model = RefundPolicy
+        fields = ('event', 'policy_type', 'refundable_within_days', 'percentage_refund', 'notes')
+    
+    def validate_refundable_within_days(self, value):
+        """Ensure days is non-negative."""
+        if value < 0:
+            raise serializers.ValidationError("Days must be non-negative.")
+        return value
+    
+    def validate_percentage_refund(self, value):
+        """Ensure percentage is between 0 and 100."""
+        if not (0 <= value <= 100):
+            raise serializers.ValidationError("Percentage must be between 0 and 100.")
+        return value
+    
+    def validate(self, attrs):
+        """Validate policy configuration."""
+        policy_type = attrs.get('policy_type')
+        percentage = attrs.get('percentage_refund', 100)
+        
+        if policy_type == RefundPolicyTypeChoices.PARTIAL_REFUND and percentage == 100:
+            raise serializers.ValidationError({
+                'percentage_refund': "Partial refund policy should have a percentage less than 100."
+            })
+        
+        return attrs
+
+
+# ============================================================================
+# DONATION SERIALIZERS
+# ============================================================================
+
+class DonationListSerializer(serializers.ModelSerializer):
+    """List serializer for Donation."""
+    
+    _links = serializers.SerializerMethodField()
+    payment_reference = serializers.CharField(source='payment.payment_reference', read_only=True)
+    donated_by_name = serializers.CharField(source='donated_by.username', read_only=True, allow_null=True)
+    amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
+    donated_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = Donation
+        fields = (
+            'id', 'donation_id', 'tracking_reference', 'amount',
+            'payment', 'payment_reference', 'verification_status',
+            'donated_by', 'donated_by_name', 'donated_at', '_links'
+        )
+        read_only_fields = ('id', 'donation_id', 'tracking_reference', 'donated_at')
+        extra_kwargs = {
+            'donated_at': {'default': None},
+        }
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'payment': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        return {
+            'self': request.build_absolute_uri(f"/api/payments/donations/{obj.donation_id}/"),
+            'payment': request.build_absolute_uri(f"/api/payments/list/{obj.payment.payment_id}/"),
+        }
+
+
+class DonationDetailSerializer(DonationListSerializer):
+    """Detailed serializer for Donation."""
+    
+    verified_by_name = serializers.CharField(source='verified_by.username', read_only=True, allow_null=True)
+    processed_by_name = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+    verified_updated_at = serializers.DateTimeField(read_only=True)
+    processed_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta(DonationListSerializer.Meta):
+        fields = DonationListSerializer.Meta.fields + (
+            'verified_updated_at', 'verified_by', 'verified_by_name',
+            'processed_at', 'processed_by', 'processed_by_name', 'auto_processed'
+        )
+
+
+class DonationCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for Donation with validation."""
+    
+    amount = MoneyField(max_digits=10, decimal_places=2)
+    
+    class Meta:
+        model = Donation
+        fields = ('amount', 'payment')
+    
+    def validate_amount(self, value):
+        """Ensure amount is positive."""
+        if value.amount <= 0:
+            raise serializers.ValidationError("Donation amount must be greater than zero.")
+        return value
+    
+    def validate_payment(self, value):
+        """Ensure payment is completed and belongs to the user."""
+        if value.status != PaymentStatusChoices.COMPLETED:
+            raise serializers.ValidationError(
+                "Donations can only be made on completed payments."
+            )
+        
+        return value
+    
+    def create(self, validated_data):
+        """Create donation with donating user."""
+        validated_data['donated_by'] = self.context.get('request').user if self.context.get('request') else None
+        return super().create(validated_data)
+
+
+# ============================================================================
+# PAYMENT HISTORY SERIALIZERS
+# ============================================================================
+
+class PaymentHistoryActionSerializer(serializers.ModelSerializer):
+    """Serializer for PaymentHistoryAction."""
+    
+    performed_by_name = serializers.CharField(source='performed_by.username', read_only=True, allow_null=True)
+    payment_reference = serializers.CharField(source='payment.payment_reference', read_only=True)
+    timestamp = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = PaymentHistoryAction
+        fields = (
+            'id', 'action_id', 'payment', 'payment_reference', 'action',
+            'description', 'metadata', 'performed_by', 'performed_by_name',
+            'timestamp', 'notes'
+        )
+        read_only_fields = ('id', 'action_id', 'timestamp')
+        extra_kwargs = {
+            'timestamp': {'default': None},
+        }

@@ -373,7 +373,7 @@ class EventViewSet(viewsets.ModelViewSet):
             event.deleted_by = request.user
             event.save(update_fields=['deleted_by'])
             return Response(
-                {"detail": "Event soft deleted successfully", "deleted_at": event.deleted_at},
+                {"detail": "Event soft deleted successfully", "deleted_at": event.deleted_at.isoformat() if event.deleted_at else None},
                 status=status.HTTP_200_OK
             )
         except Exception as e:

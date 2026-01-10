@@ -115,6 +115,10 @@ class ProfileSerializer(serializers.HyperlinkedModelSerializer):
             'contact_phone': {
                 'help_text': 'Contact phone number with country code'
             },
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+            'profile_picture_uploaded_at': {'default': None},
+            'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
         }
     
     @extend_schema_field(OpenApiTypes.OBJECT)
@@ -299,6 +303,11 @@ class UserSerializer(serializers.HyperlinkedModelSerializer):
                 'help_text': "User's last name",
                 'required': False
             },
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
+            'date_joined': {'default': None},
+            'last_login': {'default': None},
+            'email_verified_at': {'default': None},
         }
 
 

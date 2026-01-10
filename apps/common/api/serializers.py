@@ -24,6 +24,7 @@ from apps.common.models import (
 class AvailabilityWindowSerializer(serializers.ModelSerializer):
     """Serializer for AvailabilityWindow model."""
     
+    timezone = serializers.CharField()
     target_model = serializers.SerializerMethodField()
     is_active = serializers.SerializerMethodField()
     
@@ -39,9 +40,11 @@ class AvailabilityWindowSerializer(serializers.ModelSerializer):
             'name': {'help_text': 'Name of the availability window'},
             'description': {'help_text': 'Optional description of the window'},
             'availability_type': {'help_text': 'Type of availability window'},
-            'available_from': {'help_text': 'Start datetime of availability'},
-            'available_to': {'help_text': 'End datetime of availability'},
-            'timezone': {'help_text': 'Timezone for the availability window'},
+            'available_from': {'help_text': 'Start datetime of availability', 'default': None},
+            'available_to': {'help_text': 'End datetime of availability', 'default': None},
+            'timezone': {'help_text': 'Timezone for the availability window', 'source': '*'},  # Prevent TimeZoneField auto-generation
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
         }
     
     @extend_schema_field(OpenApiTypes.STR)
@@ -92,6 +95,8 @@ class ResourceSerializer(serializers.ModelSerializer):
             'file': {'help_text': 'File upload for DOCUMENT/OTHER types'},
             'link': {'help_text': 'URL for LINK type resources'},
             'image': {'help_text': 'Image file for IMAGE type resources'},
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
         }
     
     @extend_schema_field(OpenApiTypes.STR)
@@ -148,7 +153,10 @@ class AccessRuleSerializer(serializers.ModelSerializer):
             'rule_type': {'help_text': 'Type of access rule to apply'},
             'value': {'help_text': 'Value for the rule (e.g., age limit, code)'},
             'active': {'help_text': 'Whether the rule is currently active'},
+            'created_at': {'default': None},
+            'updated_at': {'default': None},
         }
+        
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_target_model(self, obj):
