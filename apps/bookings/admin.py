@@ -37,6 +37,11 @@ class BookingPackageAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'event', 'ticket_type', 'created_by'
+        )
 
 
 @admin.register(BookingPackageRule)
@@ -50,24 +55,29 @@ class BookingPackageRuleAdmin(admin.ModelAdmin):
 class TicketTypeAdmin(admin.ModelAdmin):
     list_display = (
         'title', 'code', 'event', 'scope', 'valid_from',
-        'valid_until', 'is_active'
+        'valid_until', 'is_active', 'max_entries'
     )
     list_filter = ('scope', 'is_active', 'event', 'valid_from')
-    search_fields = ('title', 'code', 'event__title', 'description')
+    search_fields = ('title', 'code', 'event__title')
     readonly_fields = ('created_at', 'updated_at')
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('title', 'code', 'event', 'description', 'is_active')
+            'fields': ('title', 'code', 'event', 'is_active')
         }),
         ('Scope & Validity', {
-            'fields': ('scope', 'valid_from', 'valid_until')
+            'fields': ('scope', 'valid_from', 'valid_until', 'max_entries')
         }),
         ('Metadata', {
             'fields': ('created_by', 'created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'event', 'created_by'
+        )
 
 
 @admin.register(Ticket)

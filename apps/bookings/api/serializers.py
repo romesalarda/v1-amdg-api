@@ -1,0 +1,859 @@
+"""
+Production-grade serializers for the bookings app.
+
+Provides comprehensive serializers for booking management with HATEOAS support,
+extensive validation, timezone handling, and separation of concerns (list/detail/create/update).
+
+Serializers:
+    TicketType: TicketTypeListSerializer, TicketTypeDetailSerializer, TicketTypeCreateUpdateSerializer
+    Ticket: TicketListSerializer, TicketDetailSerializer
+    BookingPackage: BookingPackageListSerializer, BookingPackageDetailSerializer, BookingPackageCreateUpdateSerializer
+    BookingPackageRule: BookingPackageRuleSerializer, BookingPackageRuleCreateUpdateSerializer
+    Booking: BookingListSerializer, BookingDetailSerializer, BookingCreateSerializer, BookingUpdateSerializer
+    EventAlternativeSigninIdentifier: EventAlternativeSigninListSerializer, EventAlternativeSigninDetailSerializer, EventAlternativeSigninCreateUpdateSerializer
+    AttendeeAlternativeSigninIdentifier: AttendeeAlternativeSigninListSerializer, AttendeeAlternativeSigninDetailSerializer, AttendeeAlternativeSigninCreateUpdateSerializer
+
+Author: AMDG Platform Team
+Version: 1.0.0
+"""
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.types import OpenApiTypes
+from djmoney.money import Money
+from djmoney.contrib.django_rest_framework import MoneyField
+from decimal import Decimal
+from typing import Dict, Any, Optional
+import pytz
+
+from apps.bookings.models import (
+    Booking, BookingPackage, BookingPackageRule, PackageRuleTypeChoices,
+    TicketType, Ticket, TicketScopeChoices, TicketStatusChoices,
+    EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
+)
+from apps.common.models import VerificationStatus
+
+User = get_user_model()
+
+
+# ============================================================================
+# UTILITY FUNCTIONS FOR TIMEZONE HANDLING
+# ============================================================================
+
+def localize_datetime_to_event_timezone(dt, event):
+    """Convert datetime to event's timezone."""
+    if not dt:
+        return None
+    
+    if not event or not hasattr(event, 'settings'):
+        return dt
+    
+    # Get event timezone from settings
+    event_tz_str = event.settings.default_timezone if hasattr(event, 'settings') else 'UTC'
+    event_tz = pytz.timezone(str(event_tz_str))
+    
+    # If datetime is naive, make it aware in UTC first
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.utc)
+    
+    # Convert to event timezone
+    return dt.astimezone(event_tz)
+
+
+class EventTimezoneField(serializers.DateTimeField):
+    """Custom datetime field that returns datetimes in event timezone."""
+    
+    def to_representation(self, value):
+        """Convert datetime to event timezone for serialization."""
+        if not value:
+            return None
+        
+        # Get event from context
+        event = self.context.get('event')
+        if event:
+            value = localize_datetime_to_event_timezone(value, event)
+        
+        return super().to_representation(value)
+
+
+# ============================================================================
+# TICKET TYPE SERIALIZERS
+# ============================================================================
+
+class TicketTypeListSerializer(serializers.ModelSerializer):
+    """List serializer for TicketType with HATEOAS links."""
+    
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.title', read_only=True)
+    scope_display = serializers.CharField(source='get_scope_display', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    valid_from = EventTimezoneField(read_only=True)
+    valid_until = EventTimezoneField(read_only=True)
+    
+    class Meta:
+        model = TicketType
+        fields = (
+            'id', 'code', 'title', 'event', 'event_name', 'scope', 'scope_display',
+            'valid_from', 'valid_until', 'is_active', 'created_by', 'created_by_name',
+            'created_at', '_links'
+        )
+        read_only_fields = ('id', 'code', 'created_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+            'created_by': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(f"/api/bookings/ticket-types/{obj.id}/"),
+            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/")
+        }
+        
+        if obj.created_by:
+            links['created_by'] = request.build_absolute_uri(f"/api/users/{obj.created_by.id}/")
+        
+        return links
+
+
+class TicketTypeDetailSerializer(TicketTypeListSerializer):
+    """Detailed serializer for TicketType with full information."""
+    
+    booking_packages = serializers.SerializerMethodField()
+    ticket_count = serializers.SerializerMethodField()
+    
+    class Meta(TicketTypeListSerializer.Meta):
+        fields = TicketTypeListSerializer.Meta.fields + (
+            'max_entries', 'updated_at', 'booking_packages', 'ticket_count'
+        )
+    
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_ticket_count(self, obj) -> int:
+        """Return count of tickets issued for this type."""
+        return obj.tickets.count()
+    
+    @extend_schema_field({
+        'type': 'array',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'id': {'type': 'integer'},
+                'name': {'type': 'string'},
+                'url': {'type': 'string', 'format': 'uri'},
+            }
+        }
+    })
+    def get_booking_packages(self, obj) -> list:
+        """Return list of booking packages for this ticket type."""
+        request = self.context.get('request')
+        packages = []
+        
+        for package in obj.booking_packages.filter(is_active=True):
+            pkg_data = {
+                'id': package.id,
+                'name': package.name,
+            }
+            if request:
+                pkg_data['url'] = request.build_absolute_uri(f"/api/bookings/packages/{package.id}/")
+            packages.append(pkg_data)
+        
+        return packages
+
+
+class TicketTypeCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for TicketType with validation."""
+    
+    class Meta:
+        model = TicketType
+        fields = (
+            'title', 'event', 'scope', 'valid_from', 'valid_until',
+            'is_active', 'max_entries'
+        )
+    
+    def validate_event(self, value):
+        """Ensure event exists and is accessible."""
+        if not value:
+            raise serializers.ValidationError("Event is required.")
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation."""
+        valid_from = attrs.get('valid_from')
+        valid_until = attrs.get('valid_until')
+        
+        if valid_from and valid_until and valid_from >= valid_until:
+            raise serializers.ValidationError({
+                'valid_until': 'Valid until date must be after valid from date.'
+            })
+        
+        return attrs
+    
+    def create(self, validated_data):
+        """Create ticket type with auto-generated code."""
+        # Code is generated automatically in the model's save method
+        return super().create(validated_data)
+
+
+# ============================================================================
+# TICKET SERIALIZERS
+# ============================================================================
+
+class TicketListSerializer(serializers.ModelSerializer):
+    """List serializer for Ticket with HATEOAS links."""
+    
+    _links = serializers.SerializerMethodField()
+    attendee_name = serializers.CharField(source='attendee.full_name', read_only=True)
+    ticket_type_title = serializers.CharField(source='ticket_type.title', read_only=True)
+    package_name = serializers.CharField(source='package.name', read_only=True, allow_null=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    status = serializers.ChoiceField(choices=TicketStatusChoices.choices, read_only=True)
+    issued_at = EventTimezoneField(read_only=True)
+    
+    class Meta:
+        model = Ticket
+        fields = (
+            'ticket_id', 'ticket_code', 'attendee', 'attendee_name',
+            'ticket_type', 'ticket_type_title', 'package', 'package_name',
+            'status', 'status_display', 'issued_at', 'uses', '_links'
+        )
+        read_only_fields = ('ticket_id', 'ticket_code', 'issued_at', 'status')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'attendee': {'type': 'string', 'format': 'uri'},
+            'ticket_type': {'type': 'string', 'format': 'uri'},
+            'package': {'type': 'string', 'format': 'uri'},
+            'payment': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(f"/api/bookings/tickets/{obj.ticket_id}/"),
+            'attendee': request.build_absolute_uri(f"/api/attendees/{obj.attendee.attendee_id}/"),
+            'ticket_type': request.build_absolute_uri(f"/api/bookings/ticket-types/{obj.ticket_type.id}/"),
+        }
+        
+        if obj.package:
+            links['package'] = request.build_absolute_uri(f"/api/bookings/packages/{obj.package.id}/")
+        
+        if obj.payment:
+            links['payment'] = request.build_absolute_uri(f"/api/payments/list/{obj.payment.payment_id}/")
+        
+        return links
+
+
+class TicketDetailSerializer(TicketListSerializer):
+    """Detailed serializer for Ticket with full information."""
+    
+    booking_reference = serializers.CharField(source='attendee.booking.booking_reference', read_only=True, allow_null=True)
+    
+    class Meta(TicketListSerializer.Meta):
+        fields = TicketListSerializer.Meta.fields + ('booking_reference',)
+
+
+# ============================================================================
+# BOOKING PACKAGE RULE SERIALIZERS
+# ============================================================================
+
+class BookingPackageRuleSerializer(serializers.ModelSerializer):
+    """Serializer for BookingPackageRule (nested in package)."""
+    
+    rule_type_display = serializers.CharField(source='get_rule_type_display', read_only=True)
+    added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = BookingPackageRule
+        fields = (
+            'rule_id', 'rule_type', 'rule_type_display', 'name', 'description',
+            'value', 'active', 'added_by', 'added_by_name', 'created_at', 'updated_at'
+        )
+        read_only_fields = ('rule_id', 'created_at', 'updated_at')
+
+
+class BookingPackageRuleCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for BookingPackageRule with validation."""
+    
+    class Meta:
+        model = BookingPackageRule
+        fields = ('rule_type', 'name', 'description', 'value', 'active')
+    
+    def validate(self, attrs):
+        """Validate rule configuration."""
+        rule_type = attrs.get('rule_type')
+        value = attrs.get('value')
+        
+        # Rules that require a value
+        rules_requiring_value = [
+            PackageRuleTypeChoices.IS_AGE_LT,
+            PackageRuleTypeChoices.IS_AGE_GT,
+            PackageRuleTypeChoices.ORGANISATION_MATCHES,
+            PackageRuleTypeChoices.VALUE_MATCHES,
+            PackageRuleTypeChoices.EVENT_STAFF_ROLE_MATCHES,
+            PackageRuleTypeChoices.NAME_MATCHES,
+            PackageRuleTypeChoices.LOCATION_MATCHES,
+            PackageRuleTypeChoices.CODE_MATCHES,
+        ]
+        
+        if rule_type in rules_requiring_value and not value:
+            raise serializers.ValidationError({
+                'value': f"Rule type {rule_type} requires a value."
+            })
+        
+        # Age rules must have integer values
+        if rule_type in [PackageRuleTypeChoices.IS_AGE_GT, PackageRuleTypeChoices.IS_AGE_LT]:
+            try:
+                int(value)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({
+                    'value': f"Rule type {rule_type} requires an integer value."
+                })
+        
+        return attrs
+
+
+# ============================================================================
+# BOOKING PACKAGE SERIALIZERS
+# ============================================================================
+
+class BookingPackageListSerializer(serializers.ModelSerializer):
+    """List serializer for BookingPackage with HATEOAS links."""
+    
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.title', read_only=True)
+    ticket_type_title = serializers.CharField(source='ticket_type.title', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    base_amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
+    modified_amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
+    
+    class Meta:
+        model = BookingPackage
+        fields = (
+            'id', 'name', 'event', 'event_name', 'ticket_type', 'ticket_type_title',
+            'base_amount', 'percentage_modifier', 'modified_amount', 'is_active',
+            'created_by', 'created_by_name', 'created_at', '_links'
+        )
+        read_only_fields = ('id', 'created_at', 'modified_amount')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+            'ticket_type': {'type': 'string', 'format': 'uri'},
+            'created_by': {'type': 'string', 'format': 'uri'},
+            'rules': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(f"/api/bookings/packages/{obj.id}/"),
+            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
+            'ticket_type': request.build_absolute_uri(f"/api/bookings/ticket-types/{obj.ticket_type.id}/"),
+            'rules': request.build_absolute_uri(f"/api/bookings/packages/{obj.id}/rules/"),
+        }
+        
+        if obj.created_by:
+            links['created_by'] = request.build_absolute_uri(f"/api/users/{obj.created_by.id}/")
+        
+        return links
+
+
+class BookingPackageDetailSerializer(BookingPackageListSerializer):
+    """Detailed serializer for BookingPackage with nested rules."""
+    
+    rules = BookingPackageRuleSerializer(many=True, read_only=True)
+    ticket_count = serializers.SerializerMethodField()
+    
+    class Meta(BookingPackageListSerializer.Meta):
+        fields = BookingPackageListSerializer.Meta.fields + (
+            'description', 'updated_at', 'rules', 'ticket_count'
+        )
+    
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_ticket_count(self, obj) -> int:
+        """Return count of tickets using this package."""
+        return obj.tickets.count()
+
+
+class BookingPackageCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for BookingPackage with validation."""
+    
+    rules = BookingPackageRuleCreateUpdateSerializer(many=True, required=False)
+    
+    class Meta:
+        model = BookingPackage
+        fields = (
+            'name', 'description', 'event', 'ticket_type',
+            'base_amount', 'percentage_modifier', 'is_active', 'rules'
+        )
+    
+    def validate_event(self, value):
+        """Ensure event exists."""
+        if not value:
+            raise serializers.ValidationError("Event is required.")
+        return value
+    
+    def validate_ticket_type(self, value):
+        """Ensure ticket type exists."""
+        if not value:
+            raise serializers.ValidationError("Ticket type is required.")
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation."""
+        ticket_type = attrs.get('ticket_type') or (self.instance.ticket_type if self.instance else None)
+        event = attrs.get('event') or (self.instance.event if self.instance else None)
+        
+        if ticket_type and event and ticket_type.event_id != event.id:
+            raise serializers.ValidationError({
+                'ticket_type': 'Ticket type must belong to the same event as the booking package.'
+            })
+        
+        return attrs
+    
+    def create(self, validated_data):
+        """Create booking package with nested rules."""
+        rules_data = validated_data.pop('rules', [])
+        
+        # Set created_by from request user
+        request = self.context.get('request')
+        if request and request.user:
+            validated_data['created_by'] = request.user
+        
+        package = BookingPackage.objects.create(**validated_data)
+        
+        # Create rules
+        for rule_data in rules_data:
+            if request and request.user:
+                rule_data['added_by'] = request.user
+            BookingPackageRule.objects.create(booking_package=package, **rule_data)
+        
+        return package
+    
+    def update(self, instance, validated_data):
+        """Update booking package and optionally update rules."""
+        rules_data = validated_data.pop('rules', None)
+        
+        # Update package fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        # If rules data provided, replace existing rules
+        if rules_data is not None:
+            instance.rules.all().delete()
+            request = self.context.get('request')
+            for rule_data in rules_data:
+                if request and request.user:
+                    rule_data['added_by'] = request.user
+                BookingPackageRule.objects.create(booking_package=instance, **rule_data)
+        
+        return instance
+
+
+# ============================================================================
+# BOOKING SERIALIZERS
+# ============================================================================
+
+class BookingListSerializer(serializers.ModelSerializer):
+    """List serializer for Booking with HATEOAS links."""
+    
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.title', read_only=True)
+    made_by_name = serializers.CharField(source='made_by.username', read_only=True, allow_null=True)
+    attendee_count = serializers.SerializerMethodField()
+    booked_at = EventTimezoneField(read_only=True)
+    
+    class Meta:
+        model = Booking
+        fields = (
+            'id', 'booking_reference', 'event', 'event_name',
+            'made_by', 'made_by_name', 'attendee_count', 'booked_at', '_links'
+        )
+        read_only_fields = ('id', 'booking_reference', 'booked_at')
+    
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_attendee_count(self, obj) -> int:
+        """Return count of attendees in this booking."""
+        return obj.attendees.count()
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+            'made_by': {'type': 'string', 'format': 'uri'},
+            'attendees': {'type': 'string', 'format': 'uri'},
+            'tickets': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(f"/api/bookings/{obj.id}/"),
+            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
+            'attendees': request.build_absolute_uri(f"/api/bookings/{obj.id}/attendees/"),
+            'tickets': request.build_absolute_uri(f"/api/bookings/{obj.id}/tickets/"),
+        }
+        
+        if obj.made_by:
+            links['made_by'] = request.build_absolute_uri(f"/api/users/{obj.made_by.id}/")
+        
+        return links
+
+
+class BookingDetailSerializer(BookingListSerializer):
+    """Detailed serializer for Booking with metadata."""
+    
+    attendees = serializers.SerializerMethodField()
+    tickets = serializers.SerializerMethodField()
+    payments = serializers.SerializerMethodField()
+    
+    class Meta(BookingListSerializer.Meta):
+        fields = BookingListSerializer.Meta.fields + ('attendees', 'tickets', 'payments')
+    
+    @extend_schema_field({
+        'type': 'array',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'id': {'type': 'string', 'format': 'uuid'},
+                'display_id': {'type': 'string'},
+                'name': {'type': 'string'},
+                'url': {'type': 'string', 'format': 'uri'},
+            }
+        }
+    })
+    def get_attendees(self, obj) -> list:
+        """Return list of attendees with links."""
+        request = self.context.get('request')
+        attendees = []
+        
+        for attendee in obj.attendees.all():
+            attendee_data = {
+                'id': str(attendee.attendee_id),
+                'display_id': attendee.attendee_display_id,
+                'name': attendee.full_name,
+            }
+            if request:
+                attendee_data['url'] = request.build_absolute_uri(f"/api/attendees/{attendee.attendee_id}/")
+            attendees.append(attendee_data)
+        
+        return attendees
+    
+    @extend_schema_field({
+        'type': 'array',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'ticket_id': {'type': 'string', 'format': 'uuid'},
+                'ticket_code': {'type': 'string'},
+                'attendee_name': {'type': 'string'},
+                'status': {'type': 'string'},
+                'url': {'type': 'string', 'format': 'uri'},
+            }
+        }
+    })
+    def get_tickets(self, obj) -> list:
+        """Return list of tickets with links."""
+        request = self.context.get('request')
+        tickets = []
+        
+        for attendee in obj.attendees.all():
+            for ticket in attendee.tickets.all():
+                ticket_data = {
+                    'ticket_id': str(ticket.ticket_id),
+                    'ticket_code': ticket.ticket_code,
+                    'attendee_name': attendee.full_name,
+                    'status': ticket.status,
+                }
+                if request:
+                    ticket_data['url'] = request.build_absolute_uri(f"/api/bookings/tickets/{ticket.ticket_id}/")
+                tickets.append(ticket_data)
+        
+        return tickets
+    
+    @extend_schema_field({
+        'type': 'array',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'payment_id': {'type': 'string', 'format': 'uuid'},
+                'payment_reference': {'type': 'string'},
+                'status': {'type': 'string'},
+                'amount': {'type': 'string'},
+                'url': {'type': 'string', 'format': 'uri'},
+            }
+        }
+    })
+    def get_payments(self, obj) -> list:
+        """Return list of associated payments with links."""
+        request = self.context.get('request')
+        payments = []
+        
+        # Get payments through the PaymentMixin
+        for payment in obj.payments.all():
+            payment_data = {
+                'payment_id': str(payment.payment_id),
+                'payment_reference': payment.payment_reference,
+                'status': payment.status,
+                'amount': str(payment.modified_amount),
+            }
+            if request:
+                payment_data['url'] = request.build_absolute_uri(f"/api/payments/list/{payment.payment_id}/")
+            payments.append(payment_data)
+        
+        return payments
+
+
+class BookingCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for Booking with validation."""
+
+    booking_reference = serializers.CharField(read_only=True, help_text="Auto-generated booking reference.")
+    
+    class Meta:
+        model = Booking
+        fields = ('event', 'booking_reference')
+    
+    def validate_event(self, value):
+        """Ensure event exists and is accessible."""
+        if not value:
+            raise serializers.ValidationError("Event is required.")
+        return value
+    
+    def create(self, validated_data):
+        """Create booking with auto-generated reference."""
+        from core.utils.display import generate_human_readable_id
+        
+        # Set made_by from request user
+        request = self.context.get('request')
+        if request and request.user:
+            validated_data['made_by'] = request.user
+        
+        # Generate booking reference
+        event = validated_data['event']
+        validated_data['booking_reference'] = generate_human_readable_id(
+            50, 'BKG', event.display_code[:10]
+        )
+        
+        return Booking.objects.create(**validated_data)
+
+
+class BookingUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for Booking (limited fields)."""
+    
+    class Meta:
+        model = Booking
+        fields = []  # Bookings are mostly immutable after creation
+    
+    def update(self, instance, validated_data):
+        """Minimal update support - bookings are mostly immutable."""
+        return instance
+
+
+# ============================================================================
+# ALTERNATIVE SIGNIN IDENTIFIER SERIALIZERS
+# ============================================================================
+
+class EventAlternativeSigninListSerializer(serializers.ModelSerializer):
+    """List serializer for EventAlternativeSigninIdentifier with HATEOAS links."""
+    
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.title', read_only=True)
+    verification_status_display = serializers.CharField(source='get_verification_status_display', read_only=True)
+    
+    class Meta:
+        model = EventAlternativeSigninIdentifier
+        fields = (
+            'id', 'title', 'event', 'event_name', 'is_active',
+            'verification_status', 'verification_status_display',
+            'max_uses_per_signin', 'created_at', '_links'
+        )
+        read_only_fields = ('id', 'created_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        return {
+            'self': request.build_absolute_uri(f"/api/bookings/alternative-signins/{obj.id}/"),
+            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
+        }
+
+
+class EventAlternativeSigninDetailSerializer(EventAlternativeSigninListSerializer):
+    """Detailed serializer for EventAlternativeSigninIdentifier."""
+    
+    verified_by_name = serializers.CharField(source='verified_by.username', read_only=True, allow_null=True)
+    processed_by_name = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+    
+    class Meta(EventAlternativeSigninListSerializer.Meta):
+        fields = EventAlternativeSigninListSerializer.Meta.fields + (
+            'description', 'format_match', 'verified_by', 'verified_by_name',
+            'verified_updated_at', 'processed_by', 'processed_by_name',
+            'processed_at', 'auto_processed', 'updated_at'
+        )
+
+
+class EventAlternativeSigninCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for EventAlternativeSigninIdentifier with validation."""
+    
+    class Meta:
+        model = EventAlternativeSigninIdentifier
+        fields = (
+            'title', 'description', 'event', 'format_match',
+            'max_uses_per_signin', 'is_active'
+        )
+    
+    def validate_event(self, value):
+        """Ensure event exists."""
+        if not value:
+            raise serializers.ValidationError("Event is required.")
+        return value
+    
+    def validate_format_match(self, value):
+        """Validate regex pattern if provided."""
+        if value:
+            import re
+            try:
+                re.compile(value)
+            except re.error as e:
+                raise serializers.ValidationError(f"Invalid regex pattern: {e}")
+        return value
+
+
+class AttendeeAlternativeSigninListSerializer(serializers.ModelSerializer):
+    """List serializer for AttendeeAlternativeSigninIdentifier with HATEOAS links."""
+    
+    _links = serializers.SerializerMethodField()
+    attendee_name = serializers.CharField(source='attendee.full_name', read_only=True)
+    event_alternative_signin_title = serializers.CharField(source='event_alternative_signin.title', read_only=True)
+    ticket_code = serializers.CharField(source='ticket.ticket_code', read_only=True, allow_null=True)
+    defined_by_name = serializers.CharField(source='defined_by.username', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = AttendeeAlternativeSigninIdentifier
+        fields = (
+            'sign_id', 'attendee', 'attendee_name', 'ticket', 'ticket_code',
+            'identifier', 'event_alternative_signin', 'event_alternative_signin_title',
+            'uses', 'defined_by', 'defined_by_name', 'defined_at', '_links'
+        )
+        read_only_fields = ('sign_id', 'defined_at', 'uses')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'attendee': {'type': 'string', 'format': 'uri'},
+            'ticket': {'type': 'string', 'format': 'uri'},
+            'event_alternative_signin': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(f"/api/bookings/attendee-alternative-signins/{obj.sign_id}/"),
+            'attendee': request.build_absolute_uri(f"/api/attendees/{obj.attendee.attendee_id}/"),
+            'event_alternative_signin': request.build_absolute_uri(f"/api/bookings/alternative-signins/{obj.event_alternative_signin.id}/"),
+        }
+        
+        if obj.ticket:
+            links['ticket'] = request.build_absolute_uri(f"/api/bookings/tickets/{obj.ticket.ticket_id}/")
+        
+        return links
+
+
+class AttendeeAlternativeSigninDetailSerializer(AttendeeAlternativeSigninListSerializer):
+    """Detailed serializer for AttendeeAlternativeSigninIdentifier."""
+    
+    class Meta(AttendeeAlternativeSigninListSerializer.Meta):
+        fields = AttendeeAlternativeSigninListSerializer.Meta.fields + ('updated_at',)
+
+
+class AttendeeAlternativeSigninCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update serializer for AttendeeAlternativeSigninIdentifier with validation."""
+    
+    class Meta:
+        model = AttendeeAlternativeSigninIdentifier
+        fields = (
+            'attendee', 'ticket', 'identifier', 'event_alternative_signin'
+        )
+    
+    def validate(self, attrs):
+        """Cross-field validation."""
+        attendee = attrs.get('attendee')
+        ticket = attrs.get('ticket')
+        event_alternative_signin = attrs.get('event_alternative_signin')
+        identifier = attrs.get('identifier', '').strip()
+        
+        if not identifier:
+            raise serializers.ValidationError({
+                'identifier': 'Identifier cannot be empty.'
+            })
+        
+        # Validate format match
+        if event_alternative_signin and not event_alternative_signin.validate_code_format(identifier):
+            raise serializers.ValidationError({
+                'identifier': 'Identifier does not match the required format.'
+            })
+        
+        # Validate ticket and event match
+        if ticket and event_alternative_signin:
+            if event_alternative_signin.event_id != ticket.attendee.event_id:
+                raise serializers.ValidationError({
+                    'event_alternative_signin': 'The event alternative sign-in identifier must belong to the same event as the ticket.'
+                })
+            
+            if ticket.attendee_id != attendee.pk:
+                raise serializers.ValidationError({
+                    'ticket': 'The ticket must belong to the same attendee.'
+                })
+        
+        # Check if event alternative signin is active
+        if event_alternative_signin and not event_alternative_signin.is_valid:
+            raise serializers.ValidationError({
+                'event_alternative_signin': 'The event alternative sign-in identifier is not active.'
+            })
+        
+        return attrs
+    
+    def create(self, validated_data):
+        """Create attendee alternative signin with defined_by."""
+        request = self.context.get('request')
+        if request and request.user:
+            validated_data['defined_by'] = request.user
+        
+        return AttendeeAlternativeSigninIdentifier.objects.create(**validated_data)
