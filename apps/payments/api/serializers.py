@@ -181,7 +181,6 @@ class PaymentListSerializer(serializers.ModelSerializer):
             'user': {'type': 'string', 'format': 'uri'},
             'event': {'type': 'string', 'format': 'uri'},
             'method': {'type': 'string', 'format': 'uri'},
-            'target': {'type': 'string', 'format': 'uri'},
         }
     })
     def get__links(self, obj) -> Dict[str, str]:
@@ -190,46 +189,24 @@ class PaymentListSerializer(serializers.ModelSerializer):
             return {}
         
         links = {
-            'self': request.build_absolute_uri(f"/api/payments/list/{obj.payment_id}/"),
+            'self': request.build_absolute_uri(f"/api/payments/{obj.payment_id}/"),
             'user': request.build_absolute_uri(f"/api/users/{obj.user.id}/"),
-            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/")
+            'event': request.build_absolute_uri(f"/api/events/{obj.event.id}/"),
         }
         
         if obj.method:
-            links['method'] = request.build_absolute_uri(f"/api/payments/methods/{obj.method.method_id}/")
-        
-        # Add target link if applicable
-        if obj.target:
-            target_url = self._get_target_url(obj.target, request)
-            if target_url:
-                links['target'] = target_url
+            links['method'] = request.build_absolute_uri(f"/api/payments/methods/{obj.method.id}/")
         
         return links
-    
-    def _get_target_url(self, target, request) -> Optional[str]:
-        """Generate URL for payment target based on its type."""
-        target_type = ContentType.objects.get_for_model(target)
-        app_label = target_type.app_label
-        model_name = target_type.model
-        
-        # Map common models to their API endpoints
-        url_mapping = {
-            'bookings.booking': f"/api/bookings/list/{getattr(target, 'booking_id', target.pk)}/",
-            'products.order': f"/api/products/orders/{getattr(target, 'order_id', target.pk)}/",
-            'attendee.participant': f"/api/attendee/participants/{getattr(target, 'participant_id', target.pk)}/",
-        }
-        
-        url_key = f"{app_label}.{model_name}"
-        if url_key in url_mapping:
-            return request.build_absolute_uri(url_mapping[url_key])
-        
-        return None
 
 
 class PaymentDetailSerializer(PaymentListSerializer):
-    """Detailed serializer for Payment with all information and embedded target."""
+    """Detailed serializer for Payment with all information.
     
-    target_details = serializers.SerializerMethodField(help_text="Embedded target object details")
+    Note: target_type and target_id are internal fields used for generic relations.
+    They are not exposed via API for security reasons.
+    """
+    
     refund_requests = serializers.SerializerMethodField(help_text="Associated refund requests")
     donations = serializers.SerializerMethodField(help_text="Associated donations")
     history_actions = serializers.SerializerMethodField(help_text="Recent payment history")
@@ -241,8 +218,7 @@ class PaymentDetailSerializer(PaymentListSerializer):
         fields = PaymentListSerializer.Meta.fields + (
             'description', 'base_amount', 'percentage_modifier', 'modified_amount',
             'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference',
-            'metadata', 'target_type', 'target_id', 'target_details',
-            'refund_requests', 'donations', 'history_actions', 'updated_at'
+            'metadata', 'refund_requests', 'donations', 'history_actions', 'updated_at'
         )
     
     def get_base_amount(self, obj) -> str:
@@ -250,27 +226,6 @@ class PaymentDetailSerializer(PaymentListSerializer):
     
     def get_modified_amount(self, obj) -> str:
         return str(obj.modified_amount)
-    
-    @extend_schema_field({'type': 'object', 'nullable': True})
-    def get_target_details(self, obj) -> Optional[Dict[str, Any]]:
-        """Return embedded target object with essential fields."""
-        if not obj.target:
-            return None
-        
-        target = obj.target
-        target_type = ContentType.objects.get_for_model(target)
-        
-        basic_info = {
-            'type': f"{target_type.app_label}.{target_type.model}",
-            'id': str(obj.target_id),
-        }
-        
-        # Add common fields if they exist
-        for field in ['name', 'title', 'reference', 'booking_reference', 'order_reference']:
-            if hasattr(target, field):
-                basic_info[field] = getattr(target, field)
-        
-        return basic_info
     
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_refund_requests(self, obj) -> list:
@@ -307,9 +262,25 @@ class PaymentDetailSerializer(PaymentListSerializer):
 
 
 class PaymentCreateSerializer(serializers.ModelSerializer):
-    """Create serializer for Payment with validation."""
+    """Create serializer for Payment with validation.
+    
+    Note: target_type and target_id should only be set internally by the system,
+    not via external API calls. They are marked write_only for internal use only.
+    """
     
     base_amount = MoneyField(max_digits=10, decimal_places=2)
+    # Target fields for internal use only - not exposed in API responses
+    target_type = serializers.PrimaryKeyRelatedField(
+        queryset=ContentType.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
+    target_id = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
     
     class Meta:
         model = Payment
@@ -377,7 +348,7 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         PaymentHistoryAction.objects.create(
             payment=payment,
             action='PAYMENT_CREATED',
-            description=f"Payment created for {validated_data['event'].name}",
+            description=f"Payment created for {validated_data['event'].title}",
             performed_by=self.context.get('request').user if self.context.get('request') else None
         )
         
@@ -533,36 +504,39 @@ class DiscountListSerializer(serializers.ModelSerializer):
 
 
 class DiscountDetailSerializer(DiscountListSerializer):
-    """Detailed serializer for Discount with rules."""
+    """Detailed serializer for Discount with rules.
+    
+    Note: target_type and target_id are internal fields and not exposed via API.
+    """
     
     rules = DiscountRuleSerializer(many=True, read_only=True)
-    target_details = serializers.SerializerMethodField()
     updated_at = serializers.DateTimeField(read_only=True)
     
     class Meta(DiscountListSerializer.Meta):
         fields = DiscountListSerializer.Meta.fields + (
-            'description', 'percentage', 'amount', 'target_type', 'target_id',
-            'target_details', 'rules', 'updated_at'
+            'description', 'percentage', 'amount', 'rules', 'updated_at'
         )
-    
-    @extend_schema_field({'type': 'object', 'nullable': True})
-    def get_target_details(self, obj) -> Optional[Dict[str, Any]]:
-        """Return embedded target information."""
-        if not obj.target:
-            return None
-        
-        target_type = ContentType.objects.get_for_model(obj.target)
-        return {
-            'type': f"{target_type.app_label}.{target_type.model}",
-            'id': str(obj.target_id),
-            'name': str(obj.target) if hasattr(obj.target, '__str__') else None,
-        }
 
 
 class DiscountCreateUpdateSerializer(serializers.ModelSerializer):
-    """Create/Update serializer for Discount with validation."""
+    """Create/Update serializer for Discount with validation.
+    
+    Note: target_type and target_id should only be set internally by the system.
+    """
     
     amount = MoneyField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    # Target fields for internal use only
+    target_type = serializers.PrimaryKeyRelatedField(
+        queryset=ContentType.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
+    target_id = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
     
     class Meta:
         model = Discount
@@ -626,36 +600,40 @@ class DiscountCreateUpdateSerializer(serializers.ModelSerializer):
 # ============================================================================
 
 class RefundAssociationSerializer(serializers.ModelSerializer):
-    """Serializer for RefundAssociation."""
+    """Serializer for RefundAssociation.
     
-    target_details = serializers.SerializerMethodField()
+    Note: target_type and target_id are internal fields and not exposed via API.
+    """
+    
     amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
     
     class Meta:
         model = RefundAssociation
         fields = (
-            'id', 'refund_request', 'target_type', 'target_id',
-            'target_details', 'amount', 'description', 'metadata'
+            'id', 'refund_request', 'amount', 'description', 'metadata'
         )
         read_only_fields = ('id',)
-    
-    @extend_schema_field({'type': 'object', 'nullable': True})
-    def get_target_details(self, obj) -> Optional[Dict[str, Any]]:
-        """Return embedded target information."""
-        if not obj.target_object:
-            return None
-        
-        return {
-            'type': f"{obj.target_type.app_label}.{obj.target_type.model}",
-            'id': str(obj.target_id),
-            'name': str(obj.target_object),
-        }
 
 
 class RefundAssociationCreateSerializer(serializers.ModelSerializer):
-    """Create serializer for RefundAssociation with validation."""
+    """Create serializer for RefundAssociation with validation.
+    
+    Note: target_type and target_id should only be set internally by the system.
+    """
     
     amount = MoneyField(max_digits=10, decimal_places=2)
+    # Target fields for internal use only
+    target_type = serializers.PrimaryKeyRelatedField(
+        queryset=ContentType.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
+    target_id = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
     
     class Meta:
         model = RefundAssociation

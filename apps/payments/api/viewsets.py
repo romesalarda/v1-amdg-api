@@ -117,7 +117,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Payment.objects.select_related(
-        'user', 'event', 'method', 'target_type'
+        'user', 'event', 'method'
     ).prefetch_related(
         'refund_requests', 'donations', 'history_actions'
     )
@@ -346,7 +346,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
     Provides full CRUD for discount management.
     """
     
-    queryset = Discount.objects.select_related('target_type', 'created_by').prefetch_related('rules')
+    queryset = Discount.objects.select_related('created_by').prefetch_related('rules')
     permission_classes = [permissions.IsAuthenticated, IsAdministrativeStaffOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -591,7 +591,7 @@ class RefundAssociationViewSet(viewsets.ModelViewSet):
     Manages associations between refund requests and refundable items.
     """
     
-    queryset = RefundAssociation.objects.select_related('refund_request', 'target_type')
+    queryset = RefundAssociation.objects.select_related('refund_request')
     permission_classes = [permissions.IsAuthenticated, IsAdministrativeStaffOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]

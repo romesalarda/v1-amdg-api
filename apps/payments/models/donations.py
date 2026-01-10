@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.db import models
 from django.core import validators, exceptions
 from django.contrib.auth import get_user_model
@@ -50,7 +51,8 @@ class Donation(RequiresVerificationModel): # don't inherit from PayableModel as 
             self.tracking_reference = try_generate_unique_code(
                 model_class=Donation,
                 length=10,
-                max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS
+                max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS,
+                lookup_field='tracking_reference'
             )
         except ValueError:
             raise exceptions.ValidationError("Could not generate a unique acceptance code. Please try again.")
@@ -58,5 +60,5 @@ class Donation(RequiresVerificationModel): # don't inherit from PayableModel as 
         super().save(*args, **kwargs)
     
     def clean(self):
-        if self.amount <= 0:
+        if Decimal(self.amount.amount) <= Decimal('0.00'):
             raise exceptions.ValidationError("Donation amount must be greater than zero.")

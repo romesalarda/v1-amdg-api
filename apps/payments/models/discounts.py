@@ -13,7 +13,7 @@ import uuid
 
 User = get_user_model()
 
-class DiscountApplicationChoices(models.TextChoices):
+class DiscountApplicationChoices(models.TextChoices): # deprecated, use Target Types instead
     
     REGISTRATION = 'REGISTRATION', 'Registration'
     PRODUCTS = 'PRODUCTS', 'Products'
@@ -26,11 +26,7 @@ class DiscountType(models.TextChoices):
 class Discount(models.Model):
     
     discount_id = models.UUIDField(editable=False, default=uuid.uuid4)
-    discount_type = models.CharField(
-        max_length=30,
-        choices=DiscountApplicationChoices.choices,
-        default=DiscountApplicationChoices.REGISTRATION
-    )
+
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
     

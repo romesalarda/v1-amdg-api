@@ -66,15 +66,11 @@ class AvailabilityWindowSerializerTest(TestCase):
         self.assertEqual(data['description'], 'Test description')
         self.assertEqual(data['availability_type'], AvailabilityTypeChoices.REGISTRATION)
         self.assertIn('availability_id', data)
-        self.assertIn('target_model', data)
         self.assertIn('is_active', data)
-    
-    def test_target_model_field(self):
-        """Test that target_model returns the correct model name."""
-        serializer = AvailabilityWindowSerializer(self.window)
-        data = serializer.data
-        
-        self.assertEqual(data['target_model'], 'communityuser')
+        # target_type, target_id, and target_model are internal fields not exposed
+        self.assertNotIn('target_type', data)
+        self.assertNotIn('target_id', data)
+        self.assertNotIn('target_model', data)
     
     def test_is_active_field_true(self):
         """Test is_active field when window is currently active."""
@@ -106,10 +102,9 @@ class AvailabilityWindowSerializerTest(TestCase):
         data = {
             'name': 'Invalid Window',
             'availability_type': AvailabilityTypeChoices.REGISTRATION,
-            'target_type': self.content_type.id,
-            'target_id': self.user.id,
-            'available_from': now,
-            'available_to': now - timedelta(days=1)
+            'available_from': now.isoformat(),
+            'available_to': (now - timedelta(days=1)).isoformat(),
+            'timezone': 'UTC'
         }
         
         serializer = AvailabilityWindowSerializer(data=data)
@@ -117,22 +112,30 @@ class AvailabilityWindowSerializerTest(TestCase):
         self.assertIn('available_to', serializer.errors)
     
     def test_create_availability_window(self):
-        """Test creating an availability window through serializer."""
+        """Test creating an availability window through serializer.
+        
+        Note: In production, target_type and target_id should be set programmatically
+        in business logic, not through API serializers.
+        """
         now = timezone.now()
+        # For direct serializer testing, we can include target fields
+        # But they won't be exposed in API responses
         data = {
             'name': 'New Window',
             'description': 'New window description',
             'availability_type': AvailabilityTypeChoices.PRODUCT,
-            'target_type': self.content_type.id,
-            'target_id': self.user.id,
             'available_from': now.isoformat(),
             'available_to': (now + timedelta(days=30)).isoformat(),
             'timezone': 'UTC'
         }
         
         serializer = AvailabilityWindowSerializer(data=data)
-        self.assertTrue(serializer.is_valid())
-        window = serializer.save()
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        # Set target fields programmatically as would happen in business logic
+        window = serializer.save(
+            target_type=self.content_type,
+            target_id=self.user.id
+        )
         
         self.assertEqual(window.name, 'New Window')
         self.assertEqual(window.availability_type, AvailabilityTypeChoices.PRODUCT)
@@ -170,7 +173,10 @@ class ResourceSerializerTest(TestCase):
         self.assertEqual(data['link'], 'https://example.com')
         self.assertTrue(data['public'])
         self.assertIn('resource_url', data)
-        self.assertIn('target_model', data)
+        # target_type, target_id, and target_model are internal fields not exposed
+        self.assertNotIn('target_type', data)
+        self.assertNotIn('target_id', data)
+        self.assertNotIn('target_model', data)
     
     def test_resource_url_field(self):
         """Test resource_url field returns correct URL."""
@@ -191,8 +197,6 @@ class ResourceSerializerTest(TestCase):
         data = {
             'name': 'Link Resource',
             'resource_type': ResourceTypeChoices.LINK,
-            'target_type': self.content_type.id,
-            'target_id': str(self.user.id),
             'public': True
         }
         
@@ -205,8 +209,6 @@ class ResourceSerializerTest(TestCase):
         data = {
             'name': 'Image Resource',
             'resource_type': ResourceTypeChoices.IMAGE,
-            'target_type': self.content_type.id,
-            'target_id': str(self.user.id),
             'public': True
         }
         
@@ -215,20 +217,26 @@ class ResourceSerializerTest(TestCase):
         self.assertIn('image', serializer.errors)
     
     def test_create_link_resource(self):
-        """Test creating a link resource through serializer."""
+        """Test creating a link resource through serializer.
+        
+        Note: target fields should be set programmatically in business logic.
+        """
         data = {
             'name': 'New Link',
             'description': 'New link description',
             'resource_type': ResourceTypeChoices.LINK,
             'link': 'https://newlink.com',
-            'target_type': self.content_type.id,
-            'target_id': str(self.user.id),
             'public': True
         }
         
         serializer = ResourceSerializer(data=data)
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        resource = serializer.save(added_by=self.user)
+        # Set target fields programmatically as would happen in business logic
+        resource = serializer.save(
+            added_by=self.user,
+            target_type=self.content_type,
+            target_id=str(self.user.id)
+        )
         
         self.assertEqual(resource.name, 'New Link')
         self.assertEqual(resource.link, 'https://newlink.com')
@@ -266,8 +274,11 @@ class AccessRuleSerializerTest(TestCase):
         self.assertEqual(data['value'], '18')
         self.assertTrue(data['active'])
         self.assertIn('rule_id', data)
-        self.assertIn('target_model', data)
         self.assertIn('requires_value', data)
+        # target fields are internal and not exposed
+        self.assertNotIn('target_type', data)
+        self.assertNotIn('target_id', data)
+        self.assertNotIn('target_model', data)
     
     def test_requires_value_field_true(self):
         """Test requires_value field returns true for rules that need values."""
@@ -296,8 +307,6 @@ class AccessRuleSerializerTest(TestCase):
         data = {
             'name': 'Age Rule',
             'rule_type': BaseEventRuleChoices.IS_AGE_GT,
-            'target_type': self.content_type.id,
-            'target_id': self.user.id,
             'active': True
         }
         
@@ -311,8 +320,6 @@ class AccessRuleSerializerTest(TestCase):
             'name': 'Age Rule',
             'rule_type': BaseEventRuleChoices.IS_AGE_GT,
             'value': 'not_a_number',
-            'target_type': self.content_type.id,
-            'target_id': self.user.id,
             'active': True
         }
         

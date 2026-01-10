@@ -22,18 +22,33 @@ from apps.common.models import (
 
 
 class AvailabilityWindowSerializer(serializers.ModelSerializer):
-    """Serializer for AvailabilityWindow model."""
+    """Serializer for AvailabilityWindow model.
+    
+    Note: target_type and target_id are internal fields used for generic relations.
+    They are not exposed via API for security and should only be set internally.
+    """
     
     timezone = serializers.CharField()
-    target_model = serializers.SerializerMethodField()
     is_active = serializers.SerializerMethodField()
+    # Target fields for internal use only - not exposed in API responses
+    target_type = serializers.PrimaryKeyRelatedField(
+        queryset=ContentType.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
+    target_id = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
     
     class Meta:
         model = AvailabilityWindow
         fields = (
             'availability_id', 'name', 'description', 'availability_type',
-            'target_type', 'target_id', 'target_model', 'available_from',
-            'available_to', 'timezone', 'is_active', 'created_at', 'updated_at'
+            'available_from', 'available_to', 'timezone', 'is_active',
+            'target_type', 'target_id', 'created_at', 'updated_at'
         )
         read_only_fields = ('availability_id', 'created_at', 'updated_at')
         extra_kwargs = {
@@ -46,11 +61,6 @@ class AvailabilityWindowSerializer(serializers.ModelSerializer):
             'created_at': {'default': None},
             'updated_at': {'default': None},
         }
-    
-    @extend_schema_field(OpenApiTypes.STR)
-    def get_target_model(self, obj):
-        """Returns the model name of the target object."""
-        return obj.target_type.model if obj.target_type else None
     
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_is_active(self, obj):
@@ -70,19 +80,35 @@ class AvailabilityWindowSerializer(serializers.ModelSerializer):
 
 
 class ResourceSerializer(serializers.ModelSerializer):
-    """Serializer for Resource model."""
+    """Serializer for Resource model.
     
-    target_model = serializers.SerializerMethodField()
+    Note: target_type and target_id are internal fields used for generic relations.
+    They are not exposed via API for security and should only be set internally.
+    """
+    
     resource_url = serializers.SerializerMethodField()
     added_by_email = serializers.EmailField(source='added_by.email', read_only=True)
+    # Target fields for internal use only - not exposed in API responses
+    target_type = serializers.PrimaryKeyRelatedField(
+        queryset=ContentType.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
+    target_id = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        allow_blank=True
+    )
     
     class Meta:
         model = Resource
         fields = (
-            'id', 'name', 'description', 'tag', 'resource_type', 'target_type',
-            'target_id', 'target_model', 'public', 'protected', 'file', 'link',
+            'id', 'name', 'description', 'tag', 'resource_type',
+            'public', 'protected', 'file', 'link',
             'image', 'resource_url', 'added_by', 'added_by_email',
-            'created_at', 'updated_at'
+            'target_type', 'target_id', 'created_at', 'updated_at'
         )
         read_only_fields = ('id', 'created_at', 'updated_at', 'added_by')
         extra_kwargs = {
@@ -98,11 +124,6 @@ class ResourceSerializer(serializers.ModelSerializer):
             'created_at': {'default': None},
             'updated_at': {'default': None},
         }
-    
-    @extend_schema_field(OpenApiTypes.STR)
-    def get_target_model(self, obj):
-        """Returns the model name of the target object."""
-        return obj.target_type.model if obj.target_type else None
     
     @extend_schema_field(OpenApiTypes.URI)
     def get_resource_url(self, obj):
@@ -133,18 +154,33 @@ class ResourceSerializer(serializers.ModelSerializer):
 
 
 class AccessRuleSerializer(serializers.ModelSerializer):
-    """Serializer for AccessRule model."""
+    """Serializer for AccessRule model.
     
-    target_model = serializers.SerializerMethodField()
+    Note: target_type and target_id are internal fields used for generic relations.
+    They are not exposed via API for security and should only be set internally.
+    """
+    
     added_by_email = serializers.EmailField(source='added_by.email', read_only=True)
     requires_value = serializers.SerializerMethodField()
+    # Target fields for internal use only - not exposed in API responses
+    target_type = serializers.PrimaryKeyRelatedField(
+        queryset=ContentType.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
+    target_id = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
     
     class Meta:
         model = AccessRule
         fields = (
             'rule_id', 'name', 'description', 'rule_type', 'value', 'active',
-            'target_type', 'target_id', 'target_model', 'added_by',
-            'added_by_email', 'requires_value', 'created_at', 'updated_at'
+            'added_by', 'added_by_email', 'requires_value', 'target_type', 'target_id',
+            'created_at', 'updated_at'
         )
         read_only_fields = ('rule_id', 'created_at', 'updated_at', 'added_by')
         extra_kwargs = {
@@ -157,11 +193,6 @@ class AccessRuleSerializer(serializers.ModelSerializer):
             'updated_at': {'default': None},
         }
         
-    
-    @extend_schema_field(OpenApiTypes.STR)
-    def get_target_model(self, obj):
-        """Returns the model name of the target object."""
-        return obj.target_type.model if obj.target_type else None
     
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_requires_value(self, obj):
