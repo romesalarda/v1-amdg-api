@@ -1,10 +1,13 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
 from datetime import timedelta
 import uuid
+from io import BytesIO
+from PIL import Image
 
 from apps.events.models import (
     Event, EventType, EventSettings, EventStatusChoices,
@@ -16,6 +19,7 @@ from apps.events.models import (
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice
 )
+from apps.common.models import AvailabilityWindow, Resource, AvailabilityTypeChoices, ResourceTypeChoices
 from apps.organisations.models import Organisation
 from apps.attendee.models import Attendee
 
@@ -559,3 +563,652 @@ class EventQuestionAnswerAPITest(BaseEventAPITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.get(f'/api/event/question-answers/?question={self.question.id}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+class EventSoftDeleteAPITest(BaseEventAPITestCase):
+    """Tests for event soft delete functionality"""
+    
+    def test_soft_delete_event_as_owner(self):
+        """Test that event owner can soft delete an event"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/soft-delete/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('deleted_at', response.data)
+        
+        # Verify event is soft deleted
+        self.event.refresh_from_db()
+        self.assertIsNotNone(self.event.deleted_at)
+        self.assertEqual(self.event.deleted_by, self.user)
+    
+    def test_soft_delete_event_unauthorized(self):
+        """Test that non-owner cannot soft delete event"""
+        other_user = User.objects.create_user(
+            username='otheruser',
+            email='other@example.com',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=other_user)
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/soft-delete/')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+    
+    def test_soft_delete_already_deleted_event(self):
+        """Test that already deleted event returns error"""
+        self.client.force_authenticate(user=self.user)
+        self.event.soft_delete()
+        
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/soft-delete/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+    def test_restore_soft_deleted_event(self):
+        """Test restoring a soft deleted event"""
+        self.client.force_authenticate(user=self.user)
+        self.event.soft_delete()
+        self.event.deleted_by = self.user
+        self.event.save()
+        
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/restore/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify event is restored
+        self.event.refresh_from_db()
+        self.assertIsNone(self.event.deleted_at)
+        self.assertIsNone(self.event.deleted_by)
+    
+    def test_restore_event_unauthorized(self):
+        """Test that non-owner cannot restore event"""
+        other_user = User.objects.create_user(
+            username='otheruser',
+            email='other@example.com',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=other_user)
+        self.event.soft_delete()
+        
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/restore/')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class EventAvailabilityWindowAPITest(BaseEventAPITestCase):
+    """Tests for event availability window functionality"""
+    
+    def test_list_availability_windows(self):
+        """Test listing availability windows for an event"""
+        # Create some availability windows
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(Event)
+        
+        window1 = AvailabilityWindow.objects.create(
+            name='Registration Window',
+            availability_type=AvailabilityTypeChoices.REGISTRATION,
+            target_type=ct,
+            target_id=self.event.id,
+            available_from=timezone.now(),
+            available_to=timezone.now() + timedelta(days=10)
+        )
+        
+        window2 = AvailabilityWindow.objects.create(
+            name='Payment Window',
+            availability_type=AvailabilityTypeChoices.PAYMENT_WINDOW,
+            target_type=ct,
+            target_id=self.event.id,
+            available_from=timezone.now(),
+            available_to=timezone.now() + timedelta(days=5)
+        )
+        
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/availability-windows/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+    
+    def test_add_availability_window_authenticated(self):
+        """Test adding an availability window as event owner"""
+        self.client.force_authenticate(user=self.user)
+        
+        data = {
+            'name': 'Early Bird Registration',
+            'description': 'Early bird pricing period',
+            'availability_type': AvailabilityTypeChoices.REGISTRATION,
+            'available_from': (timezone.now() + timedelta(days=1)).isoformat(),
+            'available_to': (timezone.now() + timedelta(days=15)).isoformat(),
+            'timezone': 'Europe/London'
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-availability-window/',
+            data,
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['name'], 'Early Bird Registration')
+        
+        # Verify window was created
+        self.assertEqual(self.event.availability_windows.count(), 1)
+    
+    def test_add_availability_window_invalid_dates(self):
+        """Test adding availability window with invalid date range"""
+        self.client.force_authenticate(user=self.user)
+        
+        data = {
+            'name': 'Invalid Window',
+            'availability_type': AvailabilityTypeChoices.REGISTRATION,
+            'available_from': (timezone.now() + timedelta(days=10)).isoformat(),
+            'available_to': (timezone.now() + timedelta(days=5)).isoformat(),  # Before available_from
+            'timezone': 'Europe/London'
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-availability-window/',
+            data,
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('available_to', response.data)
+    
+    def test_add_availability_window_unauthorized(self):
+        """Test that non-owner cannot add availability window"""
+        other_user = User.objects.create_user(
+            username='otheruser',
+            email='other@example.com',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=other_user)
+        
+        data = {
+            'name': 'Test Window',
+            'availability_type': AvailabilityTypeChoices.REGISTRATION,
+            'available_from': timezone.now().isoformat(),
+            'available_to': (timezone.now() + timedelta(days=10)).isoformat(),
+            'timezone': 'Europe/London'
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-availability-window/',
+            data,
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+    
+    def test_remove_availability_window(self):
+        """Test removing an availability window"""
+        self.client.force_authenticate(user=self.user)
+        
+        # Create a window first
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(Event)
+        
+        window = AvailabilityWindow.objects.create(
+            name='Test Window',
+            availability_type=AvailabilityTypeChoices.REGISTRATION,
+            target_type=ct,
+            target_id=self.event.id,
+            available_from=timezone.now(),
+            available_to=timezone.now() + timedelta(days=10)
+        )
+        
+        response = self.client.delete(
+            f'/api/event/list/{self.event.event_id}/remove-availability-window/?window_id={window.availability_id}'
+        )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Verify window was deleted
+        self.assertEqual(self.event.availability_windows.count(), 0)
+    
+    def test_remove_availability_window_not_found(self):
+        """Test removing non-existent availability window"""
+        self.client.force_authenticate(user=self.user)
+        
+        fake_id = uuid.uuid4()
+        response = self.client.delete(
+            f'/api/event/list/{self.event.event_id}/remove-availability-window/?window_id={fake_id}'
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class EventResourceAPITest(BaseEventAPITestCase):
+    """Tests for event resource functionality"""
+    
+    def setUp(self):
+        super().setUp()
+        # Helper to create a test image file
+        self.test_image = self._create_test_image()
+        self.test_file = self._create_test_file()
+    
+    def _create_test_image(self):
+        """Create a simple test image"""
+        image = Image.new('RGB', (100, 100), color='red')
+        image_io = BytesIO()
+        image.save(image_io, format='JPEG')
+        image_io.seek(0)
+        return SimpleUploadedFile(
+            'test_image.jpg',
+            image_io.read(),
+            content_type='image/jpeg'
+        )
+    
+    def _create_test_file(self):
+        """Create a simple test file"""
+        return SimpleUploadedFile(
+            'test_document.pdf',
+            b'Test file content',
+            content_type='application/pdf'
+        )
+    
+    def test_list_resources(self):
+        """Test listing resources for an event"""
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(Event)
+        
+        # Create some resources
+        Resource.objects.create(
+            name='Test Document',
+            resource_type=ResourceTypeChoices.DOCUMENT,
+            target_type=ct,
+            target_id=self.event.id,
+            file=self._create_test_file(),
+            added_by=self.user
+        )
+        
+        Resource.objects.create(
+            name='Test Link',
+            resource_type=ResourceTypeChoices.LINK,
+            target_type=ct,
+            target_id=self.event.id,
+            link='https://example.com',
+            added_by=self.user
+        )
+        
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/resources/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+    
+    def test_add_resource_with_file(self):
+        """Test adding a file resource to an event"""
+        self.client.force_authenticate(user=self.user)
+        
+        data = {
+            'name': 'Event Schedule',
+            'description': 'Conference schedule PDF',
+            'resource_type': ResourceTypeChoices.DOCUMENT,
+            'public': True,
+            'file': self._create_test_file()
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-resource/',
+            data,
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['name'], 'Event Schedule')
+        self.assertEqual(response.data['resource_type'], ResourceTypeChoices.DOCUMENT)
+        
+        # Verify resource was created
+        self.assertEqual(self.event.resources.count(), 1)
+    
+    def test_add_resource_with_link(self):
+        """Test adding a link resource to an event"""
+        self.client.force_authenticate(user=self.user)
+        
+        data = {
+            'name': 'Event Website',
+            'description': 'Official event website',
+            'resource_type': ResourceTypeChoices.LINK,
+            'link': 'https://event-example.com',
+            'public': True
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-resource/',
+            data,
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['resource_type'], ResourceTypeChoices.LINK)
+        self.assertIn('link', response.data)
+    
+    def test_add_resource_with_image(self):
+        """Test adding an image resource to an event"""
+        self.client.force_authenticate(user=self.user)
+        
+        data = {
+            'name': 'Venue Photo',
+            'description': 'Photo of the venue',
+            'resource_type': ResourceTypeChoices.IMAGE,
+            'public': True,
+            'image': self._create_test_image()
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-resource/',
+            data,
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['resource_type'], ResourceTypeChoices.IMAGE)
+    
+    def test_add_resource_unauthorized(self):
+        """Test that non-owner cannot add resources"""
+        other_user = User.objects.create_user(
+            username='otheruser',
+            email='other@example.com',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=other_user)
+        
+        data = {
+            'name': 'Test Resource',
+            'resource_type': ResourceTypeChoices.LINK,
+            'link': 'https://example.com',
+            'public': True
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-resource/',
+            data,
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+    
+    def test_add_resource_missing_required_field(self):
+        """Test adding resource without required field based on type"""
+        self.client.force_authenticate(user=self.user)
+        
+        # Try to add DOCUMENT without file
+        data = {
+            'name': 'Missing File',
+            'resource_type': ResourceTypeChoices.DOCUMENT,
+            'public': True
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-resource/',
+            data,
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('file', response.data)
+    
+    def test_filter_resources_by_tag(self):
+        """Test filtering resources by tag"""
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(Event)
+        
+        Resource.objects.create(
+            name='Landing Photo',
+            resource_type=ResourceTypeChoices.IMAGE,
+            tag='LANDING_PHOTO_MAIN',
+            target_type=ct,
+            target_id=self.event.id,
+            image=self._create_test_image(),
+            added_by=self.user
+        )
+        
+        Resource.objects.create(
+            name='Schedule PDF',
+            resource_type=ResourceTypeChoices.DOCUMENT,
+            tag='SCHEDULE',
+            target_type=ct,
+            target_id=self.event.id,
+            file=self._create_test_file(),
+            added_by=self.user
+        )
+        
+        response = self.client.get(
+            f'/api/event/list/{self.event.event_id}/resources/?tag=LANDING_PHOTO_MAIN'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['tag'], 'LANDING_PHOTO_MAIN')
+    
+    def test_filter_resources_by_type(self):
+        """Test filtering resources by resource type"""
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(Event)
+        
+        Resource.objects.create(
+            name='Document 1',
+            resource_type=ResourceTypeChoices.DOCUMENT,
+            target_type=ct,
+            target_id=self.event.id,
+            file=self._create_test_file(),
+            added_by=self.user
+        )
+        
+        Resource.objects.create(
+            name='Link 1',
+            resource_type=ResourceTypeChoices.LINK,
+            target_type=ct,
+            target_id=self.event.id,
+            link='https://example.com',
+            added_by=self.user
+        )
+        
+        response = self.client.get(
+            f'/api/event/list/{self.event.event_id}/resources/?resource_type={ResourceTypeChoices.DOCUMENT}'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['resource_type'], ResourceTypeChoices.DOCUMENT)
+    
+    def test_remove_resource(self):
+        """Test removing a resource"""
+        self.client.force_authenticate(user=self.user)
+        
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(Event)
+        
+        resource = Resource.objects.create(
+            name='To Delete',
+            resource_type=ResourceTypeChoices.LINK,
+            target_type=ct,
+            target_id=self.event.id,
+            link='https://example.com',
+            added_by=self.user
+        )
+        
+        response = self.client.delete(
+            f'/api/event/list/{self.event.event_id}/remove-resource/?resource_id={resource.id}'
+        )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Verify resource was deleted
+        self.assertEqual(self.event.resources.count(), 0)
+    
+    def test_remove_protected_resource(self):
+        """Test that protected resources cannot be deleted"""
+        self.client.force_authenticate(user=self.user)
+        
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(Event)
+        
+        resource = Resource.objects.create(
+            name='Protected Resource',
+            resource_type=ResourceTypeChoices.LINK,
+            target_type=ct,
+            target_id=self.event.id,
+            link='https://example.com',
+            added_by=self.user,
+            protected=True
+        )
+        
+        response = self.client.delete(
+            f'/api/event/list/{self.event.event_id}/remove-resource/?resource_id={resource.id}'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('protected', response.data['detail'].lower())
+
+
+class EventLandingImageAPITest(BaseEventAPITestCase):
+    """Tests for event landing image functionality"""
+    
+    def _create_test_image(self):
+        """Create a simple test image"""
+        image = Image.new('RGB', (100, 100), color='blue')
+        image_io = BytesIO()
+        image.save(image_io, format='JPEG')
+        image_io.seek(0)
+        return SimpleUploadedFile(
+            'landing_image.jpg',
+            image_io.read(),
+            content_type='image/jpeg'
+        )
+    
+    def test_add_landing_image_as_main(self):
+        """Test adding a landing image as the main image"""
+        self.client.force_authenticate(user=self.user)
+        
+        data = {
+            'name': 'Main Event Banner',
+            'description': 'Main promotional banner',
+            'image': self._create_test_image(),
+            'is_main': 'true',
+            'public': 'true'
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            data,
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['tag'], 'LANDING_PHOTO_MAIN')
+        
+        # Verify using event's landing images property
+        self.assertEqual(self.event.landing_images.count(), 1)
+        self.assertIsNotNone(self.event.main_landing_image)
+    
+    def test_add_landing_image_as_secondary(self):
+        """Test adding a landing image as secondary"""
+        self.client.force_authenticate(user=self.user)
+        
+        data = {
+            'name': 'Secondary Banner',
+            'description': 'Alternative banner',
+            'image': self._create_test_image(),
+            'is_main': 'false',
+            'public': 'true'
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            data,
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['tag'], 'LANDING_PHOTO_SECONDARY')
+    
+    def test_add_multiple_main_images_replaces_previous(self):
+        """Test that adding a new main image demotes the previous main to secondary"""
+        self.client.force_authenticate(user=self.user)
+        
+        # Add first main image
+        data1 = {
+            'name': 'First Main',
+            'image': self._create_test_image(),
+            'is_main': 'true',
+            'public': 'true'
+        }
+        response1 = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            data1,
+            format='multipart'
+        )
+        self.assertEqual(response1.status_code, status.HTTP_201_CREATED)
+        
+        # Add second main image
+        data2 = {
+            'name': 'Second Main',
+            'image': self._create_test_image(),
+            'is_main': 'true',
+            'public': 'true'
+        }
+        response2 = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            data2,
+            format='multipart'
+        )
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+        
+        # Verify only one main image exists
+        self.event.refresh_from_db()
+        main_images = self.event.resources.filter(tag='LANDING_PHOTO_MAIN')
+        self.assertEqual(main_images.count(), 1)
+        self.assertEqual(main_images.first().name, 'Second Main')
+        
+        # Verify first image was demoted
+        secondary_images = self.event.resources.filter(tag='LANDING_PHOTO_SECONDARY')
+        self.assertEqual(secondary_images.count(), 1)
+    
+    def test_add_landing_image_without_file(self):
+        """Test that image file is required"""
+        self.client.force_authenticate(user=self.user)
+        
+        data = {
+            'name': 'No Image',
+            'is_main': 'true'
+        }
+        
+        response = self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            data,
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('image', response.data['detail'].lower())
+    
+    def test_list_landing_images(self):
+        """Test listing all landing images for an event"""
+        self.client.force_authenticate(user=self.user)
+        
+        # Add main image
+        data1 = {
+            'name': 'Main Image',
+            'image': self._create_test_image(),
+            'is_main': 'true',
+            'public': 'true'
+        }
+        self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            data1,
+            format='multipart'
+        )
+        
+        # Add secondary image
+        data2 = {
+            'name': 'Secondary Image',
+            'image': self._create_test_image(),
+            'is_main': 'false',
+            'public': 'true'
+        }
+        self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            data2,
+            format='multipart'
+        )
+        
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/landing-images/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+    
+    def test_event_detail_includes_landing_images(self):
+        """Test that event detail includes landing image fields"""
+        self.client.force_authenticate(user=self.user)
+        
+        # Add a landing image
+        data = {
+            'name': 'Event Banner',
+            'image': self._create_test_image(),
+            'is_main': 'true',
+            'public': 'true'
+        }
+        self.client.post(
+            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            data,
+            format='multipart'
+        )
+        
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('landing_images', response.data)
+        self.assertIn('main_landing_image', response.data)
+        self.assertIsNotNone(response.data['main_landing_image'])
+

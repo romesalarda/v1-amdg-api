@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.contrib.contenttypes.models import ContentType
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
 
@@ -13,6 +14,11 @@ from apps.events.models import (
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice
+)
+from apps.common.models import AvailabilityWindow, Resource
+from apps.common.api.serializers import (
+    AvailabilityWindowSerializer, 
+    ResourceSerializer
 )
 
 User = get_user_model()
@@ -104,12 +110,12 @@ class EventListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Event
         fields = (
-            'id', 'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
+            'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
             'status', 'status_display', 'event_type', 'event_type_name', 'organisation', 
             'organisation_name', 'short_description', 'start_datetime', 'end_datetime',
             'timezone', 'created_at', 'created_by', '_links'
         )
-        read_only_fields = ('id', 'event_id', 'url_safe_title', 'created_at')
+        read_only_fields = ('event_id', 'url_safe_title', 'created_at')
     
     @extend_schema_field({
         'type': 'object',
@@ -167,25 +173,41 @@ class EventDetailSerializer(serializers.ModelSerializer):
     is_approved = serializers.BooleanField(read_only=True)
     can_participants_register = serializers.BooleanField(read_only=True)
     number_of_attendees = serializers.IntegerField(read_only=True)
+    
+    # New fields for availability, resources, and landing images
+    availability_windows = AvailabilityWindowSerializer(many=True, read_only=True)
+    resources = ResourceSerializer(many=True, read_only=True)
+    landing_images = ResourceSerializer(many=True, read_only=True)
+    main_landing_image = ResourceSerializer(read_only=True)
+    is_deleted = serializers.SerializerMethodField()
+    
     _links = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
         fields = (
-            'id', 'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
+            'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
             'status', 'status_display', 'event_type', 'event_type_details', 'timezone',
             'short_description', 'long_description', 'what_to_bring', 'important_information',
             'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance',
             'start_datetime', 'end_datetime', 'organisation', 'organisation_name',
             'created_by', 'created_by_email', 'created_at', 'updated_at',
             'settings', 'duration_days', 'is_ongoing', 'is_approved', 
-            'can_participants_register', 'number_of_attendees', '_links'
+            'can_participants_register', 'number_of_attendees',
+            'availability_windows', 'resources', 'landing_images', 'main_landing_image',
+            'deleted_at', 'deleted_by', 'is_deleted',
+            '_links'
         )
         read_only_fields = (
-            'id', 'event_id', 'display_identifier', 'url_safe_title', 'created_at', 
+            'event_id', 'display_identifier', 'url_safe_title', 'created_at', 
             'updated_at', 'duration_days', 'is_ongoing', 'is_approved', 
-            'can_participants_register', 'number_of_attendees'
+            'can_participants_register', 'number_of_attendees', 'deleted_at', 'deleted_by'
         )
+    
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_is_deleted(self, obj):
+        """Check if the event is soft-deleted."""
+        return obj.deleted_at is not None
     
     @extend_schema_field({
         'type': 'object',
@@ -193,6 +215,8 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event'},
             'settings': {'type': 'string', 'format': 'uri', 'description': 'Link to event settings'},
             'staff': {'type': 'string', 'format': 'uri', 'description': 'Link to event staff list'},
+            'availability_windows': {'type': 'string', 'format': 'uri', 'description': 'Link to manage availability windows'},
+            'resources': {'type': 'string', 'format': 'uri', 'description': 'Link to manage resources'},
             'event_type': {'type': 'string', 'format': 'uri', 'description': 'Link to the event type'},
             'organisation': {'type': 'string', 'format': 'uri', 'description': 'Link to the organisation'},
             'created_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who created this event'}
@@ -213,6 +237,12 @@ class EventDetailSerializer(serializers.ModelSerializer):
             ),
             'staff': request.build_absolute_uri(
                 f"/api/event/list/{obj.event_id}/staff-list/"
+            ),
+            'availability_windows': request.build_absolute_uri(
+                f"/api/event/list/{obj.event_id}/availability-windows/"
+            ),
+            'resources': request.build_absolute_uri(
+                f"/api/event/list/{obj.event_id}/resources/"
             )
         }
         
@@ -241,17 +271,19 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Event
         fields = (
-            'id', 'event_id', 'display_code', 'title', 'status', 'event_type', 'timezone',
+            'event_id', 'display_code', 'title', 'status', 'event_type', 'timezone',
             'short_description', 'long_description', 'what_to_bring', 'important_information',
             'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance',
             'start_datetime', 'end_datetime', 'organisation', 'created_by', '_links'
         )
-        read_only_fields = ('id', 'event_id')
+        read_only_fields = ('event_id', 'created_by', '_links')
     
     @extend_schema_field({
         'type': 'object',
         'properties': {
-            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event'}
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event'},
+            'organisation': {'type': 'string', 'format': 'uri', 'description': 'Link to the organisation'},
+            'created_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who created this event'}
         },
         'required': ['self']
     })
@@ -260,11 +292,22 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
         if not request or not obj.pk:
             return {}
         
-        return {
+        links = {
             'self': request.build_absolute_uri(
                 f"/api/event/list/{obj.event_id}/"
             )
         }
+        if obj.organisation:
+            links['organisation'] = request.build_absolute_uri(
+                f"/api/organisations/{obj.organisation.id}/"
+            )
+
+        if obj.created_by:
+            links['created_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.created_by.id}/"
+            )
+
+        return links
     
     def validate_title(self, value):
         if not value or len(value.strip()) < 3:

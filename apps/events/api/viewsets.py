@@ -2,8 +2,10 @@ from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Prefetch
+from django.contrib.contenttypes.models import ContentType
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -21,6 +23,11 @@ from apps.events.models import (
     EventReview,
     EventQuestion, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice
+)
+from apps.common.models import AvailabilityWindow, Resource
+from apps.common.api.serializers import (
+    AvailabilityWindowSerializer,
+    ResourceSerializer
 )
 from .serializers import (
     EventTypeSerializer, EventListSerializer, EventDetailSerializer,
@@ -339,6 +346,385 @@ class EventViewSet(viewsets.ModelViewSet):
         event = self.get_object()
         staff_members = event.staff_members.select_related('user', 'assigned_by').all()
         serializer = EventStaffSerializer(staff_members, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Soft delete event",
+        description="Soft delete an event (can be restored later)",
+        responses={
+            200: OpenApiResponse(description='Event soft deleted successfully'),
+            400: OpenApiResponse(description='Event is already deleted'),
+            403: OpenApiResponse(description='Permission denied')
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='soft-delete', permission_classes=[permissions.IsAuthenticated])
+    def soft_delete_event(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to delete this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            event.soft_delete()
+            event.deleted_by = request.user
+            event.save(update_fields=['deleted_by'])
+            return Response(
+                {"detail": "Event soft deleted successfully", "deleted_at": event.deleted_at},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Restore soft-deleted event",
+        description="Restore a soft-deleted event",
+        responses={
+            200: OpenApiResponse(description='Event restored successfully'),
+            400: OpenApiResponse(description='Event is not deleted'),
+            403: OpenApiResponse(description='Permission denied')
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='restore', permission_classes=[permissions.IsAuthenticated])
+    def restore_event(self, request, event_id=None):
+        event = Event.all_objects.get(event_id=event_id)
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to restore this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            event.restore()
+            event.deleted_by = None
+            event.save(update_fields=['deleted_by'])
+            return Response(
+                {"detail": "Event restored successfully"},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="List availability windows",
+        description="Get all availability windows for the event",
+        responses={
+            200: AvailabilityWindowSerializer(many=True),
+        }
+    )
+    @action(detail=True, methods=['get'], url_path='availability-windows')
+    def availability_windows(self, request, event_id=None):
+        event = self.get_object()
+        windows = event.availability_windows.all()
+        serializer = AvailabilityWindowSerializer(windows, many=True, context={'request': request})
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Add availability window",
+        description="Add a new availability window to the event",
+        request=AvailabilityWindowSerializer,
+        responses={
+            201: AvailabilityWindowSerializer,
+            400: OpenApiResponse(description='Validation errors'),
+            403: OpenApiResponse(description='Permission denied')
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='add-availability-window', permission_classes=[permissions.IsAuthenticated])
+    def add_availability_window(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to add availability windows to this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = AvailabilityWindowSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            content_type = ContentType.objects.get_for_model(Event)
+            window = serializer.save(
+                target_type=content_type,
+                target_id=event.id
+            )
+            return Response(
+                AvailabilityWindowSerializer(window, context={'request': request}).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Remove availability window",
+        description="Remove an availability window from the event",
+        parameters=[
+            OpenApiParameter(name='window_id', type=OpenApiTypes.UUID, location=OpenApiParameter.QUERY,
+                           description='Availability window ID to remove', required=True)
+        ],
+        responses={
+            204: OpenApiResponse(description='Window removed successfully'),
+            400: OpenApiResponse(description='Bad request'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Window not found')
+        }
+    )
+    @action(detail=True, methods=['delete'], url_path='remove-availability-window', permission_classes=[permissions.IsAuthenticated])
+    def remove_availability_window(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to remove availability windows from this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        window_id = request.query_params.get('window_id')
+        if not window_id:
+            return Response(
+                {"detail": "window_id query parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            window = AvailabilityWindow.objects.get(availability_id=window_id, target_id=event.id)
+        except AvailabilityWindow.DoesNotExist:
+            return Response(
+                {"detail": "Availability window not found for this event"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        window.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @extend_schema(
+        summary="List resources",
+        description="Get all resources for the event",
+        parameters=[
+            OpenApiParameter(name='tag', type=OpenApiTypes.STR, description='Filter by resource tag'),
+            OpenApiParameter(name='resource_type', type=OpenApiTypes.STR, description='Filter by resource type'),
+        ],
+        responses={
+            200: ResourceSerializer(many=True),
+        }
+    )
+    @action(detail=True, methods=['get'], url_path='resources')
+    def resources(self, request, event_id=None):
+        event = self.get_object()
+        resources = event.resources.all()
+        
+        # Filter by tag if provided
+        tag = request.query_params.get('tag')
+        if tag:
+            resources = resources.filter(tag__iexact=tag)
+        
+        # Filter by resource_type if provided
+        resource_type = request.query_params.get('resource_type')
+        if resource_type:
+            resources = resources.filter(resource_type=resource_type)
+        
+        serializer = ResourceSerializer(resources, many=True, context={'request': request})
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Add resource",
+        description="Add a new resource (file, image, link, etc.) to the event",
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'description': 'Resource name'},
+                    'description': {'type': 'string', 'description': 'Optional description'},
+                    'tag': {'type': 'string', 'description': 'Optional tag (e.g., LANDING_PHOTO)'},
+                    'resource_type': {'type': 'string', 'enum': ['DOCUMENT', 'IMAGE', 'VIDEO', 'AUDIO', 'LINK', 'OTHER']},
+                    'public': {'type': 'boolean', 'description': 'Whether resource is public'},
+                    'file': {'type': 'string', 'format': 'binary', 'description': 'File upload for DOCUMENT/OTHER types'},
+                    'image': {'type': 'string', 'format': 'binary', 'description': 'Image upload for IMAGE type'},
+                    'link': {'type': 'string', 'format': 'uri', 'description': 'URL for LINK type'}
+                },
+                'required': ['name', 'resource_type']
+            }
+        },
+        responses={
+            201: ResourceSerializer,
+            400: OpenApiResponse(description='Validation errors'),
+            403: OpenApiResponse(description='Permission denied')
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='add-resource', 
+            permission_classes=[permissions.IsAuthenticated],
+            parser_classes=[MultiPartParser, FormParser, JSONParser])
+    def add_resource(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to add resources to this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = ResourceSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            content_type = ContentType.objects.get_for_model(Event)
+            resource = serializer.save(
+                target_type=content_type,
+                target_id=event.id,
+                added_by=request.user
+            )
+            return Response(
+                ResourceSerializer(resource, context={'request': request}).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Add landing image",
+        description="Add a landing image to the event. Optionally set as main landing image.",
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'description': 'Image name'},
+                    'description': {'type': 'string', 'description': 'Optional description'},
+                    'image': {'type': 'string', 'format': 'binary', 'description': 'Image file'},
+                    'is_main': {'type': 'boolean', 'description': 'Set as main landing image (default: true)'},
+                    'public': {'type': 'boolean', 'description': 'Whether image is public (default: true)'}
+                },
+                'required': ['name', 'image']
+            }
+        },
+        responses={
+            201: ResourceSerializer,
+            400: OpenApiResponse(description='Validation errors'),
+            403: OpenApiResponse(description='Permission denied')
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='add-landing-image',
+            permission_classes=[permissions.IsAuthenticated],
+            parser_classes=[MultiPartParser, FormParser])
+    def add_landing_image(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to add landing images to this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if 'image' not in request.FILES:
+            return Response(
+                {"detail": "image file is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create resource data
+        data = {
+            'name': request.data.get('name'),
+            'description': request.data.get('description', ''),
+            'resource_type': 'IMAGE',
+            'public': request.data.get('public', 'true').lower() == 'true',
+            'image': request.FILES['image']
+        }
+        
+        serializer = ResourceSerializer(data=data, context={'request': request})
+        if serializer.is_valid():
+            content_type = ContentType.objects.get_for_model(Event)
+            
+            is_main = request.data.get('is_main', 'true').lower() == 'true'
+            
+            # If setting as main, update existing main to secondary
+            if is_main:
+                existing_main = event.resources.filter(tag='LANDING_PHOTO_MAIN')
+                for res in existing_main:
+                    res.tag = 'LANDING_PHOTO_SECONDARY'
+                    res.save()
+            
+            resource = serializer.save(
+                target_type=content_type,
+                target_id=event.id,
+                added_by=request.user,
+                tag='LANDING_PHOTO_MAIN' if is_main else 'LANDING_PHOTO_SECONDARY'
+            )
+            
+            return Response(
+                ResourceSerializer(resource, context={'request': request}).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Remove resource",
+        description="Remove a resource from the event",
+        parameters=[
+            OpenApiParameter(name='resource_id', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY,
+                           description='Resource ID to remove', required=True)
+        ],
+        responses={
+            204: OpenApiResponse(description='Resource removed successfully'),
+            400: OpenApiResponse(description='Bad request or resource is protected'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Resource not found')
+        }
+    )
+    @action(detail=True, methods=['delete'], url_path='remove-resource', permission_classes=[permissions.IsAuthenticated])
+    def remove_resource(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to remove resources from this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        resource_id = request.query_params.get('resource_id')
+        if not resource_id:
+            return Response(
+                {"detail": "resource_id query parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            resource = Resource.objects.get(id=resource_id, target_id=event.id)
+        except Resource.DoesNotExist:
+            return Response(
+                {"detail": "Resource not found for this event"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if resource.protected:
+            return Response(
+                {"detail": "This resource is protected and cannot be deleted"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        resource.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @extend_schema(
+        summary="Get landing images",
+        description="Get all landing images for the event",
+        responses={
+            200: ResourceSerializer(many=True),
+        }
+    )
+    @action(detail=True, methods=['get'], url_path='landing-images')
+    def landing_images(self, request, event_id=None):
+        event = self.get_object()
+        images = event.landing_images.all()
+        serializer = ResourceSerializer(images, many=True, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
