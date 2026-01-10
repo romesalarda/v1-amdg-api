@@ -8,8 +8,23 @@ from django.db import connection
 from django.core.cache import cache
 import redis
 from django.conf import settings
+from drf_spectacular.utils import extend_schema
 
 
+@extend_schema(
+    summary="Health check",
+    description="Simple health check endpoint for Docker/ECS healthchecks.",
+    responses={
+        200: {
+            'type': 'object',
+            'properties': {
+                'status': {'type': 'string', 'example': 'healthy'},
+                'database': {'type': 'string', 'example': 'connected'},
+                'cache': {'type': 'string', 'example': 'connected'}
+            }
+        },
+    }
+)
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def health_check(request):

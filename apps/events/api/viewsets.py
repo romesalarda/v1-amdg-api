@@ -149,7 +149,14 @@ class EventViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Get upcoming events",
-        description="Retrieve all upcoming events that haven't started yet"
+        description="Retrieve all upcoming events that haven't started yet",
+        responses={
+            200: EventListSerializer(many=True),
+        },
+        parameters=[
+            OpenApiParameter(name='page', type=OpenApiTypes.INT, description='Page number'),
+            OpenApiParameter(name='page_size', type=OpenApiTypes.INT, description='Number of results per page'),
+        ]
     )
     @action(detail=False, methods=['get'])
     def upcoming(self, request):
@@ -164,7 +171,14 @@ class EventViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Get ongoing events",
-        description="Retrieve all currently ongoing events"
+        description="Retrieve all currently ongoing events",
+        responses={
+            200: EventListSerializer(many=True),
+        },
+        parameters=[
+            OpenApiParameter(name='page', type=OpenApiTypes.INT, description='Page number'),
+            OpenApiParameter(name='page_size', type=OpenApiTypes.INT, description='Number of results per page'),
+        ]
     )
     @action(detail=False, methods=['get'])
     def ongoing(self, request):
@@ -183,7 +197,11 @@ class EventViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Get event settings",
-        description="Retrieve settings for a specific event"
+        description="Retrieve settings for a specific event",
+        responses={
+            200: EventSettingsSerializer,
+            404: OpenApiResponse(description='Settings not found for this event'),
+        }
     )
     @action(detail=True, methods=['get'], url_path='settings')
     def event_settings(self, request, event_id=None):
@@ -312,7 +330,9 @@ class EventViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="List event staff",
         description="Get all staff members for the event",
-        responses={200: EventStaffSerializer(many=True)}
+        responses={
+            200: EventStaffSerializer(many=True),
+        }
     )
     @action(detail=True, methods=['get'], url_path='staff-list')
     def staff_list(self, request, event_id=None):
@@ -829,8 +849,11 @@ class EventReviewViewSet(viewsets.ModelViewSet):
         serializer.save(user=self.request.user)
     
     @extend_schema(
-        summary="Approve reviews",
-        description="Approve selected reviews (staff only)"
+        summary="Approve review",
+        description="Approve a specific review (staff only)",
+        responses={
+            200: EventReviewSerializer,
+        }
     )
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):

@@ -442,6 +442,11 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
     'SCHEMA_PATH_PREFIX': r'/api',
+    'ENUM_NAME_OVERRIDES': {
+        'EventStatusChoices': 'apps.events.models.events.EventStatusChoices',
+        'EventAuthorizationStatusChoices': 'apps.events.models.authorization.EventAuthorizationStatusChoices',
+        'PaymentStatusChoices': 'apps.payments.models.payments.PaymentStatusChoices',
+    },
 }
 
 # =============================================================================

@@ -740,9 +740,17 @@ class CustomTokenRefreshView(TokenRefreshView):
 @extend_schema(
     summary="Logout user",
     description="Logout user by clearing JWT tokens from HTTP-only cookies.",
+    request=None,
     responses={
-        200: OpenApiResponse(description="Logout successful"),
-    }
+        200: {
+            'type': 'object',
+            'properties': {
+                'message': {'type': 'string', 'example': 'Logout successful.'}
+            },
+            'description': 'Logout successful'
+        },
+    },
+    tags=['Authentication']
 )
 @api_view(['POST'])
 @permission_classes_decorator([permissions.IsAuthenticated])
