@@ -446,6 +446,12 @@ SPECTACULAR_SETTINGS = {
         'EventStatusChoices': 'apps.events.models.events.EventStatusChoices',
         'EventAuthorizationStatusChoices': 'apps.events.models.authorization.EventAuthorizationStatusChoices',
         'PaymentStatusChoices': 'apps.payments.models.payments.PaymentStatusChoices',
+        'AttendeeRelationshipEnum': 'apps.attendee.models.attendee.AttendeeRelationship',
+        'HumanRelationshipEnum': 'apps.attendee.models.groups.HumanRelationshipChoices',
+        'AttendeeActionEnum': 'apps.attendee.models.attendee.AttendeeActionChoices',
+        'AttendeeMessagePriorityEnum': 'apps.attendee.models.messages.AttendeeMessagePriority',
+        'VerificationStatusEnum': 'apps.common.models.verification.VerificationStatus',
+        'DefaultTimezoneEnum': 'timezone_field.choices.TimeZoneFormField',
     },
 }
 

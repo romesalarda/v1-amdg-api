@@ -528,18 +528,18 @@ class EventAttendanceAdmin(admin.ModelAdmin):
 
 @admin.register(AttendeeOrganisation)
 class AttendeeOrganisationAdmin(admin.ModelAdmin):
-    list_display = ('attendee', 'organisation', 'added_at')
+    list_display = ('attendee', 'organisation', 'added_at', 'added_by')
     list_filter = ('added_at',)
-    search_fields = ('attendee__first_name', 'attendee__last_name', 'organisation')
+    search_fields = ('attendee__first_name', 'attendee__last_name', 'attendee__attendee_display_id', 'organisation__title')
     readonly_fields = ('added_at',)
-    autocomplete_fields = ('attendee',)
+    autocomplete_fields = ('attendee', 'organisation', 'added_by')
     
     fieldsets = (
         ('Organisation Information', {
-            'fields': ('attendee', 'organisation', 'role')
+            'fields': ('attendee', 'organisation')
         }),
         ('Metadata', {
-            'fields': ('added_at',),
+            'fields': ('added_by', 'added_at'),
             'classes': ('collapse',)
         }),
     )

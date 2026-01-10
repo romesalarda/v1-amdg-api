@@ -20,10 +20,10 @@ class Consent(models.Model):
     defined_by = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='defined_consents', null=True, blank=True)
 
     def __str__(self):
-        return f"Consent for {self.attendee} - Given: {self.consent_given}"
+        return f"{self.title} ({self.code}) - Event: {self.event.title if self.event else 'N/A'}"
     
     def __repr__(self):
-        return f"<Consent {self.code} for Event {self.event.id}>"
+        return f"<Consent {self.code} for Event {self.event.id if self.event else 'N/A'}>"
     
     def save(self, *args, **kwargs):
         self.clean()
