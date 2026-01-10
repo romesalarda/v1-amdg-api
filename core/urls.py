@@ -34,6 +34,7 @@ urlpatterns = [
     
     # API Endpoints
     path('api/', include('apps.users.urls')),
+    path('api/', include('apps.events.urls')),
 ]
 
 # Serve static/media files in development

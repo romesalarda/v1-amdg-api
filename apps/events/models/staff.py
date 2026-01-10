@@ -16,6 +16,7 @@ class EventStaff(models.Model):
     
     class Meta:
         unique_together = ('event', 'user')
+        ordering = ['-assigned_at']
         
 class EventStaffAvailability(models.Model):
     '''

@@ -126,6 +126,7 @@ class EventQuestionAnswer(models.Model):
     
     class Meta:
         unique_together = ('question', 'attendee')
+        ordering = ['-submitted_at']
     
     def __str__(self):
         return f"Answer {self.id} for Question {self.question.id} by Attendee {self.attendee.id}"

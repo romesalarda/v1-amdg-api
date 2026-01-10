@@ -29,18 +29,20 @@ class EventTypeAdmin(admin.ModelAdmin):
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
-    list_display = ('title', 'display_code', 'status', 'event_type', 'start_datetime', 'end_datetime', 'created_by')
-    list_filter = ('status', 'event_type', 'created_at', 'start_datetime')
-    search_fields = ('title', 'display_code', 'display_identifier', 'short_description')
+    list_display = ('title', 'display_code', 'status', 'event_type', 'organisation', 'start_datetime', 'end_datetime', 'created_by')
+    list_filter = ('status', 'event_type', 'organisation', 'created_at', 'start_datetime')
+    search_fields = ('title', 'display_code', 'display_identifier', 'short_description', 'organisation__title')
     readonly_fields = ('event_id', 'created_at', 'updated_at', 'url_safe_title', 'deleted_at', 'deleted_by')
     date_hierarchy = 'start_datetime'
+    autocomplete_fields = ('organisation', 'created_by')
+    list_select_related = ('event_type', 'organisation', 'created_by')
     
     fieldsets = (
         ('Identifiers', {
             'fields': ('event_id', 'display_code', 'display_identifier')
         }),
         ('Basic Information', {
-            'fields': ('title', 'url_safe_title', 'event_type', 'status', 'timezone')
+            'fields': ('title', 'url_safe_title', 'event_type', 'status', 'timezone', 'organisation')
         }),
         ('Descriptions', {
             'fields': ('short_description', 'long_description', 'what_to_bring', 'important_information')
