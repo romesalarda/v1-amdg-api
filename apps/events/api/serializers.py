@@ -19,14 +19,43 @@ User = get_user_model()
 
 
 class EventTypeSerializer(serializers.ModelSerializer):
+    _links = serializers.SerializerMethodField()
+    
     class Meta:
         model = EventType
-        fields = ('id', 'title', 'code', 'description', 'created_at', 'created_by', 'updated_at')
+        fields = ('id', 'title', 'code', 'description', 'created_at', 'created_by', 'updated_at', '_links')
         read_only_fields = ('id', 'created_at', 'updated_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event type'},
+            'created_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who created this event type'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/types/{obj.id}/"
+            )
+        }
+        
+        if obj.created_by:
+            links['created_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.created_by.id}/"
+            )
+        
+        return links
 
 
 class EventSettingsSerializer(serializers.ModelSerializer):
     default_timezone = serializers.CharField()
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventSettings
@@ -34,9 +63,35 @@ class EventSettingsSerializer(serializers.ModelSerializer):
             'id', 'event', 'payment_enabled', 'product_publication_requires_verification',
             'product_selling_enabled', 'donation_enabled', 'refunds_enabled',
             'accepting_sponsorships_enabled', 'participants_registration_require_verification',
-            'default_timezone'
+            'default_timezone', '_links'
         )
         read_only_fields = ('id',)
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to these event settings'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/settings/{obj.id}/"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        return links
 
 
 class EventListSerializer(serializers.ModelSerializer):
@@ -44,6 +99,7 @@ class EventListSerializer(serializers.ModelSerializer):
     organisation_name = serializers.CharField(source='organisation.title', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     timezone = serializers.CharField()
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
@@ -51,9 +107,52 @@ class EventListSerializer(serializers.ModelSerializer):
             'id', 'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
             'status', 'status_display', 'event_type', 'event_type_name', 'organisation', 
             'organisation_name', 'short_description', 'start_datetime', 'end_datetime',
-            'timezone', 'created_at', 'created_by'
+            'timezone', 'created_at', 'created_by', '_links'
         )
         read_only_fields = ('id', 'event_id', 'url_safe_title', 'created_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event'},
+            'event_type': {'type': 'string', 'format': 'uri', 'description': 'Link to the event type'},
+            'organisation': {'type': 'string', 'format': 'uri', 'description': 'Link to the organisation'},
+            'created_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who created this event'},
+            'settings': {'type': 'string', 'format': 'uri', 'description': 'Link to event settings'}
+        },
+        'required': ['self', 'settings']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/list/{obj.event_id}/"
+            )
+        }
+        
+        if obj.event_type:
+            links['event_type'] = request.build_absolute_uri(
+                f"/api/event/types/{obj.event_type.id}/"
+            )
+        
+        if obj.organisation:
+            links['organisation'] = request.build_absolute_uri(
+                f"/api/organisations/{obj.organisation.id}/"
+            )
+        
+        if obj.created_by:
+            links['created_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.created_by.id}/"
+            )
+        
+        links['settings'] = request.build_absolute_uri(
+            f"/api/event/list/{obj.event_id}/settings/"
+        )
+        
+        return links
 
 
 class EventDetailSerializer(serializers.ModelSerializer):
@@ -68,6 +167,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
     is_approved = serializers.BooleanField(read_only=True)
     can_participants_register = serializers.BooleanField(read_only=True)
     number_of_attendees = serializers.IntegerField(read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
@@ -79,27 +179,92 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'start_datetime', 'end_datetime', 'organisation', 'organisation_name',
             'created_by', 'created_by_email', 'created_at', 'updated_at',
             'settings', 'duration_days', 'is_ongoing', 'is_approved', 
-            'can_participants_register', 'number_of_attendees'
+            'can_participants_register', 'number_of_attendees', '_links'
         )
         read_only_fields = (
             'id', 'event_id', 'display_identifier', 'url_safe_title', 'created_at', 
             'updated_at', 'duration_days', 'is_ongoing', 'is_approved', 
             'can_participants_register', 'number_of_attendees'
         )
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event'},
+            'settings': {'type': 'string', 'format': 'uri', 'description': 'Link to event settings'},
+            'staff': {'type': 'string', 'format': 'uri', 'description': 'Link to event staff list'},
+            'event_type': {'type': 'string', 'format': 'uri', 'description': 'Link to the event type'},
+            'organisation': {'type': 'string', 'format': 'uri', 'description': 'Link to the organisation'},
+            'created_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who created this event'}
+        },
+        'required': ['self', 'settings', 'staff']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/list/{obj.event_id}/"
+            ),
+            'settings': request.build_absolute_uri(
+                f"/api/event/list/{obj.event_id}/settings/"
+            ),
+            'staff': request.build_absolute_uri(
+                f"/api/event/list/{obj.event_id}/staff-list/"
+            )
+        }
+        
+        if obj.event_type:
+            links['event_type'] = request.build_absolute_uri(
+                f"/api/event/types/{obj.event_type.id}/"
+            )
+        
+        if obj.organisation:
+            links['organisation'] = request.build_absolute_uri(
+                f"/api/organisations/{obj.organisation.id}/"
+            )
+        
+        if obj.created_by:
+            links['created_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.created_by.id}/"
+            )
+        
+        return links
 
 
 class EventCreateUpdateSerializer(serializers.ModelSerializer):
     timezone = serializers.CharField()
+    _links = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = Event
         fields = (
-            'id', 'display_code', 'title', 'status', 'event_type', 'timezone',
+            'id', 'event_id', 'display_code', 'title', 'status', 'event_type', 'timezone',
             'short_description', 'long_description', 'what_to_bring', 'important_information',
             'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance',
-            'start_datetime', 'end_datetime', 'organisation', 'created_by'
+            'start_datetime', 'end_datetime', 'organisation', 'created_by', '_links'
         )
-        read_only_fields = ('id',)
+        read_only_fields = ('id', 'event_id')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request or not obj.pk:
+            return {}
+        
+        return {
+            'self': request.build_absolute_uri(
+                f"/api/event/list/{obj.event_id}/"
+            )
+        }
     
     def validate_title(self, value):
         if not value or len(value.strip()) < 3:
@@ -176,15 +341,47 @@ class EventAuthorizationSerializer(serializers.ModelSerializer):
     event_title = serializers.CharField(source='event.title', read_only=True)
     reviewed_by_email = serializers.EmailField(source='reviewed_by.email', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
-    reviewed_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventAuthorization
         fields = (
             'id', 'review_id', 'review_code', 'event', 'event_title', 'reviewed_by',
-            'reviewed_by_email', 'reviewed_at', 'status', 'status_display', 'reason', 'notes'
+            'reviewed_by_email', 'reviewed_at', 'status', 'status_display', 'reason', 'notes', '_links'
         )
         read_only_fields = ('id', 'review_id', 'review_code', 'reviewed_by', 'reviewed_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this authorization'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'reviewed_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who reviewed'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/authorizations/{obj.id}/"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        if obj.reviewed_by:
+            links['reviewed_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.reviewed_by.id}/"
+            )
+        
+        return links
     
     def validate(self, data):
         if self.instance is None:
@@ -197,14 +394,33 @@ class EventAuthorizationSerializer(serializers.ModelSerializer):
 
 class EventPermissionSerializer(serializers.ModelSerializer):
     category_display = serializers.CharField(source='get_category_display', read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventPermission
         fields = (
             'id', 'permission_id', 'name', 'code', 'description', 'category',
-            'category_display', 'created_at', 'updated_at'
+            'category_display', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'permission_id', 'created_at', 'updated_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this permission'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        return {
+            'self': request.build_absolute_uri(
+                f"/api/event/permissions/{obj.id}/"
+            )
+        }
 
 
 class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
@@ -212,14 +428,59 @@ class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
     permission_name = serializers.CharField(source='permission.name', read_only=True)
     assigned_by_email = serializers.EmailField(source='assigned_by.email', read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventPermissionAssignment
         fields = (
             'id', 'event', 'event_title', 'user', 'user_email', 'permission',
-            'permission_name', 'assigned_at', 'assigned_by', 'assigned_by_email'
+            'permission_name', 'assigned_at', 'assigned_by', 'assigned_by_email', '_links'
         )
         read_only_fields = ('id', 'assigned_at', 'assigned_by')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this permission assignment'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'user': {'type': 'string', 'format': 'uri', 'description': 'Link to the user'},
+            'permission': {'type': 'string', 'format': 'uri', 'description': 'Link to the permission'},
+            'assigned_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who assigned'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/permission-assignments/{obj.id}/"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        if obj.user:
+            links['user'] = request.build_absolute_uri(
+                f"/api/users/{obj.user.id}/"
+            )
+        
+        if obj.permission:
+            links['permission'] = request.build_absolute_uri(
+                f"/api/event/permissions/{obj.permission.id}/"
+            )
+        
+        if obj.assigned_by:
+            links['assigned_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.assigned_by.id}/"
+            )
+        
+        return links
     
     def validate(self, data):
         if self.instance is None:
@@ -236,15 +497,47 @@ class EventReviewSerializer(serializers.ModelSerializer):
     event_title = serializers.CharField(source='event.title', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     user_full_name = serializers.SerializerMethodField()
-    user = serializers.PrimaryKeyRelatedField(read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventReview
         fields = (
             'id', 'event', 'event_title', 'user', 'user_email', 'user_full_name',
-            'rating', 'comment', 'approved', 'created_at', 'updated_at'
+            'rating', 'comment', 'approved', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'user', 'approved', 'created_at', 'updated_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this review'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'user': {'type': 'string', 'format': 'uri', 'description': 'Link to the reviewing user'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/reviews/{obj.id}/"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        if obj.user:
+            links['user'] = request.build_absolute_uri(
+                f"/api/users/{obj.user.id}/"
+            )
+        
+        return links
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_user_full_name(self, obj):
@@ -289,14 +582,33 @@ class EventReviewSerializer(serializers.ModelSerializer):
 
 class EventRoleSerializer(serializers.ModelSerializer):
     category_display = serializers.CharField(source='get_category_display', read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventRole
         fields = (
             'id', 'name', 'description', 'code', 'category', 'category_display',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this role'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        return {
+            'self': request.build_absolute_uri(
+                f"/api/event/roles/{obj.id}/"
+            )
+        }
 
 
 class EventRoleAssignmentSerializer(serializers.ModelSerializer):
@@ -304,14 +616,59 @@ class EventRoleAssignmentSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
     role_name = serializers.CharField(source='role.name', read_only=True)
     assigned_by_email = serializers.EmailField(source='assigned_by.email', read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventRoleAssignment
         fields = (
             'id', 'event', 'event_title', 'user', 'user_email', 'role', 'role_name',
-            'assigned_at', 'assigned_by', 'assigned_by_email'
+            'assigned_at', 'assigned_by', 'assigned_by_email', '_links'
         )
         read_only_fields = ('id', 'assigned_at', 'assigned_by')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this role assignment'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'user': {'type': 'string', 'format': 'uri', 'description': 'Link to the user'},
+            'role': {'type': 'string', 'format': 'uri', 'description': 'Link to the role'},
+            'assigned_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who assigned'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/role-assignments/{obj.id}/"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        if obj.user:
+            links['user'] = request.build_absolute_uri(
+                f"/api/users/{obj.user.id}/"
+            )
+        
+        if obj.role:
+            links['role'] = request.build_absolute_uri(
+                f"/api/event/roles/{obj.role.id}/"
+            )
+        
+        if obj.assigned_by:
+            links['assigned_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.assigned_by.id}/"
+            )
+        
+        return links
     
     def validate(self, data):
         if self.instance is None:
@@ -325,12 +682,40 @@ class EventRoleAssignmentSerializer(serializers.ModelSerializer):
 
 
 class EventStaffAvailabilitySerializer(serializers.ModelSerializer):
+    _links = serializers.SerializerMethodField()
+    
     class Meta:
         model = EventStaffAvailability
         fields = (
-            'id', 'staff', 'available_from', 'available_to', 'created_at', 'updated_at'
+            'id', 'staff', 'available_from', 'available_to', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this availability record'},
+            'staff': {'type': 'string', 'format': 'uri', 'description': 'Link to the staff member'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/staff-availability/{obj.id}/"
+            )
+        }
+        
+        if obj.staff:
+            links['staff'] = request.build_absolute_uri(
+                f"/api/event/staff/{obj.staff.staff_id}/"
+            )
+        
+        return links
     
     def validate(self, data):
         if 'available_from' in data and 'available_to' in data:
@@ -344,14 +729,53 @@ class EventStaffSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
     assigned_by_email = serializers.EmailField(source='assigned_by.email', read_only=True)
     availabilities = EventStaffAvailabilitySerializer(many=True, read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventStaff
         fields = (
             'staff_id', 'event', 'event_title', 'user', 'user_email',
-            'assigned_at', 'assigned_by', 'assigned_by_email', 'notes', 'availabilities'
+            'assigned_at', 'assigned_by', 'assigned_by_email', 'notes', 'availabilities', '_links'
         )
         read_only_fields = ('staff_id', 'assigned_at', 'assigned_by')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this staff member'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'user': {'type': 'string', 'format': 'uri', 'description': 'Link to the user'},
+            'assigned_by': {'type': 'string', 'format': 'uri', 'description': 'Link to user who assigned'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/staff/{obj.staff_id}/"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        if obj.user:
+            links['user'] = request.build_absolute_uri(
+                f"/api/users/{obj.user.id}/"
+            )
+        
+        if obj.assigned_by:
+            links['assigned_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.assigned_by.id}/"
+            )
+        
+        return links
     
     def validate(self, data):
         if self.instance is None:
@@ -373,10 +797,38 @@ class EventStaffSerializer(serializers.ModelSerializer):
 
 
 class EventQuestionOptionSerializer(serializers.ModelSerializer):
+    _links = serializers.SerializerMethodField()
+    
     class Meta:
         model = EventQuestionOption
-        fields = ('id', 'question', 'option_text', 'order', 'created_at', 'updated_at')
+        fields = ('id', 'question', 'option_text', 'order', 'created_at', 'updated_at', '_links')
         read_only_fields = ('id', 'created_at', 'updated_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this question option'},
+            'question': {'type': 'string', 'format': 'uri', 'description': 'Link to the question'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/question-options/{obj.id}/"
+            )
+        }
+        
+        if obj.question:
+            links['question'] = request.build_absolute_uri(
+                f"/api/event/questions/{obj.question.id}/"
+            )
+        
+        return links
     
     def validate_option_text(self, value):
         if not value or len(value.strip()) < 1:
@@ -390,15 +842,42 @@ class EventQuestionSerializer(serializers.ModelSerializer):
     question_type_display = serializers.CharField(source='get_question_type_display', read_only=True)
     event_title = serializers.CharField(source='event.title', read_only=True)
     options = EventQuestionOptionSerializer(many=True, read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventQuestion
         fields = (
             'id', 'event', 'event_title', 'question_title', 'question_body',
             'question_type', 'question_type_display', 'required', 'public', 'order',
-            'max_value', 'min_value', 'options', 'created_at', 'updated_at'
+            'max_value', 'min_value', 'options', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this question'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/questions/{obj.id}/"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        return links
     
     def validate_question_title(self, value):
         if not value or len(value.strip()) < 3:
@@ -436,26 +915,86 @@ class EventQuestionSerializer(serializers.ModelSerializer):
 
 class EventQuestionAnswerChoiceSerializer(serializers.ModelSerializer):
     option_text = serializers.CharField(source='option.option_text', read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventQuestionAnswerChoice
-        fields = ('id', 'answer', 'option', 'option_text', 'selected_at')
+        fields = ('id', 'answer', 'option', 'option_text', 'selected_at', '_links')
         read_only_fields = ('id', 'selected_at')
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this answer choice'},
+            'answer': {'type': 'string', 'format': 'uri', 'description': 'Link to the answer'},
+            'option': {'type': 'string', 'format': 'uri', 'description': 'Link to the option'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/answer-choices/{obj.id}/"
+            )
+        }
+        
+        if obj.answer:
+            links['answer'] = request.build_absolute_uri(
+                f"/api/event/question-answers/{obj.answer.id}/"
+            )
+        
+        if obj.option:
+            links['option'] = request.build_absolute_uri(
+                f"/api/event/question-options/{obj.option.id}/"
+            )
+        
+        return links
 
 
 class EventQuestionAnswerSerializer(serializers.ModelSerializer):
     question_title = serializers.CharField(source='question.question_title', read_only=True)
     attendee_name = serializers.SerializerMethodField()
     selected_options = EventQuestionAnswerChoiceSerializer(many=True, read_only=True)
+    _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventQuestionAnswer
         fields = (
             'id', 'question', 'question_title', 'attendee', 'attendee_name',
-            'answer_text', 'selected_options', 'submitted_at', 'updated_at'
+            'answer_text', 'selected_options', 'submitted_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'submitted_at', 'updated_at')
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_attendee_name(self, obj):
         return obj.attendee.full_name
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this answer'},
+            'question': {'type': 'string', 'format': 'uri', 'description': 'Link to the question'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/question-answers/{obj.id}/"
+            )
+        }
+        
+        if obj.question:
+            links['question'] = request.build_absolute_uri(
+                f"/api/event/questions/{obj.question.id}/"
+            )
+        
+        return links
