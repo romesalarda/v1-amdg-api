@@ -5,7 +5,7 @@ from .models import (
     EventPermissionAssignment, EventReview, EventRole, 
     EventRoleAssignment, EventStaff, EventStaffAvailability,
     EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice,
-    EventSettings
+    EventSettings, EventVenue
 )
 
 
@@ -408,5 +408,25 @@ class EventSettingsAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # EventSettings should not be deleted independently from Event
         return False
+
+
+@admin.register(EventVenue)
+class EventVenueAdmin(admin.ModelAdmin):
+    list_display = ('event_venue_id', 'event', 'venue', 'get_venue_name')
+    list_filter = ('event__event_type', 'event__status')
+    search_fields = ('event__title', 'venue__poi__name', 'event__display_code')
+    readonly_fields = ('event_venue_id',)
+    autocomplete_fields = ('event', 'venue')
+    list_select_related = ('event', 'venue', 'venue__poi')
+    
+    fieldsets = (
+        ('Event Venue Association', {
+            'fields': ('event_venue_id', 'event', 'venue')
+        }),
+    )
+    
+    def get_venue_name(self, obj):
+        return obj.venue.poi.name if obj.venue and obj.venue.poi else '-'
+    get_venue_name.short_description = 'Venue Name'
 
     

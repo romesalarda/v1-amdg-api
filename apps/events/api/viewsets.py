@@ -22,7 +22,7 @@ from apps.events.models import (
     EventStaff, EventStaffAvailability,
     EventReview,
     EventQuestion, EventQuestionOption,
-    EventQuestionAnswer, EventQuestionAnswerChoice
+    EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue
 )
 from apps.common.models import AvailabilityWindow, Resource
 from apps.common.api.serializers import (
@@ -37,38 +37,45 @@ from .serializers import (
     EventRoleAssignmentSerializer, EventStaffSerializer,
     EventStaffAvailabilitySerializer, EventReviewSerializer,
     EventQuestionSerializer, EventQuestionOptionSerializer,
-    EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer
+    EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer,
+    EventVenueSerializer
 )
 
 from apps.events.api.pagination import StandardPagination
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List event types",
+        summary="List Event Types",
         description="Retrieve a paginated list of all event types",
+        tags=["Events"],
         parameters=[
             OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Search by title or code'),
         ]
     ),
     retrieve=extend_schema(
-        summary="Get event type details",
-        description="Retrieve detailed information about a specific event type"
+        summary="Get Event Type Details",
+        description="Retrieve detailed information about a specific event type",
+        tags=["Events"],
     ),
     create=extend_schema(
-        summary="Create event type",
-        description="Create a new event type"
+        summary="Create Event Type",
+        description="Create a new event type",
+        tags=["Events"],
     ),
     update=extend_schema(
-        summary="Update event type",
-        description="Update an existing event type"
+        summary="Update Event Type",
+        description="Update an existing event type",
+        tags=["Events"],
     ),
     partial_update=extend_schema(
-        summary="Partially update event type",
-        description="Partially update an existing event type"
+        summary="Partially Update Event Type",
+        description="Partially update an existing event type",
+        tags=["Events"],
     ),
     destroy=extend_schema(
-        summary="Delete event type",
-        description="Delete an event type"
+        summary="Delete Event Type",
+        description="Delete an event type",
+        tags=["Events"],
     )
 )
 class EventTypeViewSet(viewsets.ModelViewSet):
@@ -84,8 +91,9 @@ class EventTypeViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List events",
+        summary="List Events",
         description="Retrieve a paginated list of all events with filtering and search capabilities",
+        tags=["Events"],
         parameters=[
             OpenApiParameter(name='status', type=OpenApiTypes.STR, description='Filter by status'),
             OpenApiParameter(name='event_type', type=OpenApiTypes.INT, description='Filter by event type ID'),
@@ -94,24 +102,29 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         ]
     ),
     retrieve=extend_schema(
-        summary="Get event details",
-        description="Retrieve comprehensive details about a specific event"
+        summary="Get Event Details",
+        description="Retrieve comprehensive details about a specific event",
+        tags=["Events"],
     ),
     create=extend_schema(
-        summary="Create event",
-        description="Create a new event"
+        summary="Create Event",
+        description="Create a new event",
+        tags=["Events"],
     ),
     update=extend_schema(
-        summary="Update event",
-        description="Update an existing event"
+        summary="Update Event",
+        description="Update an existing event",
+        tags=["Events"],
     ),
     partial_update=extend_schema(
-        summary="Partially update event",
-        description="Partially update an existing event"
+        summary="Partially Update Event",
+        description="Partially update an existing event",
+        tags=["Events"],
     ),
     destroy=extend_schema(
-        summary="Delete event",
-        description="Soft delete an event"
+        summary="Delete Event",
+        description="Soft delete an event",
+        tags=["Events"],
     )
 )
 class EventViewSet(viewsets.ModelViewSet):
@@ -890,24 +903,29 @@ class EventViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List event settings",
-        description="Retrieve a list of all event settings"
+        summary="List Event Settings",
+        description="Retrieve a list of all event settings",
+        tags=["Events"],
     ),
     retrieve=extend_schema(
-        summary="Get event settings",
-        description="Retrieve settings for a specific event"
+        summary="Get Event Settings",
+        description="Retrieve settings for a specific event",
+        tags=["Events"],
     ),
     create=extend_schema(
-        summary="Create event settings",
-        description="Create settings for an event"
+        summary="Create Event Settings",
+        description="Create settings for an event",
+        tags=["Events"],
     ),
     update=extend_schema(
-        summary="Update event settings",
-        description="Update settings for an event"
+        summary="Update Event Settings",
+        description="Update settings for an event",
+        tags=["Events"],
     ),
     partial_update=extend_schema(
-        summary="Partially update event settings",
-        description="Partially update settings for an event"
+        summary="Partially Update Event Settings",
+        description="Partially update settings for an event",
+        tags=["Events"],
     )
 )
 class EventSettingsViewSet(viewsets.ModelViewSet):
@@ -1390,3 +1408,60 @@ class EventQuestionAnswerChoiceViewSet(viewsets.ModelViewSet):
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['answer']
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="List Event Venues",
+        description="Retrieve a paginated list of all event-venue associations with filtering and search capabilities",
+        tags=["Events"],
+        parameters=[
+            OpenApiParameter(name='event', type=OpenApiTypes.UUID, description='Filter by event ID (UUID)'),
+            OpenApiParameter(name='venue', type=OpenApiTypes.INT, description='Filter by venue ID'),
+            OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Search by event title or venue name'),
+        ]
+    ),
+    retrieve=extend_schema(
+        summary="Get Event Venue Details",
+        description="Retrieve detailed information about a specific event-venue association",
+        tags=["Events"],
+    ),
+    create=extend_schema(
+        summary="Create Event Venue",
+        description="Associate a venue with an event",
+        tags=["Events"],
+    ),
+    update=extend_schema(
+        summary="Update Event Venue",
+        description="Update an event-venue association",
+        tags=["Events"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Event Venue",
+        description="Partially update an event-venue association",
+        tags=["Events"],
+    ),
+    destroy=extend_schema(
+        summary="Delete Event Venue",
+        description="Remove a venue association from an event",
+        tags=["Events"],
+    )
+)
+class EventVenueViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing EventVenue associations.
+    
+    Provides CRUD operations for linking venues to events.
+    """
+    queryset = EventVenue.objects.select_related(
+        'event', 'venue', 'venue__poi'
+    ).all()
+    serializer_class = EventVenueSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['event', 'venue']
+    search_fields = ['event__title', 'event__display_code', 'venue__poi__name', 'venue__poi__city']
+    ordering_fields = ['event__start_datetime', 'venue__poi__name']
+    ordering = ['-event__start_datetime']
+    lookup_field = 'event_venue_id'

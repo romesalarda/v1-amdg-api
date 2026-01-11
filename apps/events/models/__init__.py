@@ -5,6 +5,7 @@ from .roles import EventRole, EventRoleAssignment, EventRoleCategoryChoices
 from .authorization import EventAuthorization, EventAuthorizationStatusChoices
 from .review import EventReview
 from .questions import EventQuestion, EventQuestionTypeChoices, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice
+from .venue import EventVenue
 
 __all__ = [
     'Event',
@@ -28,4 +29,5 @@ __all__ = [
     'EventQuestionAnswer',
     'EventQuestionAnswerChoice',
     'EventSettings',
+    'EventVenue',
 ]

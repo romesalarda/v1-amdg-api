@@ -17,11 +17,12 @@ from apps.events.models import (
     EventStaff, EventStaffAvailability,
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
-    EventQuestionAnswer, EventQuestionAnswerChoice
+    EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue
 )
 from apps.common.models import AvailabilityWindow, Resource, AvailabilityTypeChoices, ResourceTypeChoices
 from apps.organisations.models import Organisation
 from apps.attendee.models import Attendee
+from apps.locations.models import POI, Venue, POITypeChoice
 
 User = get_user_model()
 
@@ -1211,4 +1212,231 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
         self.assertIn('landing_images', response.data)
         self.assertIn('main_landing_image', response.data)
         self.assertIsNotNone(response.data['main_landing_image'])
+
+
+class EventVenueAPITest(BaseEventAPITestCase):
+    def setUp(self):
+        super().setUp()
+        
+        # Create test POI and Venue
+        self.poi = POI.objects.create(
+            name='Test Conference Center',
+            address='123 Main Street',
+            postcode='SW1A 1AA',
+            city='London',
+            poi_type=POITypeChoice.VENUE,
+            created_by=self.user
+        )
+        
+        self.venue = Venue.objects.create(
+            poi=self.poi,
+            description='A modern conference center',
+            capacity=500,
+            added_by=self.user
+        )
+        
+        # Create another venue for testing
+        self.poi2 = POI.objects.create(
+            name='Secondary Venue',
+            address='456 High Street',
+            postcode='SW1A 2BB',
+            city='Manchester',
+            poi_type=POITypeChoice.VENUE,
+            created_by=self.user
+        )
+        
+        self.venue2 = Venue.objects.create(
+            poi=self.poi2,
+            description='Another great venue',
+            capacity=300,
+            added_by=self.user
+        )
+        
+        # Create an EventVenue association
+        self.event_venue = EventVenue.objects.create(
+            event=self.event,
+            venue=self.venue
+        )
+    
+    def test_list_event_venues_unauthenticated(self):
+        """Test that unauthenticated users can list event venues"""
+        response = self.client.get('/api/event/venues/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+    
+    def test_list_event_venues_authenticated(self):
+        """Test that authenticated users can list event venues"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get('/api/event/venues/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+    
+    def test_retrieve_event_venue(self):
+        """Test retrieving a specific event venue"""
+        response = self.client.get(f'/api/event/venues/{self.event_venue.event_venue_id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['venue_name'], 'Test Conference Center')
+        self.assertEqual(response.data['venue_city'], 'London')
+        self.assertEqual(response.data['event_title'], 'Test Conference 2025')
+    
+    def test_retrieve_event_venue_has_hateoas_links(self):
+        """Test that event venue includes HATEOAS links"""
+        response = self.client.get(f'/api/event/venues/{self.event_venue.event_venue_id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('_links', response.data)
+        self.assertIn('self', response.data['_links'])
+        self.assertIn('event', response.data['_links'])
+        self.assertIn('venue', response.data['_links'])
+    
+    def test_create_event_venue_authenticated(self):
+        """Test creating an event-venue association"""
+        self.client.force_authenticate(user=self.user)
+        data = {
+            'event': self.event.id,
+            'venue': self.venue2.id
+        }
+        response = self.client.post('/api/event/venues/', data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['venue_name'], 'Secondary Venue')
+        self.assertEqual(response.data['event_title'], 'Test Conference 2025')
+        
+        # Verify it was actually created
+        self.assertTrue(
+            EventVenue.objects.filter(
+                event=self.event,
+                venue=self.venue2
+            ).exists()
+        )
+    
+    def test_create_event_venue_unauthenticated(self):
+        """Test that unauthenticated users cannot create event venues"""
+        data = {
+            'event': self.event.id,
+            'venue': self.venue2.id
+        }
+        response = self.client.post('/api/event/venues/', data)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+    
+    def test_filter_event_venues_by_event(self):
+        """Test filtering event venues by event"""
+        response = self.client.get(f'/api/event/venues/?event={self.event.id}')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+        for result in response.data['results']:
+            self.assertEqual(result['event_title'], 'Test Conference 2025')
+    
+    def test_filter_event_venues_by_venue(self):
+        """Test filtering event venues by venue"""
+        response = self.client.get(f'/api/event/venues/?venue={self.venue.id}')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+        for result in response.data['results']:
+            self.assertEqual(result['venue_name'], 'Test Conference Center')
+    
+    def test_search_event_venues_by_venue_name(self):
+        """Test searching event venues by venue name"""
+        response = self.client.get('/api/event/venues/?search=Conference')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+    
+    def test_search_event_venues_by_event_title(self):
+        """Test searching event venues by event title"""
+        response = self.client.get('/api/event/venues/?search=Test Conference')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+    
+    def test_search_event_venues_by_city(self):
+        """Test searching event venues by city"""
+        response = self.client.get('/api/event/venues/?search=London')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+        for result in response.data['results']:
+            self.assertEqual(result['venue_city'], 'London')
+    
+    def test_delete_event_venue_authenticated(self):
+        """Test deleting an event-venue association"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(f'/api/event/venues/{self.event_venue.event_venue_id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Verify it was actually deleted
+        self.assertFalse(
+            EventVenue.objects.filter(
+                event_venue_id=self.event_venue.event_venue_id
+            ).exists()
+        )
+    
+    def test_delete_event_venue_unauthenticated(self):
+        """Test that unauthenticated users cannot delete event venues"""
+        response = self.client.delete(f'/api/event/venues/{self.event_venue.event_venue_id}/')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+    
+    def test_update_event_venue_authenticated(self):
+        """Test updating an event-venue association"""
+        self.client.force_authenticate(user=self.user)
+        data = {
+            'event': self.event.id,
+            'venue': self.venue2.id
+        }
+        response = self.client.put(
+            f'/api/event/venues/{self.event_venue.event_venue_id}/',
+            data
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['venue_name'], 'Secondary Venue')
+        
+        # Verify the update
+        self.event_venue.refresh_from_db()
+        self.assertEqual(self.event_venue.venue.id, self.venue2.id)
+    
+    def test_partial_update_event_venue_authenticated(self):
+        """Test partially updating an event-venue association"""
+        self.client.force_authenticate(user=self.user)
+        data = {
+            'venue': self.venue2.id
+        }
+        response = self.client.patch(
+            f'/api/event/venues/{self.event_venue.event_venue_id}/',
+            data
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['venue_name'], 'Secondary Venue')
+    
+    def test_event_venue_ordering_by_event_start_date(self):
+        """Test that event venues are ordered by event start date by default"""
+        # Create another event with an earlier start date
+        earlier_event = Event.objects.create(
+            title='Earlier Event',
+            display_code='EE2024',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=10),
+            end_datetime=timezone.now() + timedelta(days=12),
+            organisation=self.organisation,
+            status=EventStatusChoices.PUBLISHED
+        )
+        
+        EventVenue.objects.create(
+            event=earlier_event,
+            venue=self.venue2
+        )
+        
+        response = self.client.get('/api/event/venues/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # The first result should be the event with the later start date (descending order)
+        if len(response.data['results']) >= 2:
+            first_event = response.data['results'][0]['event_title']
+            self.assertEqual(first_event, 'Test Conference 2025')
+    
+    def test_create_duplicate_event_venue(self):
+        """Test that creating a duplicate event-venue association works (no unique constraint)"""
+        self.client.force_authenticate(user=self.user)
+        data = {
+            'event': self.event.id,
+            'venue': self.venue.id
+        }
+        response = self.client.post('/api/event/venues/', data)
+        # This should succeed as there's no unique constraint on event-venue pairs
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 

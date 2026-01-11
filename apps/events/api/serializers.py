@@ -13,7 +13,7 @@ from apps.events.models import (
     EventStaff, EventStaffAvailability,
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
-    EventQuestionAnswer, EventQuestionAnswerChoice
+    EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue
 )
 from apps.common.models import AvailabilityWindow, Resource
 from apps.common.api.serializers import (
@@ -1099,6 +1099,57 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
         if obj.question:
             links['question'] = request.build_absolute_uri(
                 f"/api/event/questions/{obj.question.id}/"
+            )
+        
+        return links
+
+
+class EventVenueSerializer(serializers.ModelSerializer):
+    """Serializer for EventVenue model with HATEOAS support."""
+    
+    venue_name = serializers.CharField(source='venue.poi.name', read_only=True)
+    venue_address = serializers.CharField(source='venue.poi.address', read_only=True)
+    venue_city = serializers.CharField(source='venue.poi.city', read_only=True)
+    event_title = serializers.CharField(source='event.title', read_only=True)
+    event_display_code = serializers.CharField(source='event.display_code', read_only=True)
+    _links = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = EventVenue
+        fields = (
+            'event_venue_id', 'event', 'venue', 'event_title', 'event_display_code',
+            'venue_name', 'venue_address', 'venue_city', '_links'
+        )
+        read_only_fields = ('event_venue_id',)
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event venue association'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'venue': {'type': 'string', 'format': 'uri', 'description': 'Link to the venue'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/venues/{obj.event_venue_id}/"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        if obj.venue:
+            links['venue'] = request.build_absolute_uri(
+                f"/api/locations/venues/{obj.venue.id}/"
             )
         
         return links

@@ -17,6 +17,7 @@ from apps.events.api.viewsets import (
     EventQuestionOptionViewSet,
     EventQuestionAnswerViewSet,
     EventQuestionAnswerChoiceViewSet,
+    EventVenueViewSet,
 )
 
 app_name = 'events'
@@ -37,6 +38,7 @@ router.register(r'questions', EventQuestionViewSet, basename='eventquestion')
 router.register(r'question-options', EventQuestionOptionViewSet, basename='eventquestionoption')
 router.register(r'question-answers', EventQuestionAnswerViewSet, basename='eventquestionanswer')
 router.register(r'answer-choices', EventQuestionAnswerChoiceViewSet, basename='eventquestionanswerchoice')
+router.register(r'venues', EventVenueViewSet, basename='eventvenue')
 
 urlpatterns = [
     path('event/', include(router.urls)),
