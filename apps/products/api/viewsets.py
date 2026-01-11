@@ -211,18 +211,70 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
     ),
     create=extend_schema(
         summary="Create product",
-        description="Create a new product. Event administrators can create products for their events. Supports image upload via resource IDs and category associations.",
+        description="Create a new product. Event administrators can create products for their events. Supports image upload via multipart/form-data for direct file uploads (main_image and additional_images fields) instead of resource IDs.",
         tags=["Products"],
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'title': {'type': 'string'},
+                    'description': {'type': 'string'},
+                    'event': {'type': 'integer'},
+                    'base_amount': {'type': 'string'},
+                    'base_amount_currency': {'type': 'string'},
+                    'percentage_modifier': {'type': 'number'},
+                    'verified': {'type': 'boolean'},
+                    'is_active': {'type': 'boolean'},
+                    'category_ids': {'type': 'array', 'items': {'type': 'integer'}},
+                    'main_image': {'type': 'string', 'format': 'binary'},
+                    'additional_images': {'type': 'array', 'items': {'type': 'string', 'format': 'binary'}},
+                }
+            }
+        }
     ),
     update=extend_schema(
         summary="Update product",
-        description="Update an existing product. Only administrators can modify products.",
+        description="Update an existing product. Only administrators can modify products. Supports image upload via multipart/form-data for direct file uploads.",
         tags=["Products"],
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'title': {'type': 'string'},
+                    'description': {'type': 'string'},
+                    'base_amount': {'type': 'string'},
+                    'base_amount_currency': {'type': 'string'},
+                    'percentage_modifier': {'type': 'number'},
+                    'verified': {'type': 'boolean'},
+                    'is_active': {'type': 'boolean'},
+                    'category_ids': {'type': 'array', 'items': {'type': 'integer'}},
+                    'main_image': {'type': 'string', 'format': 'binary'},
+                    'additional_images': {'type': 'array', 'items': {'type': 'string', 'format': 'binary'}},
+                }
+            }
+        }
     ),
     partial_update=extend_schema(
         summary="Partially update product",
-        description="Partially update a product.",
+        description="Partially update a product. Supports image upload via multipart/form-data for direct file uploads.",
         tags=["Products"],
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'title': {'type': 'string'},
+                    'description': {'type': 'string'},
+                    'base_amount': {'type': 'string'},
+                    'base_amount_currency': {'type': 'string'},
+                    'percentage_modifier': {'type': 'number'},
+                    'verified': {'type': 'boolean'},
+                    'is_active': {'type': 'boolean'},
+                    'category_ids': {'type': 'array', 'items': {'type': 'integer'}},
+                    'main_image': {'type': 'string', 'format': 'binary'},
+                    'additional_images': {'type': 'array', 'items': {'type': 'string', 'format': 'binary'}},
+                }
+            }
+        }
     ),
     destroy=extend_schema(
         summary="Delete product",
@@ -283,58 +335,145 @@ class ProductViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Add image to product",
-        description="Add an image to the product. Provide a resource ID that points to an uploaded image resource.",
+        description="Upload an image file directly to the product. The file will be automatically converted to a Resource object and attached to the product. Supports JPEG, PNG, GIF, and WebP formats up to 10MB. If is_main is true, any existing main image will be replaced.",
         request={
-            'application/json': {
+            'multipart/form-data': {
                 'type': 'object',
                 'properties': {
-                    'resource_id': {'type': 'integer', 'description': 'ID of the image resource'},
-                    'is_main': {'type': 'boolean', 'description': 'Whether this should be the main product image'},
+                    'image': {
+                        'type': 'string',
+                        'format': 'binary',
+                        'description': 'Image file to upload (JPEG, PNG, GIF, or WebP, max 10MB)'
+                    },
+                    'is_main': {
+                        'type': 'string',
+                        'description': 'Whether this should be the main product image (true/false, 1/0, yes/no)',
+                        'default': 'false'
+                    },
                 },
-                'required': ['resource_id'],
+                'required': ['image'],
             }
         },
-        responses={200: {'description': 'Image added successfully'}},
+        responses={
+            200: {
+                'description': 'Image added successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'message': 'Image added to product Conference T-Shirt.',
+                            'resource_id': 123,
+                            'image_url': 'https://example.com/media/resources/images/product_image.png'
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Invalid image file or validation error',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'image': ['Image file size cannot exceed 10MB.']
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - requires administrative access'}
+        },
         tags=["Products"],
     )
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly], url_path='add-image')
     def add_image(self, request, product_id=None):
         """Add an image to the product."""
         product = self.get_object()
-        resource_id = request.data.get('resource_id')
-        is_main = request.data.get('is_main', False)
+        image_file = request.FILES.get('image')
+        is_main = request.data.get('is_main', 'false').lower() in ['true', '1', 'yes']
         
-        if not resource_id:
-            raise ValidationError({'resource_id': 'Resource ID is required.'})
+        if not image_file:
+            raise ValidationError({'image': 'Image file is required.'})
+        
+        # Validate file size (max 10MB)
+        if image_file.size > 10 * 1024 * 1024:
+            raise ValidationError({'image': 'Image file size cannot exceed 10MB.'})
+        
+        # Validate file type
+        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+        if hasattr(image_file, 'content_type') and image_file.content_type not in allowed_types:
+            raise ValidationError({'image': 'Only JPEG, PNG, GIF, and WebP images are allowed.'})
         
         try:
-            resource = Resource.objects.get(id=resource_id)
+            # Get content type for product
+            from django.contrib.contenttypes.models import ContentType
+            content_type = ContentType.objects.get_for_model(Product)
+            
+            # Create Resource object for the image
+            tag = 'PRODUCT_PHOTO_MAIN' if is_main else 'PRODUCT_PHOTO_SECONDARY'
+            resource = Resource.objects.create(
+                name=f"{product.title} - {'Main' if is_main else 'Additional'} Image",
+                description=f"{'Main' if is_main else 'Additional'} product image for {product.title}",
+                tag=tag,
+                target_type=content_type,
+                target_id=str(product.id),
+                resource_type='IMAGE',
+                image=image_file,
+                added_by=request.user,
+                public=True
+            )
+            
             product.add_product_image(resource, is_main=is_main)
+            
             return Response({
                 'status': 'success',
-                'message': f'Image added to product {product.title}.'
+                'message': f'Image added to product {product.title}.',
+                'resource_id': resource.id,
+                'image_url': resource.image.url if resource.image else None
             }, status=status.HTTP_200_OK)
-        except Resource.DoesNotExist:
-            raise ValidationError({'resource_id': 'Resource does not exist.'})
         except Exception as e:
             raise ValidationError({'error': str(e)})
     
     @extend_schema(
         summary="Remove image from product",
-        description="Remove an image from the product.",
+        description="Remove an image resource from the product by providing the resource ID. The resource will be disassociated from the product.",
         request={
             'application/json': {
                 'type': 'object',
                 'properties': {
-                    'resource_id': {'type': 'integer', 'description': 'ID of the image resource to remove'},
+                    'resource_id': {
+                        'type': 'integer',
+                        'description': 'ID of the image resource to remove'
+                    },
                 },
                 'required': ['resource_id'],
             }
         },
-        responses={200: {'description': 'Image removed successfully'}},
+        responses={
+            200: {
+                'description': 'Image removed successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'message': 'Image removed from product Conference T-Shirt.'
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Invalid resource_id or validation error',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'resource_id': ['Resource ID is required.']
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - requires administrative access'},
+            404: {'description': 'Resource does not exist'}
+        },
         tags=["Products"],
     )
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly], url_path='remove-image')
     def remove_image(self, request, product_id=None):
         """Remove an image from the product."""
         product = self.get_object()
@@ -357,8 +496,24 @@ class ProductViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Toggle product active status",
-        description="Toggle the is_active status of a product. Only administrators can perform this action.",
-        responses={200: {'description': 'Status toggled successfully'}},
+        description="Toggle the is_active status of a product between true and false. Only administrators can perform this action. Active products are visible to regular users, inactive products are only visible to administrators.",
+        request=None,
+        responses={
+            200: {
+                'description': 'Status toggled successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'is_active': True,
+                            'message': 'Product Conference T-Shirt is now active.'
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - requires administrative access'},
+            404: {'description': 'Product not found'}
+        },
         tags=["Products"],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly], url_name='toggle-active', url_path='toggle-active')
@@ -466,23 +621,50 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Increment variant stock",
-        description="Atomically increment the stock quantity of a variant. Only administrators can perform stock operations.",
+        description="Atomically increment the stock quantity of a variant. The operation is atomic to prevent race conditions. If max_stock_quantity is set, the increment will fail if it would exceed the maximum. Only administrators can perform stock operations.",
         request={
             'application/json': {
                 'type': 'object',
                 'properties': {
-                    'amount': {'type': 'integer', 'description': 'Amount to increment (must be positive)', 'example': 10},
+                    'amount': {
+                        'type': 'integer',
+                        'description': 'Amount to increment (must be positive)',
+                        'example': 10,
+                        'minimum': 1
+                    },
                 },
                 'required': ['amount'],
             }
         },
         responses={
-            200: {'description': 'Stock incremented successfully'},
-            400: {'description': 'Invalid amount or would exceed max stock'},
+            200: {
+                'description': 'Stock incremented successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'stock_quantity': 60,
+                            'message': 'Stock incremented by 10. New stock: 60'
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Invalid amount or would exceed max stock',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'amount': ['Amount must be a positive integer.']
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - requires administrative access'},
+            404: {'description': 'Variant not found'}
         },
         tags=["Product Variants"],
     )
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly], url_path='increment-stock')
     def increment_stock(self, request, product_product_id=None, variant_id=None):
         """Increment the stock quantity of the variant."""
         variant = self.get_object()
@@ -509,23 +691,50 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Decrement variant stock",
-        description="Atomically decrement the stock quantity of a variant. Only administrators can perform stock operations.",
+        description="Atomically decrement the stock quantity of a variant. The operation is atomic to prevent race conditions. Will fail if there is insufficient stock. Only administrators can perform stock operations.",
         request={
             'application/json': {
                 'type': 'object',
                 'properties': {
-                    'amount': {'type': 'integer', 'description': 'Amount to decrement (must be positive)', 'example': 5},
+                    'amount': {
+                        'type': 'integer',
+                        'description': 'Amount to decrement (must be positive)',
+                        'example': 5,
+                        'minimum': 1
+                    },
                 },
                 'required': ['amount'],
             }
         },
         responses={
-            200: {'description': 'Stock decremented successfully'},
-            400: {'description': 'Invalid amount or insufficient stock'},
+            200: {
+                'description': 'Stock decremented successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'stock_quantity': 45,
+                            'message': 'Stock decremented by 5. New stock: 45'
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Invalid amount or insufficient stock',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'error': 'Insufficient stock for the selected product variant.'
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - requires administrative access'},
+            404: {'description': 'Variant not found'}
         },
         tags=["Product Variants"],
     )
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly], url_path='decrement-stock')
     def decrement_stock(self, request, product_product_id=None, variant_id=None):
         """Decrement the stock quantity of the variant."""
         variant = self.get_object()
@@ -552,20 +761,50 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Set variant stock",
-        description="Set the stock quantity to a specific value. Only administrators can perform stock operations.",
+        description="Set the stock quantity to a specific value, overriding the current stock level. Useful for inventory adjustments or corrections. Only administrators can perform stock operations.",
         request={
             'application/json': {
                 'type': 'object',
                 'properties': {
-                    'stock_quantity': {'type': 'integer', 'description': 'New stock quantity (must be non-negative)', 'example': 50},
+                    'stock_quantity': {
+                        'type': 'integer',
+                        'description': 'New stock quantity (must be non-negative)',
+                        'example': 50,
+                        'minimum': 0
+                    },
                 },
                 'required': ['stock_quantity'],
             }
         },
-        responses={200: {'description': 'Stock set successfully'}},
+        responses={
+            200: {
+                'description': 'Stock set successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'stock_quantity': 50,
+                            'message': 'Stock set to 50.'
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Invalid stock_quantity value',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'stock_quantity': ['Stock quantity must be a non-negative integer.']
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - requires administrative access'},
+            404: {'description': 'Variant not found'}
+        },
         tags=["Product Variants"],
     )
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly], url_path='set-stock')
     def set_stock(self, request, product_product_id=None, variant_id=None):
         """Set the stock quantity to a specific value."""
         variant = self.get_object()
@@ -590,8 +829,24 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Toggle variant active status",
-        description="Toggle the is_active status of a variant. Only administrators can perform this action.",
-        responses={200: {'description': 'Status toggled successfully'}},
+        description="Toggle the is_active status of a variant between true and false. Only administrators can perform this action. Inactive variants are not visible to regular users and cannot be purchased.",
+        request=None,
+        responses={
+            200: {
+                'description': 'Status toggled successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'is_active': True,
+                            'message': 'Variant is now active.'
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - requires administrative access'},
+            404: {'description': 'Variant not found'}
+        },
         tags=["Product Variants"],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
@@ -699,10 +954,39 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Submit order",
-        description="Submit an order, transitioning it from 'draft' to 'pending' status. Order must have at least one item.",
+        description="Submit an order, transitioning it from 'draft' to 'pending' status. Order must have at least one item. Stock is reserved when the order is submitted.",
+        request=None,
         responses={
-            200: {'description': 'Order submitted successfully'},
-            400: {'description': 'Cannot submit order (validation error)'},
+            200: {
+                'description': 'Order submitted successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'message': 'Order ORD-12345 submitted successfully.',
+                            'order': {
+                                'id': 1,
+                                'order_id': 'uuid-here',
+                                'order_reference_id': 'ORD-12345',
+                                'status': 'pending',
+                                'total_amount': 'GBP 50.00'
+                            }
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Cannot submit order (validation error)',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'error': 'Order must have at least one item before submission.'
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - not order owner or administrator'},
+            404: {'description': 'Order not found'}
         },
         tags=["Orders"],
     )
@@ -724,10 +1008,39 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Cancel order",
-        description="Cancel an order, transitioning it to 'cancelled' status. Stock is automatically restored.",
+        description="Cancel an order, transitioning it to 'cancelled' status. Stock is automatically restored for all items in the order. Only non-completed orders can be cancelled.",
+        request=None,
         responses={
-            200: {'description': 'Order cancelled successfully'},
-            400: {'description': 'Cannot cancel order'},
+            200: {
+                'description': 'Order cancelled successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'message': 'Order ORD-12345 cancelled successfully.',
+                            'order': {
+                                'id': 1,
+                                'order_id': 'uuid-here',
+                                'order_reference_id': 'ORD-12345',
+                                'status': 'cancelled',
+                                'total_amount': 'GBP 50.00'
+                            }
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Cannot cancel order',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'error': 'Cannot cancel a completed order.'
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - not order owner or administrator'},
+            404: {'description': 'Order not found'}
         },
         tags=["Orders"],
     )
@@ -749,15 +1062,52 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Add item to order",
-        description="Add an item to a draft order. Only draft orders can have items added.",
+        description="Add an item to a draft order. Only draft orders can have items added. Stock availability and purchase limits are validated. Order total is automatically recalculated.",
         request=OrderItemCreateSerializer,
         responses={
-            200: {'description': 'Item added successfully'},
-            400: {'description': 'Cannot add item (validation error)'},
+            200: {
+                'description': 'Item added successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'message': 'Item added to order.',
+                            'order_item': {
+                                'id': 1,
+                                'product_variant': 'uuid-here',
+                                'quantity': 2,
+                                'unit_price': 'GBP 25.00',
+                                'total_price': 'GBP 50.00'
+                            },
+                            'order_total': 'GBP 50.00'
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Cannot add item (validation error)',
+                'content': {
+                    'application/json': {
+                        'examples': {
+                            'not_draft': {
+                                'value': {'error': 'Can only add items to draft orders.'}
+                            },
+                            'insufficient_stock': {
+                                'value': {'error': 'Insufficient stock for the selected product variant.'}
+                            },
+                            'invalid_variant': {
+                                'value': {'product_variant_id': ['Product variant does not exist.']}
+                            }
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - not order owner or administrator'},
+            404: {'description': 'Order not found'}
         },
         tags=["Orders"],
     )
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative])
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative], url_path='add-item')
     def add_item(self, request, order_id=None):
         """Add an item to the order."""
         order = self.get_object()

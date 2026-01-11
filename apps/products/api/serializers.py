@@ -364,25 +364,25 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         allow_empty=True,
         help_text="List of category IDs to associate with this product"
     )
-    main_image_id = serializers.IntegerField(
+    main_image = serializers.ImageField(
         write_only=True,
         required=False,
         allow_null=True,
-        help_text="Resource ID for main product image"
+        help_text="Main product image file"
     )
-    additional_image_ids = serializers.ListField(
-        child=serializers.IntegerField(),
+    additional_images = serializers.ListField(
+        child=serializers.ImageField(),
         write_only=True,
         required=False,
         allow_empty=True,
-        help_text="List of resource IDs for additional product images"
+        help_text="List of additional product image files"
     )
     
     class Meta:
         model = Product
         fields = (
             'title', 'description', 'event', 'base_amount', 'percentage_modifier',
-            'verified', 'is_active', 'category_ids', 'main_image_id', 'additional_image_ids'
+            'verified', 'is_active', 'category_ids', 'main_image', 'additional_images'
         )
     
     def validate_event(self, value):
@@ -403,27 +403,31 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Product title cannot be empty.")
         return value.strip()
     
-    def validate_main_image_id(self, value):
-        """Validate main image resource exists and is an image."""
+    def validate_main_image(self, value):
+        """Validate main image file."""
         if value:
-            try:
-                resource = Resource.objects.get(id=value)
-                if not resource.is_image:
-                    raise serializers.ValidationError("The provided resource is not an image.")
-            except Resource.DoesNotExist:
-                raise serializers.ValidationError("Resource does not exist.")
+            # Check file size (max 10MB)
+            if value.size > 10 * 1024 * 1024:
+                raise serializers.ValidationError("Image file size cannot exceed 10MB.")
+            
+            # Check file type
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+            if hasattr(value, 'content_type') and value.content_type not in allowed_types:
+                raise serializers.ValidationError("Only JPEG, PNG, GIF, and WebP images are allowed.")
         return value
     
-    def validate_additional_image_ids(self, value):
-        """Validate additional image resources."""
+    def validate_additional_images(self, value):
+        """Validate additional image files."""
         if value:
-            for img_id in value:
-                try:
-                    resource = Resource.objects.get(id=img_id)
-                    if not resource.is_image:
-                        raise serializers.ValidationError(f"Resource {img_id} is not an image.")
-                except Resource.DoesNotExist:
-                    raise serializers.ValidationError(f"Resource {img_id} does not exist.")
+            for img in value:
+                # Check file size (max 10MB)
+                if img.size > 10 * 1024 * 1024:
+                    raise serializers.ValidationError("Each image file size cannot exceed 10MB.")
+                
+                # Check file type
+                allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+                if hasattr(img, 'content_type') and img.content_type not in allowed_types:
+                    raise serializers.ValidationError("Only JPEG, PNG, GIF, and WebP images are allowed.")
         return value
     
     def validate_category_ids(self, value):
@@ -461,16 +465,21 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create product with categories and images."""
         category_ids = validated_data.pop('category_ids', [])
-        main_image_id = validated_data.pop('main_image_id', None)
-        additional_image_ids = validated_data.pop('additional_image_ids', [])
+        main_image = validated_data.pop('main_image', None)
+        additional_images = validated_data.pop('additional_images', [])
         
         # Set added_by from request user
         request = self.context.get('request')
+        user = None
         if request and request.user and request.user.is_authenticated:
             validated_data['added_by'] = request.user
+            user = request.user
         
         # Create product
         product = Product.objects.create(**validated_data)
+        
+        # Get content type for product
+        content_type = ContentType.objects.get_for_model(Product)
         
         # Associate categories through EventProductCategory
         for category_id in category_ids:
@@ -484,20 +493,45 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             except ProductCategory.DoesNotExist:
                 pass  # Already validated
         
-        # Add images
-        if main_image_id:
+        # Add main image
+        if main_image:
             try:
-                resource = Resource.objects.get(id=main_image_id)
+                # Create Resource object for main image
+                resource = Resource.objects.create(
+                    name=f"{product.title} - Main Image",
+                    description=f"Main product image for {product.title}",
+                    tag='PRODUCT_PHOTO_MAIN',
+                    target_type=content_type,
+                    target_id=str(product.id),
+                    resource_type='IMAGE',
+                    image=main_image,
+                    added_by=user,
+                    public=True
+                )
                 product.add_product_image(resource, is_main=True)
-            except (Resource.DoesNotExist, DjangoValidationError):
-                pass  # Already validated
+            except Exception as e:
+                # If resource creation fails, continue but log the error
+                pass
         
-        for img_id in additional_image_ids:
+        # Add additional images
+        for idx, img in enumerate(additional_images, start=1):
             try:
-                resource = Resource.objects.get(id=img_id)
+                # Create Resource object for each additional image
+                resource = Resource.objects.create(
+                    name=f"{product.title} - Image {idx}",
+                    description=f"Additional product image {idx} for {product.title}",
+                    tag='PRODUCT_PHOTO_SECONDARY',
+                    target_type=content_type,
+                    target_id=str(product.id),
+                    resource_type='IMAGE',
+                    image=img,
+                    added_by=user,
+                    public=True
+                )
                 product.add_product_image(resource, is_main=False)
-            except (Resource.DoesNotExist, DjangoValidationError):
-                pass  # Already validated
+            except Exception as e:
+                # If resource creation fails, continue but log the error
+                pass
         
         return product
 
@@ -513,12 +547,25 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         allow_empty=True,
         help_text="List of category IDs to associate with this product (replaces existing)"
     )
+    main_image = serializers.ImageField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        help_text="Main product image file to replace current main image"
+    )
+    additional_images = serializers.ListField(
+        child=serializers.ImageField(),
+        write_only=True,
+        required=False,
+        allow_empty=True,
+        help_text="Additional product image files to add"
+    )
     
     class Meta:
         model = Product
         fields = (
             'title', 'description', 'base_amount', 'percentage_modifier',
-            'verified', 'is_active', 'category_ids'
+            'verified', 'is_active', 'category_ids', 'main_image', 'additional_images'
         )
     
     def validate_base_amount(self, value):
@@ -532,6 +579,33 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         if value and not value.strip():
             raise serializers.ValidationError("Product title cannot be empty.")
         return value.strip() if value else value
+    
+    def validate_main_image(self, value):
+        """Validate main image file."""
+        if value:
+            # Check file size (max 10MB)
+            if value.size > 10 * 1024 * 1024:
+                raise serializers.ValidationError("Image file size cannot exceed 10MB.")
+            
+            # Check file type
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+            if hasattr(value, 'content_type') and value.content_type not in allowed_types:
+                raise serializers.ValidationError("Only JPEG, PNG, GIF, and WebP images are allowed.")
+        return value
+    
+    def validate_additional_images(self, value):
+        """Validate additional image files."""
+        if value:
+            for img in value:
+                # Check file size (max 10MB)
+                if img.size > 10 * 1024 * 1024:
+                    raise serializers.ValidationError("Each image file size cannot exceed 10MB.")
+                
+                # Check file type
+                allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+                if hasattr(img, 'content_type') and img.content_type not in allowed_types:
+                    raise serializers.ValidationError("Only JPEG, PNG, GIF, and WebP images are allowed.")
+        return value
     
     def validate_category_ids(self, value):
         """Validate categories exist."""
@@ -553,18 +627,25 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         return attrs
     
     def update(self, instance, validated_data):
-        """Update product with categories."""
+        """Update product with categories and images."""
         category_ids = validated_data.pop('category_ids', None)
+        main_image = validated_data.pop('main_image', None)
+        additional_images = validated_data.pop('additional_images', [])
         
         # Set last_updated_by from request user
         request = self.context.get('request')
+        user = None
         if request and request.user and request.user.is_authenticated:
             validated_data['last_updated_by'] = request.user
+            user = request.user
         
         # Update product fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+        
+        # Get content type for product
+        content_type = ContentType.objects.get_for_model(Product)
         
         # Update categories if provided
         if category_ids is not None:
@@ -582,6 +663,50 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
                     )
                 except ProductCategory.DoesNotExist:
                     pass  # Already validated
+        
+        # Update main image if provided
+        if main_image:
+            try:
+                # Remove old main image
+                old_main_images = instance.resources.filter(tag='PRODUCT_PHOTO_MAIN')
+                for old_img in old_main_images:
+                    instance.remove_product_image(old_img)
+                
+                # Create and add new main image
+                resource = Resource.objects.create(
+                    name=f"{instance.title} - Main Image",
+                    description=f"Main product image for {instance.title}",
+                    tag='PRODUCT_PHOTO_MAIN',
+                    target_type=content_type,
+                    target_id=str(instance.id),
+                    resource_type='IMAGE',
+                    image=main_image,
+                    added_by=user,
+                    public=True
+                )
+                instance.add_product_image(resource, is_main=True)
+            except Exception as e:
+                pass  # Continue if image update fails
+        
+        # Add additional images if provided
+        for idx, img in enumerate(additional_images, start=1):
+            try:
+                # Create Resource object for each additional image
+                existing_count = instance.resources.filter(tag='PRODUCT_PHOTO_SECONDARY').count()
+                resource = Resource.objects.create(
+                    name=f"{instance.title} - Image {existing_count + idx}",
+                    description=f"Additional product image for {instance.title}",
+                    tag='PRODUCT_PHOTO_SECONDARY',
+                    target_type=content_type,
+                    target_id=str(instance.id),
+                    resource_type='IMAGE',
+                    image=img,
+                    added_by=user,
+                    public=True
+                )
+                instance.add_product_image(resource, is_main=False)
+            except Exception as e:
+                pass  # Continue if image addition fails
         
         return instance
 

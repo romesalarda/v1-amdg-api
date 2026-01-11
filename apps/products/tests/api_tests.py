@@ -261,6 +261,99 @@ class ProductAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Product.objects.filter(title='Event Hoodie').count(), 1)
     
+    def test_create_product_with_main_image(self):
+        """Test creating product with main image upload."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        # Create a simple test image
+        from io import BytesIO
+        from PIL import Image
+        
+        image = Image.new('RGB', (100, 100), color='red')
+        image_file = BytesIO()
+        image.save(image_file, 'PNG')
+        image_file.seek(0)
+        image_file.name = 'test_image.png'
+        
+        data = {
+            'title': 'Product With Image',
+            'description': 'Test product',
+            'event': self.event.id,
+            'base_amount': '30.00',
+            'base_amount_currency': 'GBP',
+            'verified': True,
+            'is_active': False,
+            'main_image': image_file
+        }
+        response = self.client.post('/api/products/list/', data, format='multipart')
+        
+        if response.status_code != status.HTTP_201_CREATED:
+            print(f"Response data: {response.data}")
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # Title gets titlecased in Product.clean(), so look for the titlecased version
+        product = Product.objects.get(title='Product With Image')
+        
+        # Verify main image was added
+        main_images = product.resources.filter(tag='PRODUCT_PHOTO_MAIN')
+        self.assertEqual(main_images.count(), 1)
+        self.assertTrue(main_images.first().image)
+    
+    def test_create_product_with_multiple_images(self):
+        """Test creating product with main and additional images."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        # Create test images
+        from io import BytesIO
+        from PIL import Image
+        
+        # Main image
+        main_image = Image.new('RGB', (100, 100), color='red')
+        main_image_file = BytesIO()
+        main_image.save(main_image_file, 'PNG')
+        main_image_file.seek(0)
+        main_image_file.name = 'main_image.png'
+        
+        # Additional images
+        additional_image1 = Image.new('RGB', (100, 100), color='blue')
+        additional_image_file1 = BytesIO()
+        additional_image1.save(additional_image_file1, 'PNG')
+        additional_image_file1.seek(0)
+        additional_image_file1.name = 'additional_image1.png'
+        
+        additional_image2 = Image.new('RGB', (100, 100), color='green')
+        additional_image_file2 = BytesIO()
+        additional_image2.save(additional_image_file2, 'PNG')
+        additional_image_file2.seek(0)
+        additional_image_file2.name = 'additional_image2.png'
+        
+        data = {
+            'title': 'Product With Multiple Images',
+            'description': 'Test product',
+            'event': self.event.id,
+            'base_amount': '40.00',
+            'base_amount_currency': 'GBP',
+            'verified': True,
+            'is_active': False,
+            'main_image': main_image_file,
+            'additional_images': [additional_image_file1, additional_image_file2]
+        }
+        response = self.client.post('/api/products/list/', data, format='multipart')
+        
+        if response.status_code != status.HTTP_201_CREATED:
+            print(f"Response data: {response.data}")
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # Title gets titlecased in Product.clean()
+        product = Product.objects.get(title='Product With Multiple Images')
+        
+        # Verify images were added
+        main_images = product.resources.filter(tag='PRODUCT_PHOTO_MAIN')
+        additional_images = product.resources.filter(tag='PRODUCT_PHOTO_SECONDARY')
+        
+        self.assertEqual(main_images.count(), 1)
+        self.assertEqual(additional_images.count(), 2)
+    
     def test_create_product_as_non_admin(self):
         """Non-admin users should not be able to create products."""
         self.client.force_authenticate(user=self.other_user)
@@ -332,6 +425,122 @@ class ProductAPITestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(response.data['results']), 1)
+    
+    def test_add_image_to_product(self):
+        """Test adding image to existing product via add_image action."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        # Create a test image
+        from io import BytesIO
+        from PIL import Image
+        
+        image = Image.new('RGB', (100, 100), color='yellow')
+        image_file = BytesIO()
+        image.save(image_file, 'PNG')
+        image_file.seek(0)
+        image_file.name = 'add_test_image.png'
+        
+        data = {
+            'image': image_file,
+            'is_main': 'false'
+        }
+        response = self.client.post(
+            f'/api/products/list/{self.product.product_id}/add-image/',
+            data,
+            format='multipart'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('resource_id', response.data)
+        
+        # Verify image was added
+        self.product.refresh_from_db()
+        images = self.product.resources.filter(tag__in=['PRODUCT_PHOTO_MAIN', 'PRODUCT_PHOTO_SECONDARY'])
+        self.assertGreater(images.count(), 0)
+    
+    def test_add_main_image_replaces_existing(self):
+        """Test that adding main image replaces existing main image."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        from io import BytesIO
+        from PIL import Image
+        
+        # Add first main image
+        image1 = Image.new('RGB', (100, 100), color='red')
+        image_file1 = BytesIO()
+        image1.save(image_file1, 'PNG')
+        image_file1.seek(0)
+        image_file1.name = 'main_image1.png'
+        
+        self.client.post(
+            f'/api/products/list/{self.product.product_id}/add-image/',
+            {'image': image_file1, 'is_main': 'true'},
+            format='multipart'
+        )
+        
+        # Add second main image
+        image2 = Image.new('RGB', (100, 100), color='blue')
+        image_file2 = BytesIO()
+        image2.save(image_file2, 'PNG')
+        image_file2.seek(0)
+        image_file2.name = 'main_image2.png'
+        
+        response = self.client.post(
+            f'/api/products/list/{self.product.product_id}/add-image/',
+            {'image': image_file2, 'is_main': 'true'},
+            format='multipart'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify only one main image exists
+        self.product.refresh_from_db()
+        main_images = self.product.resources.filter(tag='PRODUCT_PHOTO_MAIN')
+        self.assertEqual(main_images.count(), 1)
+    
+    def test_add_image_without_file_fails(self):
+        """Test that add_image requires an image file."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        response = self.client.post(
+            f'/api/products/list/{self.product.product_id}/add-image/',
+            {'is_main': 'false'},
+            format='multipart'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('image', response.data)
+    
+    def test_update_product_with_new_main_image(self):
+        """Test updating product with new main image."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        from io import BytesIO
+        from PIL import Image
+        
+        image = Image.new('RGB', (100, 100), color='purple')
+        image_file = BytesIO()
+        image.save(image_file, 'PNG')
+        image_file.seek(0)
+        image_file.name = 'updated_main_image.png'
+        
+        data = {
+            'title': 'Updated Product Title',
+            'main_image': image_file
+        }
+        response = self.client.patch(
+            f'/api/products/list/{self.product.product_id}/',
+            data,
+            format='multipart'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.title, 'Updated Product Title')
+        
+        # Verify main image was updated
+        main_images = self.product.resources.filter(tag='PRODUCT_PHOTO_MAIN')
+        self.assertGreater(main_images.count(), 0)
 
 
 class ProductVariantAPITestCase(APITestCase):
@@ -748,7 +957,7 @@ class OrderAPITestCase(APITestCase):
             'quantity': 3
         }
         response = self.client.post(
-            f'/api/products/orders/{self.order.order_id}/add_item/',
+            f'/api/products/orders/{self.order.order_id}/add-item/',
             data
         )
         
