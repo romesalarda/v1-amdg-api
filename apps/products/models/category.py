@@ -20,11 +20,12 @@ class ProductCategory(models.Model):
     def __repr__(self):
         return f"<ProductCategory(name={self.name})>"
     
-class EventProductCategory(models.Model):
+class EventProductCategory(models.Model): # through model linking events and product categories
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='product_categories', verbose_name=_("Event"))
     category = models.ForeignKey(ProductCategory, on_delete=models.CASCADE, related_name='event_categories', verbose_name=_("Product Category"))
+    product = models.ForeignKey('products.Product', on_delete=models.CASCADE, related_name='event_product_categories', verbose_name=_("Product"), null=True, blank=True)
 
     added_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Added At"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated At"))
@@ -32,7 +33,7 @@ class EventProductCategory(models.Model):
     class Meta:
         verbose_name = _("Event Product Category")
         verbose_name_plural = _("Event Product Categories")
-        unique_together = ('event', 'category')
+        unique_together = ('event', 'category', 'product')
         ordering = ['-added_at']
 
     def __str__(self):

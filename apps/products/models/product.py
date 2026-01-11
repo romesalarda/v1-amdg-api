@@ -61,7 +61,7 @@ User process:
 5. Upon successful payment, the product is marked as purchased for the user and a payment record is created.
 '''
 
-class Product(ProductMetaClass): # discounts, resources and availability all apply #TODO: admin register
+class Product(ProductMetaClass): # discounts, resources and availability all apply
     '''
     Product model representing a purchasable item within an event.
     '''
@@ -75,6 +75,13 @@ class Product(ProductMetaClass): # discounts, resources and availability all app
         'events.Event',
         on_delete=models.CASCADE,
         related_name='products'
+    )
+    
+    categories = models.ManyToManyField(
+        'products.ProductCategory',
+        through='products.EventProductCategory',
+        related_name='category_products',
+        blank=True
     )
     class Meta:
         ordering = ['-added_at']
@@ -134,7 +141,7 @@ class ProductSizeChoices(models.TextChoices):
     ONE_SIZE = 'OS', 'One Size'
     NOT_APPLICABLE = 'NA', 'Not Applicable'            
 
-class ProductVariant(ProductMetaClass): # same as product but different size/color/stock #TODO: admin register
+class ProductVariant(ProductMetaClass): # same as product but different size/color/stock
     '''
     ProductVariant model to handle different variants of a product, such as size and color.
     This is what the user actually purchases as opposed to the base Product.

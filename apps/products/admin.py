@@ -2,7 +2,69 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.db.models import Sum, Count
-from .models import Product, ProductVariant, Order, OrderItem
+from .models import Product, ProductVariant, Order, OrderItem, ProductCategory, EventProductCategory
+
+
+class EventProductCategoryInline(admin.TabularInline):
+    model = EventProductCategory
+    extra = 1
+    autocomplete_fields = ('event', 'category')
+    fields = ('event', 'category', 'added_at')
+    readonly_fields = ('added_at',)
+
+
+@admin.register(ProductCategory)
+class ProductCategoryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'get_product_count', 'get_event_count', 'created_at', 'updated_at')
+    search_fields = ('name', 'description')
+    readonly_fields = ('created_at', 'updated_at')
+    inlines = [EventProductCategoryInline]
+    
+    fieldsets = (
+        ('Category Information', {
+            'fields': ('name', 'description')
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_product_count(self, obj):
+        return obj.products.count()
+    get_product_count.short_description = 'Products'
+    
+    def get_event_count(self, obj):
+        return obj.event_categories.values('event').distinct().count()
+    get_event_count.short_description = 'Events'
+    
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.prefetch_related('products', 'event_categories')
+
+
+@admin.register(EventProductCategory)
+class EventProductCategoryAdmin(admin.ModelAdmin):
+    list_display = ('event', 'category', 'get_product_count', 'added_at')
+    list_filter = ('added_at', 'event')
+    search_fields = ('event__title', 'event__display_code', 'category__name')
+    autocomplete_fields = ('event', 'category')
+    readonly_fields = ('id', 'added_at', 'updated_at')
+    list_select_related = ('event', 'category')
+    
+    fieldsets = (
+        ('Association', {
+            'fields': ('id', 'event', 'category')
+        }),
+        ('Metadata', {
+            'fields': ('added_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_product_count(self, obj):
+        return obj.category.products.filter(event=obj.event).count()
+    get_product_count.short_description = 'Products in Event'
 
 
 class ProductVariantInline(admin.TabularInline):
