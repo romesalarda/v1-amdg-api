@@ -163,7 +163,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             
     def latest_authorisation(self):
         return (
-            self.authorisations
+            self.authorizations
             .order_by('-reviewed_at')
             .first()
         )
@@ -196,6 +196,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
 
     @property
     def can_participants_register(self):
+        print(self.status, self.is_approved, self.max_capacity_reached)
         return (
             self.status == EventStatusChoices.OPEN and 
             self.is_approved and 
@@ -203,7 +204,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             )
 
     @property
-    def can_event_be_published(self):
+    def can_event_be_published(self) -> bool:
         return self.is_approved and self.status in [
             EventStatusChoices.DRAFTING,
             EventStatusChoices.POSTPONED,
@@ -211,14 +212,55 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         ]
     
     @property
-    def max_capacity_reached(self):
+    def max_capacity_reached(self) -> bool:
+        """
+        Check if maximum capacity has been reached, considering both
+        confirmed attendees and pending booking intents.
+        """
         if self.maximum_attendance is None:
             return False
-        return self.attendees.count() >= self.maximum_attendance
+        return self.available_capacity <= 0
     
     @property
-    def number_of_attendees(self):
+    def number_of_attendees(self) -> int:
         return self.attendees.count()
+    
+    @property
+    def pending_intent_capacity(self) -> int:
+        """
+        Calculate the number of spots currently reserved by pending booking intents.
+        This prevents race conditions when multiple users are booking at capacity.
+        """
+        from apps.bookings.models import BookingIntent, BookingIntentStatusChoices
+        from django.db.models import Sum
+        from django.utils import timezone
+        
+        pending_intents = BookingIntent.objects.filter(
+            event=self,
+            status=BookingIntentStatusChoices.PENDING,
+            expires_at__gt=timezone.now()
+        )
+        
+        reserved = pending_intents.aggregate(
+            total=Sum('intended_ticket_count')
+        )['total'] or 0
+        
+        return reserved
+    
+    @property
+    def available_capacity(self) -> int:
+        """
+        Calculate available capacity considering both confirmed attendees
+        and pending booking intents.
+        
+        Returns:
+            int: Number of spots available for new bookings
+        """
+        if self.maximum_attendance is None:
+            return float('inf')  # Unlimited capacity
+        
+        used_capacity = self.number_of_attendees + self.pending_intent_capacity
+        return max(0, self.maximum_attendance - used_capacity)
 
 class EventSettings(models.Model):
     '''

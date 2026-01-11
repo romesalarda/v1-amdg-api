@@ -21,11 +21,102 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.bookings.models import (
-    Booking, BookingPackage, BookingPackageRule,
+    Booking, BookingIntent, BookingIntentStatusChoices,
+    BookingPackage, BookingPackageRule,
     TicketType, Ticket, TicketScopeChoices, TicketStatusChoices,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
 from apps.common.models import VerificationStatus
+
+
+class BookingIntentFilterSet(filters.FilterSet):
+    """
+    Advanced filterset for BookingIntent model.
+    
+    Supports filtering by:
+    - Status (pending, completed, expired, cancelled)
+    - Event
+    - Made by user
+    - Date ranges (created, expires)
+    - Active status
+    
+    Example queries:
+        ?status=PENDING
+        ?event=123
+        ?is_active=true
+        ?created_after=2025-01-01
+    """
+    
+    status = filters.ChoiceFilter(
+        field_name='status',
+        choices=BookingIntentStatusChoices.choices,
+        help_text='Filter by intent status'
+    )
+    
+    event = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text='Filter by event UUID'
+    )
+    
+    made_by = filters.NumberFilter(
+        field_name='made_by__id',
+        help_text='Filter by user ID who made the intent'
+    )
+    
+    created_after = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='gte',
+        help_text='Filter intents created on or after this datetime'
+    )
+    
+    created_before = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='lte',
+        help_text='Filter intents created on or before this datetime'
+    )
+    
+    expires_after = filters.DateTimeFilter(
+        field_name='expires_at',
+        lookup_expr='gte',
+        help_text='Filter intents expiring on or after this datetime'
+    )
+    
+    expires_before = filters.DateTimeFilter(
+        field_name='expires_at',
+        lookup_expr='lte',
+        help_text='Filter intents expiring on or before this datetime'
+    )
+    
+    is_active = filters.BooleanFilter(
+        method='filter_is_active',
+        help_text='Filter by active status (pending and not expired)'
+    )
+    
+    class Meta:
+        model = BookingIntent
+        fields = [
+            'status', 'event', 'made_by', 'intended_ticket_count',
+            'created_after', 'created_before', 'expires_after', 'expires_before',
+            'is_active'
+        ]
+    
+    def filter_is_active(self, queryset, name, value):
+        """Filter intents by active status."""
+        if value:
+            # Active: PENDING status and not expired
+            return queryset.filter(
+                status=BookingIntentStatusChoices.PENDING,
+                expires_at__gt=timezone.now()
+            )
+        else:
+            # Inactive: any other status or expired
+            return queryset.filter(
+                Q(status__in=[
+                    BookingIntentStatusChoices.COMPLETED,
+                    BookingIntentStatusChoices.EXPIRED,
+                    BookingIntentStatusChoices.CANCELLED
+                ]) | Q(expires_at__lte=timezone.now())
+            )
 
 
 class BookingFilterSet(filters.FilterSet):

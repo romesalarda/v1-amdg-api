@@ -3,12 +3,19 @@ from django.contrib.auth import get_user_model
 from apps.payments.mixins import PayableModel, PaymentMixin
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-
+from django.conf import settings
 from apps.bookings.models.ticket import TicketType
-
+from django.utils import timezone
 import uuid
 
-from apps.payments.models.discounts import DiscountRuleTypeChoices
+from apps.common.models import SoftDeleteModel
+
+class BookingIntentStatusChoices(models.TextChoices):
+    """Status choices for booking intents."""
+    PENDING = 'PENDING', _('Pending')
+    COMPLETED = 'COMPLETED', _('Completed')
+    EXPIRED = 'EXPIRED', _('Expired')
+    CANCELLED = 'CANCELLED', _('Cancelled')
 
 class BookingPackage(PayableModel):
     """
@@ -105,6 +112,158 @@ class BookingPackage(PayableModel):
         return self.package_products.select_related('product').all()
     
 # system flow Create attendee(s) -> create booking -> create tickets linked to booking and attendees
+
+class BookingIntent(SoftDeleteModel): # intents delete after expiry
+    """
+    Model representing a booking intent made by a user for an event.
+    Represents a moment in time when a user has initiated a booking process.
+    This is distinct from a confirmed Booking which occurs after payment.
+    
+    Booking intents reserve capacity to prevent race conditions during checkout.
+    They expire after 20 minutes and are soft-deleted, then hard-deleted after
+    a configurable number of days.
+    """
+    booking_intent_id = models.UUIDField(primary_key=True, editable=False, default=uuid.uuid4)
+    event = models.ForeignKey(
+        'events.Event',
+        on_delete=models.CASCADE,
+        related_name='booking_intents'
+    )
+    intended_ticket_count = models.PositiveIntegerField(default=1)
+    
+    status = models.CharField(
+        max_length=20,
+        choices=BookingIntentStatusChoices.choices,
+        default=BookingIntentStatusChoices.PENDING
+    )
+    
+    made_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='made_booking_intents'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    complete_delete_at = models.DateTimeField(null=True, blank=True)
+        
+    def __str__(self):
+        return f"BookingIntent {self.booking_intent_id} by {self.made_by}"
+    
+    def __repr__(self):
+        return f"<BookingIntent id={self.id} reference={self.booking_intent_id} user={self.made_by}>"
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Booking Intent'
+        verbose_name_plural = 'Booking Intents'
+
+    def save(self, *args, **kwargs):
+        # Set expiry times on creation
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timezone.timedelta(minutes=20)
+        if not self.complete_delete_at:
+            self.complete_delete_at = self.expires_at + timezone.timedelta(days=settings.FULL_DELETE_BOOKING_INTENTS)
+        
+        self.clean()
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        if self.intended_ticket_count < 1:
+            raise ValidationError({
+                'intended_ticket_count': 'Intended ticket count must be at least 1.'
+            })
+        
+        # Only validate capacity on creation (when status is PENDING)
+        if self.status == BookingIntentStatusChoices.PENDING and not self._state.adding:
+            # Check if we're creating a new intent
+            pass
+        
+        if self._state.adding and self.status == BookingIntentStatusChoices.PENDING:
+            # Check capacity on creation
+            if not self._can_reserve_capacity():
+                raise ValidationError(
+                    'Cannot create booking intent: insufficient capacity available.'
+                )
+
+    @property
+    def is_expired(self) -> bool:
+        """Check if the booking intent has expired."""
+        if self.status in [BookingIntentStatusChoices.EXPIRED, BookingIntentStatusChoices.CANCELLED, BookingIntentStatusChoices.COMPLETED]:
+            return True
+        if self.expires_at and timezone.now() > self.expires_at:
+            return True
+        if self.deleted_at:
+            return True
+        return False
+    
+    @property
+    def is_active(self) -> bool:
+        """Check if the booking intent is active (can be used)."""
+        return self.status == BookingIntentStatusChoices.PENDING and not self.is_expired
+    
+    def _can_reserve_capacity(self) -> bool:
+        """Check if there is capacity available for this intent."""
+        # Count pending intents for this event (excluding this one)
+        from django.db.models import Sum
+        pending_intents = BookingIntent.objects.filter(
+            event=self.event,
+            status=BookingIntentStatusChoices.PENDING,
+            expires_at__gt=timezone.now()
+        ).exclude(booking_intent_id=self.booking_intent_id)
+        
+        reserved_by_intents = pending_intents.aggregate(
+            total=Sum('intended_ticket_count')
+        )['total'] or 0
+
+        if self.event.maximum_attendance is None:
+            return True
+        available_capacity = self.event.maximum_attendance - self.event.number_of_attendees - reserved_by_intents
+        return available_capacity >= self.intended_ticket_count
+    
+    def can_create_booking(self) -> bool:
+        """
+        Determine if a booking can be created from this intent.
+        Booking can be created if the intent is active and event allows registration.
+        """
+        if not self.is_active:
+            return False
+        
+        if not self.event.can_participants_register:
+            return False
+        
+        # Final capacity check
+        if self.event.maximum_attendance is not None:
+            if self.event.available_capacity < self.intended_ticket_count:
+                return False
+        
+        return True
+    
+    def mark_expired(self, save=True):
+        """Mark this intent as expired."""
+        if self.status == BookingIntentStatusChoices.PENDING:
+            self.status = BookingIntentStatusChoices.EXPIRED
+            if save:
+                self.save(update_fields=['status'])
+    
+    def mark_completed(self, save=True):
+        """Mark this intent as completed (booking created)."""
+        if self.status == BookingIntentStatusChoices.PENDING:
+            self.status = BookingIntentStatusChoices.COMPLETED
+            if save:
+                self.save(update_fields=['status'])
+    
+    def cancel(self, save=True):
+        """Cancel this intent, releasing the reserved capacity."""
+        if self.status == BookingIntentStatusChoices.PENDING:
+            self.status = BookingIntentStatusChoices.CANCELLED
+            if save:
+                self.save(update_fields=['status'])
+    
+
     
 class Booking(models.Model, PaymentMixin):
     """

@@ -1,7 +1,8 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from apps.bookings.models import (
-    Booking, BookingPackage, BookingPackageRule,
+    Booking, BookingIntent, BookingIntentStatusChoices,
+    BookingPackage, BookingPackageRule,
     TicketType, Ticket,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
     PackageProduct
@@ -142,6 +143,77 @@ class BookingAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related(
             'event', 'made_by'
         ).prefetch_related('attendees')
+
+
+@admin.register(BookingIntent)
+class BookingIntentAdmin(admin.ModelAdmin):
+    list_display = (
+        'booking_intent_id', 'event', 'made_by', 'intended_ticket_count',
+        'status', 'is_active_status', 'created_at', 'expires_at'
+    )
+    list_filter = ('status', 'event', 'created_at', 'expires_at')
+    search_fields = (
+        'booking_intent_id', 'made_by__username', 'made_by__email',
+        'event__title', 'event__display_code'
+    )
+    readonly_fields = (
+        'booking_intent_id', 'created_at', 'expires_at', 'complete_delete_at',
+        'deleted_at', 'is_expired', 'is_active'
+    )
+    
+    fieldsets = (
+        ('Intent Information', {
+            'fields': ('booking_intent_id', 'event', 'made_by', 'intended_ticket_count')
+        }),
+        ('Status', {
+            'fields': ('status', 'is_expired', 'is_active')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'expires_at', 'complete_delete_at', 'deleted_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['mark_as_expired', 'mark_as_cancelled', 'soft_delete_intents']
+    
+    def is_active_status(self, obj):
+        """Display active status with color indicator."""
+        if obj.is_active:
+            return format_html(
+                '<span style="color: green; font-weight: bold;">✓ Active</span>'
+            )
+        return format_html(
+            '<span style="color: red;">✗ Inactive</span>'
+        )
+    is_active_status.short_description = 'Active'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('event', 'made_by')
+    
+    @admin.action(description='Mark selected intents as expired')
+    def mark_as_expired(self, request, queryset):
+        """Admin action to mark intents as expired."""
+        count = 0
+        for intent in queryset.filter(status=BookingIntentStatusChoices.PENDING):
+            intent.mark_expired(save=True)
+            count += 1
+        self.message_user(request, f'{count} intent(s) marked as expired.')
+    
+    @admin.action(description='Cancel selected intents')
+    def mark_as_cancelled(self, request, queryset):
+        """Admin action to cancel intents."""
+        count = 0
+        for intent in queryset.filter(status=BookingIntentStatusChoices.PENDING):
+            intent.cancel(save=True)
+            count += 1
+        self.message_user(request, f'{count} intent(s) cancelled.')
+    
+    @admin.action(description='Soft delete selected intents')
+    def soft_delete_intents(self, request, queryset):
+        """Admin action to soft delete intents."""
+        from django.utils import timezone
+        count = queryset.filter(deleted_at__isnull=True).update(deleted_at=timezone.now())
+        self.message_user(request, f'{count} intent(s) soft deleted.')
 
 
 class AttendeeAlternativeSigninInline(admin.TabularInline):

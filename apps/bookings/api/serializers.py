@@ -29,10 +29,12 @@ from typing import Dict, Any, Optional
 import pytz
 
 from apps.bookings.models import (
-    Booking, BookingPackage, BookingPackageRule, PackageRuleTypeChoices,
+    Booking, BookingIntent, BookingIntentStatusChoices,
+    BookingPackage, BookingPackageRule, PackageRuleTypeChoices,
     TicketType, Ticket, TicketScopeChoices, TicketStatusChoices,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
+from apps.events.models import Event
 from apps.common.models import VerificationStatus
 
 User = get_user_model()
@@ -76,6 +78,212 @@ class EventTimezoneField(serializers.DateTimeField):
             value = localize_datetime_to_event_timezone(value, event)
         
         return super().to_representation(value)
+
+
+# ============================================================================
+# BOOKING INTENT SERIALIZERS
+# ============================================================================
+
+class BookingIntentListSerializer(serializers.ModelSerializer):
+    """List serializer for BookingIntent with HATEOAS links."""
+    
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.title', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    made_by_name = serializers.CharField(source='made_by.username', read_only=True, allow_null=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    is_active = serializers.BooleanField(read_only=True)
+    created_at = EventTimezoneField(read_only=True)
+    expires_at = EventTimezoneField(read_only=True)
+    
+    class Meta:
+        model = BookingIntent
+        fields = [
+            'booking_intent_id', 'event', 'event_name', 'intended_ticket_count',
+            'status', 'status_display', 'made_by', 'made_by_name',
+            'created_at', 'expires_at', 'is_expired', 'is_active', '_links'
+        ]
+        read_only_fields = [
+            'booking_intent_id', 'status', 'made_by', 'created_at',
+            'expires_at', 'is_expired', 'is_active'
+        ]
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+            'made_by': {'type': 'string', 'format': 'uri'},
+            'cancel': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj):
+        """Generate HATEOAS links for the booking intent."""
+        request = self.context.get('request')
+        if not request:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f'/api/bookings/intents/{obj.booking_intent_id}/'
+            ),
+            'event': request.build_absolute_uri(
+                f'/api/events/{obj.event.event_id}/'
+            ),
+        }
+        
+        if obj.made_by:
+            links['made_by'] = request.build_absolute_uri(
+                f'/api/users/{obj.made_by.id}/'
+            )
+        
+        # Add cancel link if intent is still active
+        if obj.is_active:
+            links['cancel'] = request.build_absolute_uri(
+                f'/api/bookings/intents/{obj.booking_intent_id}/cancel/'
+            )
+        
+        return links
+
+
+class BookingIntentDetailSerializer(BookingIntentListSerializer):
+    """Detailed serializer for BookingIntent with full information."""
+    
+    complete_delete_at = EventTimezoneField(read_only=True)
+    can_create_booking = serializers.SerializerMethodField()
+    
+    class Meta(BookingIntentListSerializer.Meta):
+        fields = BookingIntentListSerializer.Meta.fields + ['complete_delete_at', 'can_create_booking']
+    
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_can_create_booking(self, obj):
+        """Check if a booking can be created from this intent."""
+        return obj.can_create_booking()
+
+
+class BookingIntentCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for BookingIntent with validation."""
+    
+    event = serializers.SlugRelatedField(
+        slug_field='event_id',
+        queryset=Event.objects.all(),
+        write_only=True
+    )
+    is_active = serializers.BooleanField(read_only=True)
+    event_id = serializers.CharField(source='event.event_id', read_only=True)
+    
+    class Meta:
+        model = BookingIntent
+        fields = ['booking_intent_id', 'event', 'event_id', 'intended_ticket_count', 'status', 'is_active']
+    
+    def validate_event(self, value):
+        """Validate the event exists and is open for registration."""
+        if value.max_capacity_reached:
+            raise serializers.ValidationError(
+                "This event has reached its maximum capacity."
+            )
+        if not value.can_participants_register:
+            raise serializers.ValidationError(
+                "This event is not currently open for registration."
+            )
+        return value
+    
+    def validate_intended_ticket_count(self, value):
+        """Validate ticket count is positive."""
+        if value < 1:
+            raise serializers.ValidationError(
+                "Intended ticket count must be at least 1."
+            )
+        if value > 20:  # Reasonable max to prevent abuse
+            raise serializers.ValidationError(
+                "Cannot create intent for more than 20 tickets at once."
+            )
+        return value
+    
+    def validate(self, attrs):
+        """Validate overall capacity availability."""
+        event = attrs.get('event')
+        intended_count = attrs.get('intended_ticket_count', 1)
+        
+        # Check if capacity is available (considering pending intents)
+        from django.db.models import Sum
+        pending_intents = BookingIntent.objects.filter(
+            event=event,
+            status=BookingIntentStatusChoices.PENDING,
+            expires_at__gt=timezone.now()
+        )
+        
+        reserved_by_intents = pending_intents.aggregate(
+            total=Sum('intended_ticket_count')
+        )['total'] or 0
+        
+        if event.maximum_attendance is not None:
+            available_capacity = event.maximum_attendance - event.number_of_attendees - reserved_by_intents
+        
+            if available_capacity < intended_count:
+                raise serializers.ValidationError({
+                    'intended_ticket_count': f'Insufficient capacity. Only {available_capacity} spots available.'
+                })
+        
+        return attrs
+    
+    def create(self, validated_data):
+        """Create a booking intent with the authenticated user."""
+        validated_data['made_by'] = self.context['request'].user
+        validated_data['status'] = BookingIntentStatusChoices.PENDING
+        return super().create(validated_data)
+
+
+class BookingIntentUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for BookingIntent (limited fields)."""
+    
+    class Meta:
+        model = BookingIntent
+        fields = ['intended_ticket_count']
+    
+    def validate(self, attrs):
+        """Only allow updates to pending intents."""
+        if self.instance.status != BookingIntentStatusChoices.PENDING:
+            raise serializers.ValidationError(
+                "Cannot update a non-pending booking intent."
+            )
+        
+        if self.instance.is_expired:
+            raise serializers.ValidationError(
+                "Cannot update an expired booking intent."
+            )
+        
+        # If updating ticket count, revalidate capacity
+        if 'intended_ticket_count' in attrs:
+            new_count = attrs['intended_ticket_count']
+            old_count = self.instance.intended_ticket_count
+            difference = new_count - old_count
+            
+            if difference > 0:
+                # Need more capacity
+                from django.db.models import Sum
+                pending_intents = BookingIntent.objects.filter(
+                    event=self.instance.event,
+                    status=BookingIntentStatusChoices.PENDING,
+                    expires_at__gt=timezone.now()
+                ).exclude(booking_intent_id=self.instance.booking_intent_id)
+                
+                reserved_by_intents = pending_intents.aggregate(
+                    total=Sum('intended_ticket_count')
+                )['total'] or 0
+                if self.instance.event.maximum_attendance is not None:
+                    available_capacity = (
+                        self.instance.event.maximum_attendance - 
+                        self.instance.event.number_of_attendees - 
+                        reserved_by_intents
+                    )
+                
+                    if available_capacity < new_count:
+                        raise serializers.ValidationError({
+                            'intended_ticket_count': f'Insufficient capacity. Only {available_capacity} spots available.'
+                        })
+        
+        return attrs
 
 
 # ============================================================================

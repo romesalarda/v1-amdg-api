@@ -16,11 +16,12 @@ from djmoney.money import Money
 import uuid
 
 from apps.bookings.models import (
-    Booking, BookingPackage, BookingPackageRule, PackageRuleTypeChoices,
+    Booking, BookingIntent, BookingIntentStatusChoices,
+    BookingPackage, BookingPackageRule, PackageRuleTypeChoices,
     TicketType, Ticket, TicketScopeChoices, TicketStatusChoices,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
-from apps.events.models import Event, EventType, EventStatusChoices, EventRole, EventRoleAssignment, EventRoleCategoryChoices
+from apps.events.models import Event, EventType, EventStatusChoices, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventAuthorization, EventAuthorizationStatusChoices
 from apps.organisations.models import Organisation
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.payments.models import PaymentMethod, PaymentMethodTypeChoices, Payment, PaymentStatusChoices
@@ -62,9 +63,11 @@ class BookingsAPITestCase(APITestCase):
             title='Test Organisation',
             created_by=self.admin_user
         )
+
+        
         
         # Create event
-        event_type = EventType.objects.create(
+        self.event_type = EventType.objects.create(
             title='Youth Camp',
             code='YCAMP',
             created_by=self.admin_user
@@ -74,12 +77,19 @@ class BookingsAPITestCase(APITestCase):
             display_code='SC2026',
             display_identifier='SC2026YCAMP001',
             created_by=self.admin_user,
-            event_type=event_type,
+            event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=37),
-            status=EventStatusChoices.PUBLISHED,
+            status=EventStatusChoices.OPEN,
             organisation=self.organisation
         )
+
+        self.organisational_authorization = EventAuthorization.objects.create(
+            event=self.event,
+            reviewed_by=self.admin_user,
+            status=EventAuthorizationStatusChoices.APPROVED
+        )
+
         
         # Create administrative role for regular user
         admin_role, _ = EventRole.objects.get_or_create(
@@ -910,3 +920,418 @@ class SerializationTests(BookingsAPITestCase):
         self.assertIn('booked_at', response.data)
         # Should have timezone info
         self.assertIsNotNone(response.data['booked_at'])
+
+
+# ============================================================================
+# BOOKING INTENT ENDPOINT TESTS
+# ============================================================================
+
+class BookingIntentEndpointTests(BookingsAPITestCase):
+    """Test booking intent endpoints."""
+
+    def setUp(self):
+        super().setUp()
+        # Create additional users
+        self.event.status = EventStatusChoices.OPEN
+        self.event.save()
+    
+    def test_list_booking_intents_unauthenticated(self):
+        """Unauthenticated users cannot list booking intents."""
+        response = self.client.get('/api/bookings/intents/')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+    
+    def test_list_booking_intents_as_user(self):
+        """Users can list their own booking intents."""
+        # Create intent for regular user
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get('/api/bookings/intents/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(str(response.data['results'][0]['booking_intent_id']), str(intent.booking_intent_id))
+    
+    def test_list_booking_intents_user_only_sees_own(self):
+        """Users only see their own booking intents."""
+        # Create intent for regular user
+        BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        # Create intent for other user
+        BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=1,
+            made_by=self.other_user
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get('/api/bookings/intents/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+    
+    def test_list_booking_intents_as_admin_sees_all(self):
+        """Admin users can see all booking intents."""
+        BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=1,
+            made_by=self.other_user
+        )
+        
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/bookings/intents/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 2)
+    
+    def test_retrieve_booking_intent_detail(self):
+        """Test retrieving booking intent details."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(f'/api/bookings/intents/{intent.booking_intent_id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(response.data['booking_intent_id']), str(intent.booking_intent_id))
+        self.assertEqual(response.data['intended_ticket_count'], 2)
+        self.assertIn('status', response.data)
+        self.assertIn('is_expired', response.data)
+        self.assertIn('is_active', response.data)
+    
+    def test_create_booking_intent(self):
+        """Test creating a new booking intent."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        data = {
+            'event': self.event.event_id,
+            'intended_ticket_count': 3
+        }
+        
+        response = self.client.post('/api/bookings/intents/', data)
+        print(response.data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['intended_ticket_count'], 3)
+        self.assertEqual(response.data['status'], BookingIntentStatusChoices.PENDING)
+        self.assertTrue(response.data['is_active'])
+        
+        # Verify it was created in DB
+        intent = BookingIntent.objects.get(booking_intent_id=response.data['booking_intent_id'])
+        self.assertEqual(intent.made_by, self.regular_user)
+    
+    def test_create_booking_intent_insufficient_capacity(self):
+        """Test creating intent when capacity is insufficient."""
+        # Set event to nearly full
+        self.event.maximum_attendance = 5
+        self.event.save()
+        
+        # Create attendees to use up capacity
+        from apps.attendee.models import Attendee
+        for i in range(4):
+            Attendee.objects.create(
+                first_name=f'Test{i}',
+                last_name='User',
+                email=f'test{i}@test.com',
+                event=self.event,
+                relationship_to_user=AttendeeRelationship.SELF,
+                user=self.regular_user,
+                defined_by=self.regular_user,
+                date_of_birth=date(1990, 1, 1),
+            )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        
+        data = {
+            'event': self.event.event_id,
+            'intended_ticket_count': 3  # Would exceed capacity
+        }
+        
+        response = self.client.post('/api/bookings/intents/', data)
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('This event has reached its maximum capacity.', response.data)
+    
+    def test_create_booking_intent_considers_existing_intents(self):
+        """Test that capacity check considers existing pending intents."""
+        self.event.maximum_attendance = 10
+        self.event.save()
+        
+        # Create a pending intent reserving 5 spots
+        BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=5,
+            made_by=self.other_user
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        
+        # Try to create intent for 6 spots (would exceed capacity)
+        data = {
+            'event': self.event.event_id,
+            'intended_ticket_count': 6
+        }
+        
+        response = self.client.post('/api/bookings/intents/', data)
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    
+    def test_create_booking_intent_max_ticket_limit(self):
+        """Test that cannot create intent for more than 20 tickets."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        data = {
+            'event': self.event.event_id,
+            'intended_ticket_count': 25
+        }
+        
+        response = self.client.post('/api/bookings/intents/', data)
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('intended_ticket_count', response.data)
+    
+    def test_update_booking_intent(self):
+        """Test updating a pending booking intent."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        
+        data = {'intended_ticket_count': 3}
+        response = self.client.patch(f'/api/bookings/intents/{intent.booking_intent_id}/', data)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['intended_ticket_count'], 3)
+        
+        intent.refresh_from_db()
+        self.assertEqual(intent.intended_ticket_count, 3)
+    
+    def test_update_expired_intent_fails(self):
+        """Test that cannot update an expired intent."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        intent.mark_expired(save=True)
+        
+        self.client.force_authenticate(user=self.regular_user)
+        
+        data = {'intended_ticket_count': 3}
+        response = self.client.patch(f'/api/bookings/intents/{intent.booking_intent_id}/', data)
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    
+    def test_cancel_booking_intent(self):
+        """Test cancelling a pending booking intent."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.post(f'/api/bookings/intents/{intent.booking_intent_id}/cancel/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], BookingIntentStatusChoices.CANCELLED)
+        
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, BookingIntentStatusChoices.CANCELLED)
+    
+    def test_cancel_already_cancelled_intent_fails(self):
+        """Test that cannot cancel an already cancelled intent."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        intent.cancel(save=True)
+        
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.post(f'/api/bookings/intents/{intent.booking_intent_id}/cancel/')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    
+    def test_other_user_cannot_access_intent(self):
+        """Test that other users cannot access someone else's intent."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        self.client.force_authenticate(user=self.other_user)
+        response = self.client.get(f'/api/bookings/intents/{intent.booking_intent_id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+    def test_admin_can_access_any_intent(self):
+        """Test that admin can access any user's intent."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(f'/api/bookings/intents/{intent.booking_intent_id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    
+    def test_filter_intents_by_status(self):
+        """Test filtering intents by status."""
+        BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user,
+            status=BookingIntentStatusChoices.PENDING
+        )
+        expired_intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=1,
+            made_by=self.regular_user,
+            status=BookingIntentStatusChoices.PENDING
+        )
+        expired_intent.mark_expired(save=True)
+        
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get('/api/bookings/intents/?status=PENDING')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+    
+    def test_filter_intents_by_event(self):
+        """Test filtering intents by event."""
+        from apps.events.models import Event
+        other_event = Event.objects.create(
+            title='Other Event',
+            display_code='OE2024',
+            event_type=self.event_type,
+            organisation=self.organisation,
+            start_datetime=timezone.now() + timedelta(days=7),
+            end_datetime=timezone.now() + timedelta(days=8),
+            maximum_attendance=50,
+            created_by=self.admin_user
+        )
+        
+        BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        BookingIntent.objects.create(
+            event=other_event,
+            intended_ticket_count=1,
+            made_by=self.regular_user
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(f'/api/bookings/intents/?event={self.event.event_id}')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+    
+    def test_intent_hateoas_links(self):
+        """Test that intent includes proper HATEOAS links."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(f'/api/bookings/intents/{intent.booking_intent_id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('_links', response.data)
+        self.assertIn('self', response.data['_links'])
+        self.assertIn('event', response.data['_links'])
+        self.assertIn('cancel', response.data['_links'])  # Since it's active
+
+
+class BookingIntentBusinessLogicTests(BookingsAPITestCase):
+    """Test booking intent business logic."""
+    
+    def test_intent_expires_after_20_minutes(self):
+        """Test that intent is considered expired after 20 minutes."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        # Manually set expires_at to past
+        intent.expires_at = timezone.now() - timedelta(minutes=1)
+        intent.save()
+        
+        self.assertTrue(intent.is_expired)
+        self.assertFalse(intent.is_active)
+    
+    def test_intent_capacity_reservation(self):
+        """Test that intents properly reserve capacity."""
+        self.event.maximum_attendance = 10
+        self.event.save()
+        
+        # Create intent reserving 5 spots
+        intent1 = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=5,
+            made_by=self.regular_user
+        )
+        
+        # Check that available capacity is reduced
+        from django.db.models import Sum
+        pending_intents = BookingIntent.objects.filter(
+            event=self.event,
+            status=BookingIntentStatusChoices.PENDING,
+            expires_at__gt=timezone.now()
+        )
+        reserved = pending_intents.aggregate(total=Sum('intended_ticket_count'))['total'] or 0
+        self.assertEqual(reserved, 5)
+        # we registered 1 attendee in setUp, so available should be 4
+        available = self.event.maximum_attendance - self.event.number_of_attendees - reserved
+        self.assertEqual(available, 4)
+    
+    def test_cancelled_intent_releases_capacity(self):
+        """Test that cancelling an intent releases reserved capacity."""
+        self.event.maximum_attendance = 10
+        self.event.save()
+        
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=5,
+            made_by=self.regular_user
+        )
+        
+        # Cancel intent
+        intent.cancel(save=True)
+        
+        # Check that capacity is released
+        from django.db.models import Sum
+        pending_intents = BookingIntent.objects.filter(
+            event=self.event,
+            status=BookingIntentStatusChoices.PENDING,
+            expires_at__gt=timezone.now()
+        )
+        reserved = pending_intents.aggregate(total=Sum('intended_ticket_count'))['total'] or 0
+        self.assertEqual(reserved, 0)
+

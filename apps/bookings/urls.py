@@ -19,6 +19,7 @@ from rest_framework.routers import DefaultRouter
 
 from apps.bookings.api.viewsets import (
     BookingViewSet,
+    BookingIntentViewSet,
     TicketTypeViewSet,
     TicketViewSet,
     BookingPackageViewSet,
@@ -31,6 +32,9 @@ app_name = 'bookings'
 # Create separate routers to avoid path conflicts
 booking_router = DefaultRouter()
 booking_router.register(r'list', BookingViewSet, basename='booking')
+
+intent_router = DefaultRouter()
+intent_router.register(r'intents', BookingIntentViewSet, basename='bookingintent')
 
 package_router = DefaultRouter()
 package_router.register(r'packages', BookingPackageViewSet, basename='bookingpackage')
@@ -49,6 +53,7 @@ attendee_signin_router.register(r'attendee-alternative-signins', AttendeeAlterna
 
 urlpatterns = [
     path('', include(booking_router.urls)),
+    path('', include(intent_router.urls)),
     path('', include(package_router.urls)),
     path('', include(ticket_type_router.urls)),
     path('', include(ticket_router.urls)),

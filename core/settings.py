@@ -581,3 +581,4 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # =============================================================================
 MAX_LENGTH_LOCATION_ID = 20
 MAX_ID_GENERATION_ATTEMPTS = 5
+FULL_DELETE_BOOKING_INTENTS = 10 # days
