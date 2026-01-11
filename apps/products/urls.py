@@ -10,6 +10,9 @@ Routes:
     - /api/products/list/{product_product_id}/variants/ - Nested variants under products
     - /api/products/orders/ - Order management
     - /api/products/order-items/ - Read-only order items
+    
+Note: URL parameter names use underscores (product_product_id) for valid Python identifiers,
+while action paths use hyphens (increment-stock) for URL readability.
 
 Author: AMDG Platform Team
 Version: 1.0.0
@@ -74,8 +77,8 @@ urlpatterns = [
     # Nested routes for product variants
     path('products/list/<uuid:product_product_id>/variants/', variant_list, name='product-variants-list'),
     path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/', variant_detail, name='product-variants-detail'),
-    path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/increment_stock/', variant_increment_stock, name='product-variants-increment-stock'),
-    path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/decrement_stock/', variant_decrement_stock, name='product-variants-decrement-stock'),
-    path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/set_stock/', variant_set_stock, name='product-variants-set-stock'),
-    path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/toggle_active/', variant_toggle_active, name='product-variants-toggle-active'),
+    path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/increment-stock/', variant_increment_stock, name='product-variants-increment-stock'),
+    path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/decrement-stock/', variant_decrement_stock, name='product-variants-decrement-stock'),
+    path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/set-stock/', variant_set_stock, name='product-variants-set-stock'),
+    path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/toggle-active/', variant_toggle_active, name='product-variants-toggle-active'),
 ]

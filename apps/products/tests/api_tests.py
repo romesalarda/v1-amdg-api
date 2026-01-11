@@ -292,7 +292,7 @@ class ProductAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.regular_user)
         initial_status = self.product.is_active
         
-        response = self.client.post(f'/api/products/list/{self.product.product_id}/toggle_active/')
+        response = self.client.post(f'/api/products/list/{self.product.product_id}/toggle-active/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.product.refresh_from_db()
@@ -480,7 +480,7 @@ class ProductVariantAPITestCase(APITestCase):
         initial_stock = self.variant.stock_quantity
         
         response = self.client.post(
-            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/increment_stock/',
+            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/increment-stock/',
             {'amount': 10}
         )
         
@@ -494,7 +494,7 @@ class ProductVariantAPITestCase(APITestCase):
         initial_stock = self.variant.stock_quantity
         
         response = self.client.post(
-            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/decrement_stock/',
+            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/decrement-stock/',
             {'amount': 5}
         )
         
@@ -507,7 +507,7 @@ class ProductVariantAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.regular_user)
         
         response = self.client.post(
-            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/decrement_stock/',
+            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/decrement-stock/',
             {'amount': 1000}
         )
         
@@ -518,7 +518,7 @@ class ProductVariantAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.regular_user)
         
         response = self.client.post(
-            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/set_stock/',
+            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/set-stock/',
             {'stock_quantity': 75}
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -531,7 +531,7 @@ class ProductVariantAPITestCase(APITestCase):
         initial_status = self.variant.is_active
         
         response = self.client.post(
-            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/toggle_active/'
+            f'/api/products/list/{self.product.product_id}/variants/{self.variant.variant_id}/toggle-active/'
         )
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -996,7 +996,7 @@ class PermissionsTestCase(APITestCase):
         # Regular user cannot manage stock
         self.client.force_authenticate(user=self.regular_user)
         response = self.client.post(
-            f'/api/products/list/{self.product.product_id}/variants/{variant.variant_id}/increment_stock/',
+            f'/api/products/list/{self.product.product_id}/variants/{variant.variant_id}/increment-stock/',
             {'amount': 10}
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -1004,7 +1004,7 @@ class PermissionsTestCase(APITestCase):
         # Event admin can manage stock
         self.client.force_authenticate(user=self.event_admin_user)
         response = self.client.post(
-            f'/api/products/list/{self.product.product_id}/variants/{variant.variant_id}/increment_stock/',
+            f'/api/products/list/{self.product.product_id}/variants/{variant.variant_id}/increment-stock/',
             {'amount': 10}
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)

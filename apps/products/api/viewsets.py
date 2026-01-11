@@ -361,7 +361,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         responses={200: {'description': 'Status toggled successfully'}},
         tags=["Products"],
     )
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly], url_name='toggle-active', url_path='toggle-active')
     def toggle_active(self, request, product_id=None):
         """Toggle the is_active status of the product."""
         product = self.get_object()
@@ -483,7 +483,7 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         tags=["Product Variants"],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
-    def increment_stock(self, request, variant_id=None, product_product_id=None):
+    def increment_stock(self, request, product_product_id=None, variant_id=None):
         """Increment the stock quantity of the variant."""
         variant = self.get_object()
         amount = request.data.get('amount')
@@ -526,7 +526,7 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         tags=["Product Variants"],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
-    def decrement_stock(self, request, variant_id=None, product_product_id=None):
+    def decrement_stock(self, request, product_product_id=None, variant_id=None):
         """Decrement the stock quantity of the variant."""
         variant = self.get_object()
         amount = request.data.get('amount')
@@ -566,7 +566,7 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         tags=["Product Variants"],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
-    def set_stock(self, request, variant_id=None, product_product_id=None):
+    def set_stock(self, request, product_product_id=None, variant_id=None):
         """Set the stock quantity to a specific value."""
         variant = self.get_object()
         stock_quantity = request.data.get('stock_quantity')
@@ -595,7 +595,7 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         tags=["Product Variants"],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
-    def toggle_active(self, request, variant_id=None, product_product_id=None):
+    def toggle_active(self, request, product_product_id=None, variant_id=None):
         """Toggle the is_active status of the variant."""
         variant = self.get_object()
         variant.is_active = not variant.is_active
