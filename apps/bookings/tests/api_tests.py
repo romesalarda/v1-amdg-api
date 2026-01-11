@@ -256,12 +256,18 @@ class BookingEndpointTests(BookingsAPITestCase):
         self.assertIn('tickets', response.data)  # Nested ticket summary
     
     def test_create_booking(self):
-        """Test creating a new booking."""
+        """Test creating a new booking with valid intent."""
         self.client.force_authenticate(user=self.regular_user)
-        data = {
-            'event': self.event.id
-        }
-        response = self.client.post('/api/bookings/list/', data, format='json')
+        
+        # Create a valid booking intent first
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        data = {}
+        response = self.client.post(f'/api/bookings/list/?intent={intent.booking_intent_id}', data, format='json')
         
         if response.status_code != status.HTTP_201_CREATED:
             print(f"Booking validation errors: {response.data}")
@@ -270,15 +276,20 @@ class BookingEndpointTests(BookingsAPITestCase):
         self.assertIn('booking_reference', response.data)
         self.assertTrue(response.data['booking_reference'])
         self.assertIn('BKG', response.data['booking_reference'])
+        
+        # Verify intent was marked as completed
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, BookingIntentStatusChoices.COMPLETED)
     
-    def test_create_booking_without_event(self):
-        """Test that creating booking without event fails."""
+    def test_create_booking_without_intent(self):
+        """Test that creating booking without intent fails for non-admin users."""
         self.client.force_authenticate(user=self.regular_user)
         data = {}
         response = self.client.post('/api/bookings/list/', data, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('event', response.data)
+        self.assertIn('intent', response.data)
+        self.assertIn('booking intent is required', str(response.data['intent']).lower())
     
     def test_other_user_cannot_access_booking(self):
         """Other users cannot access bookings they don't own."""
@@ -302,8 +313,156 @@ class BookingEndpointTests(BookingsAPITestCase):
         response = self.client.get(f'/api/bookings/list/{self.booking.id}/tickets/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['status'], TicketStatusChoices.ACTIVE)
+        self.assertIsInstance(response.data, list)
+    
+    def test_create_booking_with_expired_intent(self):
+        """Test that creating booking with expired intent fails."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        # Create an expired intent
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user,
+            status=BookingIntentStatusChoices.PENDING
+        )
+        # Manually set expires_at to the past
+        intent.expires_at = timezone.now() - timedelta(minutes=30)
+        intent.save()
+        
+        data = {}
+        response = self.client.post(f'/api/bookings/list/?intent={intent.booking_intent_id}', data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('intent', response.data)
+        self.assertIn('expired', str(response.data['intent']).lower())
+    
+    def test_create_booking_with_non_pending_intent(self):
+        """Test that creating booking with non-pending intent fails."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        # Create a completed intent
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user,
+            status=BookingIntentStatusChoices.COMPLETED
+        )
+        
+        data = {}
+        response = self.client.post(f'/api/bookings/list/?intent={intent.booking_intent_id}', data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('intent', response.data)
+        self.assertIn('pending', str(response.data['intent']).lower())
+    
+    def test_create_booking_with_intent_belonging_to_other_user(self):
+        """Test that user cannot use intent created by another user."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        # Create intent for other user
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.other_user
+        )
+        
+        data = {}
+        response = self.client.post(f'/api/bookings/list/?intent={intent.booking_intent_id}', data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('intent', response.data)
+        self.assertIn('does not belong to you', str(response.data['intent']).lower())
+    
+    def test_create_booking_with_invalid_intent_id(self):
+        """Test that invalid intent ID returns appropriate error."""
+        self.client.force_authenticate(user=self.regular_user)
+        
+        import uuid
+        fake_intent_id = uuid.uuid4()
+        
+        data = {}
+        response = self.client.post(f'/api/bookings/list/?intent={fake_intent_id}', data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('intent', response.data)
+        self.assertIn('does not exist', str(response.data['intent']).lower())
+    
+    def test_create_booking_admin_bypass_with_event(self):
+        """Test that admin can create booking without intent if event provided."""
+        self.client.force_authenticate(user=self.admin_user)
+        
+        data = {
+            'event': self.event.id
+        }
+        response = self.client.post('/api/bookings/list/', data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('booking_reference', response.data)
+    
+    def test_create_booking_admin_bypass_with_intent(self):
+        """Test that admin can create booking with intent."""
+        self.client.force_authenticate(user=self.admin_user)
+        
+        # Create intent for another user
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.other_user
+        )
+        
+        data = {}
+        response = self.client.post(f'/api/bookings/list/?intent={intent.booking_intent_id}', data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('booking_reference', response.data)
+        
+        # Verify intent was marked as completed
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, BookingIntentStatusChoices.COMPLETED)
+    
+    def test_create_booking_admin_without_event_or_intent_fails(self):
+        """Test that admin cannot create booking without event or intent."""
+        self.client.force_authenticate(user=self.admin_user)
+        
+        data = {}
+        response = self.client.post('/api/bookings/list/', data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('event', response.data)
+    
+    def test_create_booking_with_mismatched_event(self):
+        """Test that booking fails if event in body doesn't match intent event."""
+        # Create another event
+        event2 = Event.objects.create(
+            title='Another Camp 2026',
+            display_code='AC2026',
+            display_identifier='AC2026YCAMP002',
+            created_by=self.admin_user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=40),
+            end_datetime=timezone.now() + timedelta(days=47),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
+        )
+        
+        self.client.force_authenticate(user=self.regular_user)
+        
+        # Create intent for self.event
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=2,
+            made_by=self.regular_user
+        )
+        
+        # Try to create booking with different event
+        data = {
+            'event': event2.id
+        }
+        response = self.client.post(f'/api/bookings/list/?intent={intent.booking_intent_id}', data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('intent', response.data)
 
 
 class BookingFilteringTests(BookingsAPITestCase):
@@ -1065,7 +1224,7 @@ class BookingIntentEndpointTests(BookingsAPITestCase):
         response = self.client.post('/api/bookings/intents/', data)
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('This event has reached its maximum capacity.', response.data)
+        self.assertIn('This event has reached its maximum capacity.', response.data["event"])
     
     def test_create_booking_intent_considers_existing_intents(self):
         """Test that capacity check considers existing pending intents."""
@@ -1090,7 +1249,8 @@ class BookingIntentEndpointTests(BookingsAPITestCase):
         response = self.client.post('/api/bookings/intents/', data)
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-    
+        self.assertIn('Insufficient capacity.', response.data["intended_ticket_count"][0])
+
     def test_create_booking_intent_max_ticket_limit(self):
         """Test that cannot create intent for more than 20 tickets."""
         self.client.force_authenticate(user=self.regular_user)

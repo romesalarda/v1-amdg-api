@@ -840,15 +840,20 @@ class BookingCreateSerializer(serializers.ModelSerializer):
     """Create serializer for Booking with validation."""
 
     booking_reference = serializers.CharField(read_only=True, help_text="Auto-generated booking reference.")
+    event = serializers.PrimaryKeyRelatedField(
+        queryset=Event.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text="Event for the booking. Not required when using a booking intent (event will be inferred from intent)."
+    )
     
     class Meta:
         model = Booking
         fields = ('event', 'booking_reference')
     
     def validate_event(self, value):
-        """Ensure event exists and is accessible."""
-        if not value:
-            raise serializers.ValidationError("Event is required.")
+        """Ensure event exists and is accessible (if provided)."""
+        # Event can be null here - it will be validated and set in the viewset
         return value
     
     def create(self, validated_data):

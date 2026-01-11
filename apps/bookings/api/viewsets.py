@@ -18,9 +18,11 @@ Version: 1.0.0
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
+
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q, Prefetch
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
     extend_schema,
@@ -82,8 +84,17 @@ class StandardPagination(PageNumberPagination):
     ),
     create=extend_schema(
         summary="Create booking",
-        description="Create a new booking for an event. Booking reference is auto-generated.",
+        description="Create a new booking for an event. Booking reference is auto-generated. Requires a valid booking intent ID passed as query parameter 'intent'. The intent must be pending, not expired, and belong to the requesting user. Admin users can bypass this requirement.",
         tags=["Bookings"],
+        parameters=[
+            OpenApiParameter(
+                name='intent',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='UUID of the booking intent. Required for non-admin users.',
+                required=False,
+            ),
+        ],
     ),
     update=extend_schema(
         summary="Update booking",
@@ -182,6 +193,112 @@ class BookingViewSet(viewsets.ModelViewSet):
             except:
                 pass
         return context
+    
+    def perform_create(self, serializer):
+        """
+        Create booking with intent validation.
+        
+        Validates that a valid booking intent is provided (unless user is admin).
+        The intent must be:
+        - Pending status
+        - Not expired
+        - Belonging to the requesting user
+        - For the same event as the booking
+        - Have sufficient capacity
+        
+        After successful creation, marks the intent as completed.
+        """
+        user = self.request.user
+        intent_id = self.request.query_params.get('intent')
+        
+        # Admin bypass: superusers and staff can create bookings without intent
+        is_admin = user.is_superuser or user.is_staff
+        
+        if not is_admin:
+            # Non-admin users must provide a valid intent
+            if not intent_id:
+                raise ValidationError({
+                    'intent': 'A valid booking intent is required to create a booking. Please create a booking intent first.'
+                })
+            
+            # Validate and retrieve the intent
+            try:
+                intent = BookingIntent.objects.get(booking_intent_id=intent_id)
+            except BookingIntent.DoesNotExist:
+                raise ValidationError({
+                    'intent': f'Booking intent with ID {intent_id} does not exist.'
+                })
+            
+            # Validate intent status
+            if intent.status != BookingIntentStatusChoices.PENDING:
+                raise ValidationError({
+                    'intent': f'Booking intent must be in PENDING status. Current status: {intent.get_status_display()}.'
+                })
+            
+            # Validate intent is not expired
+            if intent.is_expired:
+                raise ValidationError({
+                    'intent': 'Booking intent has expired. Please create a new intent.'
+                })
+            
+            # Validate intent belongs to user
+            if intent.made_by != user:
+                raise ValidationError({
+                    'intent': 'This booking intent does not belong to you.'
+                })
+            
+            # Get event from intent
+            event = intent.event
+            
+            # Validate intent event matches booking event (if event provided in body)
+            if 'event' in serializer.validated_data and serializer.validated_data['event'] != event:
+                raise ValidationError({
+                    'intent': f'Booking intent is for event "{event.title}" but booking is for a different event.'
+                })
+            
+            # Set event from intent
+            serializer.validated_data['event'] = event
+            
+            # Validate capacity using intent's can_create_booking method
+            if not intent.can_create_booking():
+                raise ValidationError({
+                    'intent': 'Cannot create booking from this intent. Capacity may have been exhausted or intent is not valid.'
+                })
+            
+            # Create the booking
+            booking = serializer.save()
+            
+            # Mark intent as completed
+            intent.mark_completed(save=True)
+        else:
+            # Admin users: if event not provided in body, check if intent is provided
+            if 'event' not in serializer.validated_data or not serializer.validated_data['event']:
+                if intent_id:
+                    # Try to use intent if provided
+                    try:
+                        intent = BookingIntent.objects.get(booking_intent_id=intent_id)
+                        serializer.validated_data['event'] = intent.event
+                        booking = serializer.save()
+                        intent.mark_completed(save=True)
+                    except BookingIntent.DoesNotExist:
+                        raise ValidationError({
+                            'event': 'Event is required when no valid intent is provided.'
+                        })
+                else:
+                    raise ValidationError({
+                        'event': 'Event is required for admin bookings without an intent.'
+                    })
+            else:
+                # Admin with event provided
+                booking = serializer.save()
+                
+                # If intent provided, mark it as completed
+                if intent_id:
+                    try:
+                        intent = BookingIntent.objects.get(booking_intent_id=intent_id)
+                        intent.mark_completed(save=True)
+                    except BookingIntent.DoesNotExist:
+                        pass  # Intent not found, ignore for admin users
     
     @extend_schema(
         summary="List attendees for booking",
@@ -346,7 +463,6 @@ class BookingIntentViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         """Only allow deletion of pending intents."""
         if instance.status != BookingIntentStatusChoices.PENDING:
-            from rest_framework.exceptions import ValidationError
             raise ValidationError("Cannot delete a non-pending booking intent.")
         instance.delete()
     
