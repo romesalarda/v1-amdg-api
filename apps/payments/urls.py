@@ -20,6 +20,12 @@ from apps.payments.api.viewsets import (
     DonationViewSet,
     PaymentHistoryActionViewSet,
 )
+from apps.payments.api.stripe_views import (
+    StripeConfigView,
+    CreatePaymentIntentView,
+    StripeConfirmPaymentView,
+    stripe_webhook_view,
+)
 
 app_name = 'payments'
 
@@ -39,4 +45,10 @@ router.register(r'history', PaymentHistoryActionViewSet, basename='paymenthistor
 
 urlpatterns = [
     path('payments/', include(router.urls)),
+    
+    # Stripe endpoints (outside router for custom URLs)
+    path('stripe/config/', StripeConfigView.as_view(), name='stripe-config'),
+    path('stripe/payment-intent/', CreatePaymentIntentView.as_view(), name='stripe-create-payment-intent'),
+    path('stripe/confirm/', StripeConfirmPaymentView.as_view(), name='stripe-confirm-payment'),
+    path('stripe/webhook/', stripe_webhook_view, name='stripe-webhook'),
 ]

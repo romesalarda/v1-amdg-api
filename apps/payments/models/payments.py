@@ -59,8 +59,10 @@ class Payment(PayableModel):
     
     description = models.TextField(blank=True, null=True)
     
-    stripe_payment_intent = models.CharField(max_length=255, blank=True, null=True)
-    stripe_charge_id = models.CharField(max_length=255, blank=True, null=True)
+    # Stripe integration fields
+    stripe_payment_intent = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    stripe_charge_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True, help_text='Stripe customer ID for recurring payments')
     bank_transfer_reference = models.CharField(max_length=255, blank=True, null=True)
     metadata = models.JSONField(blank=True, null=True) # data of info when the payment was made (ABSOLUTE)
     
@@ -160,6 +162,80 @@ class Payment(PayableModel):
         Returns the absolute amount of the payment, ignoring any modifiers.
         '''
         return Decimal(self.base_amount.amount).quantize(Decimal('0.01'))
+    
+    def transition_to(self, new_status: str) -> None:
+        """
+        Transition payment to a new status with validation.
+        
+        Args:
+            new_status: Target status from PaymentStatusChoices
+            
+        Raises:
+            ValidationError: If transition is not allowed
+        """
+        if self.status == new_status:
+            return  # Already in target status (idempotent)
+        
+        allowed_transitions = ALLOWED_STATUS_TRANSITIONS.get(self.status, [])
+        if new_status not in allowed_transitions:
+            raise ValidationError(
+                f"Invalid status transition from {self.status} to {new_status}. "
+                f"Allowed transitions: {', '.join(allowed_transitions) or 'none'}"
+            )
+        
+        self.status = new_status
+    
+    def prepare_stripe_metadata(self) -> dict:
+        """
+        Prepare metadata for Stripe PaymentIntent in Stripe's format.
+        
+        Flattens nested order/booking data to comply with Stripe limits:
+        - Max 50 keys
+        - Max 500 characters per value
+        - Only strings, numbers, booleans allowed
+        
+        Returns:
+            dict: Flattened metadata for Stripe
+        """
+        metadata = {
+            'payment_id': str(self.payment_id),
+            'payment_reference': self.payment_reference,
+            'event_id': str(self.event_id),
+            'event_title': self.event.title[:500],  # Truncate to Stripe limit
+            'user_id': str(self.user_id),
+            'user_email': self.user.email[:500],
+        }
+        
+        # Add target-specific metadata
+        if self.target:
+            target = self.target
+            metadata['target_type'] = self.target_type.model
+            metadata['target_id'] = str(self.target_id)
+            
+            # Order-specific metadata
+            if hasattr(target, 'order_reference_id'):
+                metadata['order_reference'] = target.order_reference_id[:500]
+                metadata['order_status'] = target.status
+                
+                # Add order items summary (limited keys)
+                if hasattr(target, 'order_items'):
+                    items = target.order_items.all()[:10]  # Limit to first 10 items
+                    metadata['item_count'] = str(len(items))
+                    for idx, item in enumerate(items, 1):
+                        prefix = f'item_{idx}'
+                        metadata[f'{prefix}_title'] = item.product_variant.product.title[:100]
+                        metadata[f'{prefix}_quantity'] = str(item.quantity)
+                        metadata[f'{prefix}_price'] = str(item.total_price.amount)
+            
+            # Booking-specific metadata
+            elif hasattr(target, 'booking_reference'):
+                metadata['booking_reference'] = target.booking_reference[:500]
+                
+                # Add attendee count
+                if hasattr(target, 'attendees'):
+                    metadata['attendee_count'] = str(target.attendees.count())
+        
+        return metadata
 
 class PaymentHistoryAction(models.Model):
     '''

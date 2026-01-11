@@ -202,7 +202,58 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
             )
     
     def mark_verified(self, verifier):
+        """
+        Mark refund as verified and automatically trigger Stripe refund.
+        
+        Args:
+            verifier: User who verified the refund
+            
+        Raises:
+            ValidationError: If Stripe refund fails
+        """
         self.is_active
+        
+        # Trigger Stripe refund if payment has Stripe PaymentIntent
+        if self.payment.stripe_payment_intent:
+            from apps.payments.services.stripe.refunds import RefundService
+            from apps.payments.services.stripe.exceptions import StripeServiceError
+            from django.core.exceptions import ValidationError
+            import logging
+            
+            logger = logging.getLogger(__name__)
+            
+            try:
+                # Create Stripe refund
+                stripe_refund = RefundService.create(
+                    payment_intent_id=self.payment.stripe_payment_intent,
+                    amount=self.amount,
+                    reason=RefundService.REASON_REQUESTED_BY_CUSTOMER,
+                    metadata={
+                        'refund_id': str(self.refund_id),
+                        'tracking_reference': self.tracking_reference,
+                        'payment_reference': self.payment.payment_reference,
+                    },
+                    refund_reference=self.tracking_reference
+                )
+                
+                # Store Stripe refund ID
+                if not self.metadata:
+                    self.metadata = {}
+                self.metadata['stripe_refund_id'] = stripe_refund.id
+                self.metadata['stripe_refund_status'] = stripe_refund.status
+                self.metadata['stripe_refund_created_at'] = str(stripe_refund.created)
+                
+                logger.info(
+                    f"Created Stripe refund {stripe_refund.id} for RefundRequest {self.tracking_reference}"
+                )
+                
+            except StripeServiceError as e:
+                logger.error(f"Failed to create Stripe refund: {e.message}")
+                raise ValidationError(
+                    f"Stripe refund failed: {e.user_message}. "
+                    "Please verify the refund manually or try again."
+                )
+        
         return super().mark_verified(verifier)
     
     def mark_processed(self, processor=None):
