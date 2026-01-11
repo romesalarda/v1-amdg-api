@@ -22,18 +22,22 @@ class OrganisationControlInline(admin.TabularInline):
 
 @admin.register(Organisation)
 class OrganisationAdmin(admin.ModelAdmin):
-    list_display = ('title', 'external_website', 'created_by', 'added_at')
-    list_filter = ('added_at', 'updated_at')
+    list_display = ('title', 'external_website', 'required_acceptance_code', 'requires_manual_verification', 'created_by', 'added_at')
+    list_filter = ('required_acceptance_code', 'requires_manual_verification', 'added_at', 'updated_at')
     search_fields = ('title', 'description')
-    readonly_fields = ('added_at', 'updated_at', 'landing_image_uploaded_at', 'logo_uploaded_at')
+    readonly_fields = ('added_at', 'updated_at', 'landing_image_uploaded_at', 'logo_uploaded_at', 'landing_image_preview', 'logo_preview')
     inlines = [OrganisationContactInline, OrganisationControlInline]
+    autocomplete_fields = ('created_by',)
     
     fieldsets = (
         ('Basic Information', {
             'fields': ('title', 'description', 'external_website')
         }),
+        ('Verification Settings', {
+            'fields': ('required_acceptance_code', 'requires_manual_verification')
+        }),
         ('Images', {
-            'fields': ('landing_image', 'landing_image_uploaded_at', 'logo', 'logo_uploaded_at')
+            'fields': ('landing_image', 'landing_image_preview', 'landing_image_uploaded_at', 'logo', 'logo_preview', 'logo_uploaded_at')
         }),
         ('Metadata', {
             'fields': ('created_by', 'added_at', 'updated_at'),

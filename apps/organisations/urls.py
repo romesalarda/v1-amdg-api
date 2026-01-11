@@ -1,0 +1,44 @@
+"""
+URL configuration for organisations app.
+
+Defines API routes for all organisation-related endpoints following the /list/ pattern.
+
+Author: AMDG Platform Team
+Version: 1.0.0
+"""
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+from apps.organisations.api.viewsets import (
+    OrganisationViewSet,
+    OrganisationContactViewSet,
+    OrganisationControlViewSet,
+    UserOrganisationMembershipViewSet,
+    OrganisationAcceptanceCodeViewSet,
+    OrganisationInviteViewSet,
+    InvolvedEventOrganisationViewSet,
+    EventSponsorViewSet,
+    EventSponsorPackageViewSet,
+    LeaderViewSet,
+)
+
+app_name = 'organisations'
+
+# Initialize router
+router = DefaultRouter()
+
+# Register viewsets with appropriate patterns
+router.register(r'list', OrganisationViewSet, basename='organisation')
+router.register(r'contacts', OrganisationContactViewSet, basename='organisationcontact')
+router.register(r'controls', OrganisationControlViewSet, basename='organisationcontrol')
+router.register(r'memberships', UserOrganisationMembershipViewSet, basename='organisationmembership')
+router.register(r'acceptance-codes', OrganisationAcceptanceCodeViewSet, basename='acceptancecode')
+router.register(r'invites', OrganisationInviteViewSet, basename='organisationinvite')
+router.register(r'involved-events', InvolvedEventOrganisationViewSet, basename='involvedeventorganisation')
+router.register(r'sponsors', EventSponsorViewSet, basename='eventsponsor')
+router.register(r'sponsor-packages', EventSponsorPackageViewSet, basename='sponsorpackage')
+router.register(r'leaders', LeaderViewSet, basename='leader')
+
+urlpatterns = [
+    path('organisations/', include(router.urls)),
+]
