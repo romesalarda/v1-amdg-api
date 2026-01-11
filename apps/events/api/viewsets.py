@@ -40,12 +40,7 @@ from .serializers import (
     EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer
 )
 
-
-class StandardPagination(PageNumberPagination):
-    page_size = 20
-    page_size_query_param = 'page_size'
-    max_page_size = 100
-
+from apps.events.api.pagination import StandardPagination
 
 @extend_schema_view(
     list=extend_schema(

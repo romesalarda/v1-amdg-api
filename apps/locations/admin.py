@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import CountryLocation, ClusterLocation, POI, Venue, RoomVenue, VenueContact, VenueMetadata
+from .models import (
+    CountryLocation, ClusterLocation, ChapterLocation, AreaLocation, RelativeArea,
+    POI, Venue, RoomVenue, VenueContact, VenueMetadata
+)
 
 
 @admin.register(CountryLocation)
@@ -36,6 +39,67 @@ class ClusterLocationAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(ChapterLocation)
+class ChapterLocationAdmin(admin.ModelAdmin):
+    list_display = ('chapter_name', 'chapter_code', 'cluster', 'active', 'established_date')
+    list_filter = ('active', 'cluster__country', 'established_date', 'date_added')
+    search_fields = ('chapter_name', 'chapter_code', 'description', 'cluster__cluster_name')
+    readonly_fields = ('date_added', 'date_updated')
+    autocomplete_fields = ['cluster']
+    
+    fieldsets = (
+        ('Chapter Information', {
+            'fields': ('chapter_name', 'chapter_code', 'cluster', 'description', 'active')
+        }),
+        ('Dates', {
+            'fields': ('established_date', 'date_added', 'date_updated'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(AreaLocation)
+class AreaLocationAdmin(admin.ModelAdmin):
+    list_display = ('area_name', 'area_code', 'chapter', 'active', 'established_date')
+    list_filter = ('active', 'chapter__cluster__country', 'established_date', 'date_added')
+    search_fields = ('area_name', 'area_code', 'description', 'chapter__chapter_name')
+    readonly_fields = ('area_id', 'date_added', 'date_updated')
+    autocomplete_fields = ['chapter']
+    
+    fieldsets = (
+        ('Area Information', {
+            'fields': ('area_name', 'area_code', 'chapter', 'description', 'active')
+        }),
+        ('Identification', {
+            'fields': ('area_id',),
+            'classes': ('collapse',)
+        }),
+        ('Dates', {
+            'fields': ('established_date', 'date_added', 'date_updated'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(RelativeArea)
+class RelativeAreaAdmin(admin.ModelAdmin):
+    list_display = ('name', 'relative_area')
+    search_fields = ('name', 'relative_area__area_name')
+    autocomplete_fields = ['relative_area']
+    
+    fieldsets = (
+        ('Relative Location Information', {
+            'fields': ('name', 'relative_area')
+        }),
+    )
+
+
+class VenueMetadataInline(admin.TabularInline):
+    model = VenueMetadata
+    extra = 1
+    readonly_fields = ('added_at', 'updated_at')
 
 
 class VenueContactInline(admin.TabularInline):
@@ -77,7 +141,7 @@ class VenueAdmin(admin.ModelAdmin):
     list_filter = ('poi__poi_type', 'added_at')
     search_fields = ('poi__name', 'description', 'instructions')
     readonly_fields = ('added_at', 'updated_at')
-    inlines = [VenueContactInline, RoomVenueInline]
+    inlines = [VenueContactInline, RoomVenueInline, VenueMetadataInline]
     
     fieldsets = (
         ('Venue Information', {
