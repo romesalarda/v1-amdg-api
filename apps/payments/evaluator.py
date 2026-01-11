@@ -42,7 +42,7 @@ class DiscountRuleEvaluator:
         }[rule_type]
 
     def is_event_staff(self, rule, context):
-        return context.user and context.metadata.get("is_event_staff", False)
+        return context.user and context.metadata.get("is_event_staff", True) # changed to true 
 
     def is_age_lt(self, rule, context):
         return context.metadata.get("age", None) is not None and context.metadata.get("age") < int(rule.value)

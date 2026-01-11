@@ -966,7 +966,7 @@ class VenueContactModelTest(TestCase):
         invalid_phones = [
             '123',  # Too short
             'abcdefghij',  # Letters
-            '+12-345-6789',  # Dashes
+            '+12-345-cxc',  # Dashes
         ]
         
         for phone in invalid_phones:

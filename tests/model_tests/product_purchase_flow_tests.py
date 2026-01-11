@@ -39,7 +39,7 @@ from apps.payments.models import (
     RefundRequest, RefundAssociation, PaymentHistoryAction
 )
 from apps.common.models.verification import VerificationStatus
-from apps.events.models import Event, EventType, EventStatusChoices
+from apps.events.models import Event, EventType, EventStatusChoices, EventStaff
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.bookings.models import Booking
 from apps.common.models.resource import Resource, ResourceTypeChoices
@@ -551,6 +551,15 @@ class FullProductPurchaseFlowTest(TestCase):
             booking=booking,
             defined_by=staff_student
         )
+
+        # Mock staff context for add_order_item
+        # Update attendee's pricing context to include is_event_staff
+
+        event_staff = EventStaff.objects.create(
+            user=staff_student,
+            assigned_by=self.emma,
+            event=self.event
+        )
         
         order = Order.objects.create(
             attendee=staff_attendee,
@@ -560,17 +569,7 @@ class FullProductPurchaseFlowTest(TestCase):
             customer=staff_student
         )
         
-        # Mock staff context for add_order_item
-        # Update attendee's pricing context to include is_event_staff
-        original_pricing_context = staff_attendee.pricing_context
         
-        def mock_pricing_context():
-            ctx = original_pricing_context()
-            ctx.metadata['is_event_staff'] = True
-            return ctx
-        
-        # Temporarily replace the method
-        staff_attendee.pricing_context = mock_pricing_context
         
         # Add items: T-shirt (10% student discount) and Mug (100% staff discount)
         tshirt_item = order.add_order_item(self.tshirt_medium_blue, 1)

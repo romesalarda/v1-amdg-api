@@ -256,6 +256,7 @@ class Order(SoftDeleteModel): # no admin model
             self.full_clean()
             self.save() # persist changes
 
+        order_item.refresh_from_db()
         return order_item
     
     def submit(self):
