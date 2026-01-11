@@ -268,6 +268,153 @@ class PaymentViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(payment)
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Verify bank transfer payment",
+        description=(
+            "Verify and complete a bank transfer payment. "
+            "This endpoint:\n"
+            "1. Validates payment is PENDING and method is BANK_TRANSFER\n"
+            "2. Transitions payment to COMPLETED status\n"
+            "3. Creates tickets for the booking\n"
+            "4. Logs verification action\n"
+            "\n"
+            "Only accessible by administrative staff."
+        ),
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'verified': {
+                        'type': 'boolean',
+                        'description': 'Set to true to verify payment'
+                    },
+                    'notes': {
+                        'type': 'string',
+                        'description': 'Admin notes about verification (e.g., bank reference, date received)'
+                    }
+                },
+                'required': ['verified']
+            }
+        },
+        responses={
+            200: PaymentDetailSerializer,
+            400: OpenApiResponse(description="Validation error"),
+        },
+        tags=["Payments"],
+    )
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='verify-bank-transfer',
+        permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly]
+    )
+    def verify_bank_transfer(self, request, payment_id=None):
+        """
+        Verify bank transfer payment and create tickets.
+        
+        This is the manual verification endpoint for BANK_TRANSFER payments.
+        After admin confirms they received the bank transfer, this endpoint:
+        1. Completes the payment
+        2. Creates tickets for the booking
+        3. Logs the verification
+        """
+        from apps.bookings.services import TicketCreatorService
+        from apps.payments.models import PaymentMethodTypeChoices
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        payment = self.get_object()
+        
+        # Validate input
+        verified = request.data.get('verified', False)
+        notes = request.data.get('notes', '')
+        
+        if not verified:
+            return Response(
+                {'error': 'verified must be set to true to verify payment'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate payment status
+        if payment.status != PaymentStatusChoices.PENDING:
+            return Response(
+                {
+                    'error': f'Can only verify PENDING payments. Current status: {payment.status}'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate payment method is bank transfer
+        if not payment.method or payment.method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER:
+            return Response(
+                {
+                    'error': 'This endpoint is only for BANK_TRANSFER payments. '
+                             f'Current method: {payment.method.method_type if payment.method else "None"}'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify payment target is a booking
+        from apps.bookings.models import Booking
+        if not isinstance(payment.target, Booking):
+            return Response(
+                {
+                    'error': f'Payment target must be a Booking. Got: {type(payment.target).__name__}'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Transition payment to completed
+            payment.transition_to(PaymentStatusChoices.COMPLETED)
+            payment.save()
+            
+            # Log verification action
+            PaymentHistoryAction.objects.create(
+                payment=payment,
+                action='BANK_TRANSFER_VERIFIED',
+                description=f'Bank transfer verified and payment completed by administrator',
+                metadata={
+                    'verified_by_id': request.user.id,
+                    'verified_by_username': request.user.username,
+                    'bank_reference': payment.bank_transfer_reference,
+                    'notes': notes,
+                },
+                notes=notes,
+                performed_by=request.user
+            )
+            
+            # Create tickets
+            tickets = TicketCreatorService.create_tickets_for_payment(payment)
+            
+            logger.info(
+                f"Bank transfer verified for payment {payment.payment_reference} by "
+                f"{request.user.username}. Created {len(tickets)} tickets."
+            )
+            
+            # Return payment with tickets info
+            serializer = self.get_serializer(payment)
+            response_data = serializer.data
+            response_data['tickets_created'] = len(tickets)
+            response_data['message'] = (
+                f'Bank transfer verified successfully. {len(tickets)} ticket(s) created.'
+            )
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            logger.error(
+                f"Failed to verify bank transfer for payment {payment.payment_reference}: {str(e)}",
+                exc_info=True
+            )
+            
+            return Response(
+                {
+                    'error': f'Failed to verify bank transfer: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ============================================================================

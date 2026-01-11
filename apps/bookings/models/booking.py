@@ -309,6 +309,18 @@ class Booking(models.Model, PaymentMixin):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+    
+    @property
+    def total_amount(self):
+        """
+        Calculate total amount for this booking.
+        Returns payment total_amount if payment exists (single source of truth),
+        otherwise returns zero.
+        """
+        from djmoney.money import Money
+        if self.payment:
+            return self.payment.total_amount
+        return Money(0, 'GBP')
 
     def get_metadata(self, include_ticket_pricing=False, ticket_prices=None):
         """

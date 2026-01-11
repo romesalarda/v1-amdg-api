@@ -48,6 +48,7 @@ from .serializers import (
     BookingPackageRuleSerializer, BookingPackageRuleCreateUpdateSerializer,
     EventAlternativeSigninListSerializer, EventAlternativeSigninDetailSerializer, EventAlternativeSigninCreateUpdateSerializer,
     AttendeeAlternativeSigninListSerializer, AttendeeAlternativeSigninDetailSerializer, AttendeeAlternativeSigninCreateUpdateSerializer,
+    CheckoutSerializer,
 )
 from .filtersets import (
     BookingFilterSet, BookingIntentFilterSet,
@@ -336,6 +337,395 @@ class BookingViewSet(viewsets.ModelViewSet):
         
         serializer = TicketListSerializer(tickets, many=True, context={'request': request, 'event': booking.event})
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Checkout booking with payment",
+        description=(
+            "Complete booking checkout flow with payment creation. "
+            "This endpoint:\n"
+            "1. Validates booking intent and extends expiry\n"
+            "2. Creates booking and orders atomically\n"
+            "3. Calculates all prices server-side (frontend prices are ignored)\n"
+            "4. Creates payment and handles method-specific flows:\n"
+            "   - STRIPE: Returns client_secret for frontend payment\n"
+            "   - BANK_TRANSFER: Returns bank reference for manual payment\n"
+            "   - CASH/FREE: Creates tickets immediately\n"
+            "5. Handles failures with automatic cleanup and stock restoration"
+        ),
+        tags=["Bookings"],
+        request={'application/json': 'CheckoutSerializer'},
+        responses={
+            201: OpenApiResponse(
+                description="Checkout successful",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'booking_id': {'type': 'string', 'format': 'uuid'},
+                        'booking_reference': {'type': 'string'},
+                        'payment_id': {'type': 'integer'},
+                        'payment_reference': {'type': 'string'},
+                        'total_amount': {'type': 'string'},
+                        'currency': {'type': 'string'},
+                        'status': {'type': 'string'},
+                        'orders': {
+                            'type': 'array',
+                            'items': {
+                                'type': 'object',
+                                'properties': {
+                                    'order_id': {'type': 'string', 'format': 'uuid'},
+                                    'order_reference': {'type': 'string'},
+                                    'attendee_id': {'type': 'string', 'format': 'uuid'},
+                                    'total_amount': {'type': 'string'},
+                                    '_links': {'type': 'object'},
+                                }
+                            }
+                        },
+                        'stripe_client_secret': {'type': 'string', 'nullable': True},
+                        'bank_transfer_reference': {'type': 'string', 'nullable': True},
+                        'bank_transfer_instructions': {'type': 'string', 'nullable': True},
+                        'tickets': {'type': 'array', 'nullable': True},
+                        '_links': {'type': 'object'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description="Validation error or checkout failed"),
+        },
+        operation_id="bookings_checkout",
+    )
+    @action(detail=False, methods=['post'], url_path='checkout')
+    def checkout(self, request):
+        """
+        Complete booking checkout with payment.
+        
+        This is the unified checkout endpoint that handles the complete registration flow.
+        All operations are atomic - if any step fails, everything rolls back.
+        """
+        from .serializers import CheckoutSerializer
+        from apps.bookings.services import TicketCreatorService
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Validate input data
+        serializer = CheckoutSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        
+        # Extract validated data
+        intent = serializer.validated_data['_intent']
+        payment_method = serializer.validated_data['_payment_method']
+        attendee_selections = serializer.validated_data['attendees']
+        user = request.user
+        
+        # Import models
+        from django.db import transaction
+        from apps.products.models import Order, OrderStatusChoices
+        from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
+        from djmoney.money import Money
+        from core.utils.display import generate_human_readable_id
+        from decimal import Decimal
+        
+        try:
+            with transaction.atomic():
+                # Lock the intent to prevent race conditions
+                intent = BookingIntent.objects.select_for_update().get(
+                    booking_intent_id=intent.booking_intent_id
+                )
+                
+                # Extend intent expiry during checkout
+                from django.utils import timezone
+                intent.expires_at = timezone.now() + timezone.timedelta(minutes=30)
+                intent.save(update_fields=['expires_at'])
+                
+                # Revalidate intent is still active
+                if not intent.is_active or not intent.can_create_booking():
+                    raise ValidationError({
+                        'booking_intent_id': 'Booking intent is no longer valid for checkout.'
+                    })
+                
+                # === STEP 1: Create Booking ===
+                booking_reference = generate_human_readable_id(
+                    50, 'BKG', intent.event.display_code[:10]
+                )
+                
+                booking = Booking.objects.create(
+                    event=intent.event,
+                    booking_reference=booking_reference,
+                    made_by=user
+                )
+                
+                logger.info(f"Created booking {booking.booking_reference} for user {user.id}")
+                
+                # Update all attendees to point to the new booking
+                for selection in attendee_selections:
+                    attendee = selection['_attendee']
+                    attendee.booking = booking
+                    attendee.save(update_fields=['booking'])
+                
+                # === STEP 2: Calculate Prices and Create Orders ===
+                total_amount = Money(0, 'GBP')
+                orders_data = []
+                attendee_selections_metadata = []
+                
+                for selection in attendee_selections:
+                    attendee = selection['_attendee']
+                    package = selection['_package']
+                    product_selections = selection.get('product_selections', [])
+                    
+                    # Calculate package price for attendee
+                    attendee_context = attendee.pricing_context()
+                    package_price = package.total_amount_for_context(attendee_context)
+                    
+                    # Store metadata for payment
+                    selection_metadata = {
+                        'attendee_id': str(attendee.attendee_id),
+                        'attendee_name': attendee.full_name,
+                        'package_id': package.id,
+                        'package_name': package.name,
+                        'frozen_price': str(package_price.amount),
+                        'currency': package_price.currency.code,
+                    }
+                    
+                    # Create order for this attendee if there are products
+                    if product_selections:
+                        order = Order.objects.create(
+                            customer=user,
+                            attendee=attendee,
+                            booking_package=package,
+                            status=OrderStatusChoices.DRAFT,
+                            total_amount=Money(0, 'GBP'),
+                            created_by=user
+                        )
+                        
+                        order_total = Money(0, 'GBP')
+                        product_items = []
+                        
+                        for prod_selection in product_selections:
+                            package_product = prod_selection['_package_product']
+                            variant = prod_selection['_variant']
+                            quantity = prod_selection['quantity']
+                            
+                            # Calculate price with variant and package discount
+                            item_price = package_product.total_amount_with_variant(
+                                variant=variant,
+                                context=attendee_context
+                            )
+                            
+                            # Add item to order (this handles stock decrement)
+                            try:
+                                order_item = order.add_order_item(variant, quantity)
+                                order_total += order_item.total_price
+                                
+                                product_items.append({
+                                    'package_product_id': package_product.id,
+                                    'variant_id': str(variant.id),
+                                    'quantity': quantity,
+                                    'unit_price': str(order_item.unit_price.amount),
+                                    'total_price': str(order_item.total_price.amount),
+                                })
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to add order item for attendee {attendee.attendee_id}: {str(e)}"
+                                )
+                                raise ValidationError({
+                                    'product_selections': f'Failed to add product: {str(e)}'
+                                })
+                        
+                        # Submit order
+                        order.transition_to(OrderStatusChoices.PENDING)
+                        
+                        orders_data.append({
+                            'order_id': str(order.order_id),
+                            'order_reference': order.order_reference_id,
+                            'attendee_id': str(attendee.attendee_id),
+                            'total_amount': str(order.total_amount.amount),
+                            'currency': order.total_amount.currency.code,
+                            'product_items': product_items,
+                            '_order_object': order,
+                        })
+                        
+                        # Add order total to running total
+                        total_amount += order.total_amount
+                        selection_metadata['order_id'] = str(order.order_id)
+                        selection_metadata['order_total'] = str(order.total_amount.amount)
+                    
+                    # Add package price to total
+                    total_amount += package_price
+                    attendee_selections_metadata.append(selection_metadata)
+                
+                # === STEP 3: Create Payment ===
+                # Skip payment creation if total is zero (free event)
+                payment = None
+                if total_amount.amount > 0:
+                    payment_metadata = {
+                        'booking_id': str(booking.id),
+                        'booking_reference': booking.booking_reference,
+                        'attendee_selections': attendee_selections_metadata,
+                        'payment_type': 'booking_with_packages',
+                        'total_attendees': len(attendee_selections),
+                    }
+                    
+                    payment = Payment.objects.create(
+                        user=user,
+                        event=intent.event,
+                        method=payment_method,
+                        base_amount=total_amount,
+                        percentage_modifier=Decimal('0.00'),
+                        description=f"Booking {booking.booking_reference} - {intent.event.title}",
+                        status=PaymentStatusChoices.PENDING,
+                        metadata=payment_metadata,
+                        target=booking
+                    )
+                    
+                    # Link payment to all orders
+                    for order_data in orders_data:
+                        order_obj = order_data['_order_object']
+                        order_obj.payment = payment
+                        order_obj.save(update_fields=['payment'])
+                    
+                    logger.info(
+                        f"Created payment {payment.payment_reference} for booking {booking.booking_reference}, "
+                        f"amount: {payment.base_amount}"
+                    )
+                
+                # === STEP 4: Mark Intent as Completed ===
+                intent.mark_completed(save=True)
+                
+                # === STEP 5: Handle Payment Method Specific Logic ===
+                response_data = {
+                    'booking_id': str(booking.id),
+                    'booking_reference': booking.booking_reference,
+                    'payment_id': payment.id if payment else None,
+                    'payment_reference': payment.payment_reference if payment else None,
+                    'total_amount': str(total_amount.amount),
+                    'currency': total_amount.currency.code,
+                    'orders': [
+                        {
+                            'order_id': od['order_id'],
+                            'order_reference': od['order_reference'],
+                            'attendee_id': od['attendee_id'],
+                            'total_amount': od['total_amount'],
+                            '_links': {
+                                'self': request.build_absolute_uri(f'/api/products/orders/{od["order_id"]}/'),
+                            }
+                        }
+                        for od in orders_data
+                    ],
+                    '_links': {
+                        'self': request.build_absolute_uri(f'/api/bookings/list/{booking.id}/'),
+                        'attendees': request.build_absolute_uri(f'/api/bookings/list/{booking.id}/attendees/'),
+                        'tickets': request.build_absolute_uri(f'/api/bookings/list/{booking.id}/tickets/'),
+                    }
+                }
+                
+                if not payment:
+                    # Free event - create tickets immediately
+                    response_data['status'] = 'confirmed'
+                    response_data['message'] = 'Booking confirmed. This is a free event.'
+                    # Note: Tickets will be created by signal handler if payment status changes
+                    
+                elif payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
+                    # STRIPE: Create PaymentIntent and return client_secret
+                    from apps.payments.services.stripe import PaymentIntentService
+                    
+                    try:
+                        stripe_metadata = payment.prepare_stripe_metadata()
+                        payment_intent = PaymentIntentService.create(
+                            amount=payment.base_amount,
+                            currency=payment.base_amount.currency.code,
+                            payment_reference=payment.payment_reference,
+                            metadata=stripe_metadata,
+                            customer_email=user.email,
+                            description=payment.description
+                        )
+                        
+                        # Store Stripe references
+                        payment.stripe_payment_intent = payment_intent.id
+                        payment.save(update_fields=['stripe_payment_intent'])
+                        
+                        response_data['stripe_client_secret'] = payment_intent.client_secret
+                        response_data['status'] = 'pending_payment'
+                        response_data['message'] = (
+                            'Booking created. Complete payment with Stripe to confirm.'
+                        )
+                        
+                        logger.info(
+                            f"Created Stripe PaymentIntent {payment_intent.id} for "
+                            f"payment {payment.payment_reference}"
+                        )
+                    
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to create Stripe PaymentIntent for payment "
+                            f"{payment.payment_reference}: {str(e)}",
+                            exc_info=True
+                        )
+                        raise ValidationError({
+                            'payment': f'Failed to initialize Stripe payment: {str(e)}'
+                        })
+                
+                elif payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+                    # BANK TRANSFER: Return bank reference and instructions
+                    response_data['bank_transfer_reference'] = payment.bank_transfer_reference
+                    response_data['bank_transfer_instructions'] = (
+                        f"Please transfer {payment.base_amount} to our bank account with "
+                        f"reference: {payment.bank_transfer_reference}. "
+                        f"Your tickets will be issued after payment verification."
+                    )
+                    response_data['status'] = 'pending_verification'
+                    response_data['message'] = (
+                        'Booking created. Complete bank transfer to confirm. '
+                        'Tickets will be issued after admin verification.'
+                    )
+                    
+                elif payment_method.method_type == PaymentMethodTypeChoices.CASH:
+                    # CASH: Mark as completed immediately and create tickets
+                    payment.transition_to(PaymentStatusChoices.COMPLETED)
+                    payment.save()
+                    
+                    # Create tickets
+                    tickets = TicketCreatorService.create_tickets_for_payment(payment)
+                    
+                    response_data['status'] = 'confirmed'
+                    response_data['message'] = 'Booking confirmed. Pay cash on arrival.'
+                    response_data['tickets'] = [
+                        {
+                            'ticket_id': str(t.ticket_id),
+                            'ticket_code': t.ticket_code,
+                            'attendee_name': t.attendee.full_name,
+                            '_links': {
+                                'self': request.build_absolute_uri(f'/api/bookings/tickets/{t.ticket_id}/'),
+                            }
+                        }
+                        for t in tickets
+                    ]
+                
+                return Response(response_data, status=status.HTTP_201_CREATED)
+        
+        except ValidationError:
+            # Re-raise validation errors
+            raise
+        
+        except Exception as e:
+            # Log unexpected errors
+            logger.error(
+                f"Checkout failed for user {user.id}, intent {intent.booking_intent_id}: {str(e)}",
+                exc_info=True,
+                extra={
+                    'user_id': user.id,
+                    'intent_id': str(intent.booking_intent_id),
+                    'event_id': intent.event_id,
+                    'attendee_count': len(attendee_selections),
+                    'error_type': type(e).__name__,
+                    'error_message': str(e),
+                }
+            )
+            
+            # Return generic error (transaction will auto-rollback)
+            raise ValidationError({
+                'checkout': (
+                    'Checkout failed due to an unexpected error. '
+                    'All changes have been rolled back. Please try again or contact support.'
+                )
+            })
 
 
 # ============================================================================

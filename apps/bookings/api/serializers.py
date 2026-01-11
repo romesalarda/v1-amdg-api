@@ -1070,3 +1070,240 @@ class AttendeeAlternativeSigninCreateUpdateSerializer(serializers.ModelSerialize
             validated_data['defined_by'] = request.user
         
         return AttendeeAlternativeSigninIdentifier.objects.create(**validated_data)
+
+
+# ============================================================================
+# CHECKOUT SERIALIZERS
+# ============================================================================
+
+class ProductSelectionSerializer(serializers.Serializer):
+    """Serializer for product variant selection within a package."""
+    
+    package_product_id = serializers.IntegerField(
+        help_text="ID of the PackageProduct this selection is for"
+    )
+    variant_id = serializers.UUIDField(
+        help_text="UUID of the ProductVariant being selected"
+    )
+    quantity = serializers.IntegerField(
+        min_value=1,
+        default=1,
+        help_text="Quantity to order (must not exceed package_product.quantity_per_attendee)"
+    )
+    
+    def validate(self, attrs):
+        """Validate that quantity doesn't exceed package limits."""
+        from apps.bookings.models import PackageProduct
+        from apps.products.models import ProductVariant
+        
+        package_product_id = attrs.get('package_product_id')
+        variant_id = attrs.get('variant_id')
+        quantity = attrs.get('quantity')
+        
+        # Validate PackageProduct exists
+        try:
+            package_product = PackageProduct.objects.get(id=package_product_id)
+        except PackageProduct.DoesNotExist:
+            raise serializers.ValidationError({
+                'package_product_id': f'PackageProduct with id {package_product_id} does not exist.'
+            })
+        
+        # Validate ProductVariant exists and belongs to the product
+        try:
+            variant = ProductVariant.objects.get(variant_id=variant_id)
+        except ProductVariant.DoesNotExist:
+            raise serializers.ValidationError({
+                'variant_id': f'ProductVariant with id {variant_id} does not exist.'
+            })
+        
+        if variant.product_id != package_product.product_id:
+            raise serializers.ValidationError({
+                'variant_id': f'Variant does not belong to product {package_product.product.title}'
+            })
+        
+        # Strict enforcement: quantity must not exceed package limit
+        if quantity > package_product.quantity_per_attendee:
+            raise serializers.ValidationError({
+                'quantity': (
+                    f'Quantity {quantity} exceeds package limit of '
+                    f'{package_product.quantity_per_attendee}. '
+                    'To order more, place a separate order after checkout.'
+                )
+            })
+        
+        # Store validated objects for later use
+        attrs['_package_product'] = package_product
+        attrs['_variant'] = variant
+        
+        return attrs
+
+
+class AttendeeCheckoutSerializer(serializers.Serializer):
+    """Serializer for a single attendee's package and product selections."""
+    
+    attendee_id = serializers.UUIDField(
+        help_text="UUID of the attendee this selection is for"
+    )
+    package_id = serializers.IntegerField(
+        help_text="ID of the BookingPackage selected for this attendee"
+    )
+    product_selections = ProductSelectionSerializer(
+        many=True,
+        required=False,
+        help_text="Optional product variant selections for package products"
+    )
+    
+    def validate(self, attrs):
+        """Validate attendee and package compatibility."""
+        from apps.attendee.models import Attendee
+        from apps.bookings.models import BookingPackage
+        
+        attendee_id = attrs.get('attendee_id')
+        package_id = attrs.get('package_id')
+        product_selections = attrs.get('product_selections', [])
+        
+        # Validate Attendee exists
+        try:
+            attendee = Attendee.objects.get(attendee_id=attendee_id)
+        except Attendee.DoesNotExist:
+            raise serializers.ValidationError({
+                'attendee_id': f'Attendee with id {attendee_id} does not exist.'
+            })
+        
+        # Validate BookingPackage exists and belongs to same event
+        try:
+            package = BookingPackage.objects.get(id=package_id)
+        except BookingPackage.DoesNotExist:
+            raise serializers.ValidationError({
+                'package_id': f'BookingPackage with id {package_id} does not exist.'
+            })
+        
+        if package.event_id != attendee.event_id:
+            raise serializers.ValidationError({
+                'package_id': 'Package must belong to the same event as the attendee.'
+            })
+        
+        # Validate product selections match package products
+        if product_selections:
+            package_product_ids = set(ps['package_product_id'] for ps in product_selections)
+            actual_package_products = package.package_products.values_list('id', flat=True)
+            
+            invalid_ids = package_product_ids - set(actual_package_products)
+            if invalid_ids:
+                raise serializers.ValidationError({
+                    'product_selections': f'PackageProduct IDs {invalid_ids} do not belong to package {package.name}'
+                })
+        
+        # Store validated objects
+        attrs['_attendee'] = attendee
+        attrs['_package'] = package
+        
+        return attrs
+
+
+class CheckoutSerializer(serializers.Serializer):
+    """
+    Checkout serializer for creating bookings with payments.
+    
+    This serializer:
+    1. Accepts booking intent ID, payment method, and attendee selections
+    2. Validates all data comprehensively
+    3. Does NOT accept prices from frontend (backend calculates all)
+    4. Returns booking, payment, orders, and tickets (or client_secret for Stripe)
+    """
+    
+    booking_intent_id = serializers.UUIDField(
+        help_text="UUID of the BookingIntent to complete"
+    )
+    payment_method_id = serializers.IntegerField(
+        help_text="ID of the PaymentMethod to use"
+    )
+    attendees = AttendeeCheckoutSerializer(
+        many=True,
+        help_text="List of attendee selections with packages and products"
+    )
+    
+    def validate_booking_intent_id(self, value):
+        """Validate booking intent exists and is active."""
+        try:
+            # Don't use select_for_update here - will be locked in viewset
+            intent = BookingIntent.objects.get(booking_intent_id=value)
+        except BookingIntent.DoesNotExist:
+            raise serializers.ValidationError(
+                f'BookingIntent with id {value} does not exist.'
+            )
+        
+        if not intent.is_active:
+            raise serializers.ValidationError(
+                f'BookingIntent {value} is not active. Status: {intent.status}, '
+                f'Expired: {intent.is_expired}'
+            )
+        
+        if not intent.can_create_booking():
+            raise serializers.ValidationError(
+                f'Cannot create booking from intent {value}. Event may be full or closed.'
+            )
+        
+        return value
+    
+    def validate_payment_method_id(self, value):
+        """Validate payment method exists and is active."""
+        from apps.payments.models import PaymentMethod
+        
+        try:
+            method = PaymentMethod.objects.get(id=value)
+        except PaymentMethod.DoesNotExist:
+            raise serializers.ValidationError(
+                f'PaymentMethod with id {value} does not exist.'
+            )
+        
+        if not method.is_active:
+            raise serializers.ValidationError(
+                f'PaymentMethod {method.title} is not currently active.'
+            )
+        
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation."""
+        intent_id = attrs.get('booking_intent_id')
+        method_id = attrs.get('payment_method_id')
+        attendee_selections = attrs.get('attendees', [])
+        
+        # Get intent and payment method
+        intent = BookingIntent.objects.get(booking_intent_id=intent_id)
+        from apps.payments.models import PaymentMethod
+        payment_method = PaymentMethod.objects.get(id=method_id)
+        
+        # Validate payment method belongs to same event
+        if payment_method.event_id != intent.event_id:
+            raise serializers.ValidationError({
+                'payment_method_id': 'Payment method must belong to the same event as the booking intent.'
+            })
+        
+        # Validate attendee count matches intent
+        if len(attendee_selections) != intent.intended_ticket_count:
+            raise serializers.ValidationError({
+                'attendees': (
+                    f'Expected {intent.intended_ticket_count} attendees based on booking intent, '
+                    f'but received {len(attendee_selections)} selections.'
+                )
+            })
+        
+        # Validate all attendees belong to the same event
+        event_ids = set(selection['_attendee'].event_id for selection in attendee_selections)
+        if len(event_ids) > 1:
+            raise serializers.ValidationError({
+                'attendees': 'All attendees must belong to the same event.'
+            })
+        
+        if event_ids and list(event_ids)[0] != intent.event_id:
+            raise serializers.ValidationError({
+                'attendees': 'Attendees must belong to the same event as the booking intent.'
+            })
+        
+        # Store validated objects for processing
+        attrs['_intent'] = intent
+        attrs['_payment_method'] = payment_method
+        
+        return attrs

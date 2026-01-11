@@ -89,7 +89,16 @@ class Order(SoftDeleteModel): # no admin model
         null=True,
         blank=True,
         related_name='orders'
-    ) # payment associated with the order, if any, fast lookup  
+    ) # payment associated with the order, if any, fast lookup
+    
+    booking_package = models.ForeignKey(
+        'bookings.BookingPackage',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='orders',
+        help_text='Booking package this order was created from, if applicable'
+    )
 
     def save(self, *args, **kwargs):
         self.clean()
@@ -332,6 +341,15 @@ class OrderItem(models.Model): # no admin model
         on_delete=models.SET_NULL,
         null=True,
         related_name='order_items'
+    )
+    
+    package_product = models.ForeignKey(
+        'bookings.PackageProduct',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='order_items',
+        help_text='PackageProduct this item was created from, if part of a booking package'
     )
 
     quantity = models.PositiveIntegerField(validators=[validators.MinValueValidator(1)])
