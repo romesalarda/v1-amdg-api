@@ -159,19 +159,13 @@ class PaymentIntentServiceTestCase(TestCase):
     @patch('stripe.PaymentIntent.create')
     def test_create_payment_intent_stripe_error(self, mock_create):
         """Test PaymentIntent creation with Stripe error."""
-        # Create a mock CardError exception class
-        class MockCardError(Exception):
-            def __init__(self, message, param=None, code=None):
-                super().__init__(message)
-                self.param = param
-                self.code = code
-        
-        MockCardError.__name__ = 'CardError'
-        mock_create.side_effect = MockCardError(
+        # Create a mock CardError that inherits from stripe.CardError
+        mock_error = stripe.CardError(
             'Your card was declined',
             param='card',
             code='card_declined'
         )
+        mock_create.side_effect = mock_error
         
         with self.assertRaises(StripePaymentError) as cm:
             PaymentIntentService.create(
