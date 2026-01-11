@@ -59,6 +59,8 @@ from .permissions import (
     CanManageProducts, CanManageCategories,
 )
 
+import decimal
+
 
 class StandardPagination(PageNumberPagination):
     """Standard pagination configuration for product endpoints."""
@@ -244,7 +246,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Product.objects.select_related('event', 'added_by', 'last_updated_by').prefetch_related(
-        'categories', 'variants', 'resources'
+        'variants'
     )
     permission_classes = [permissions.IsAuthenticated, CanManageProducts]
     pagination_class = StandardPagination
@@ -485,9 +487,14 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         """Increment the stock quantity of the variant."""
         variant = self.get_object()
         amount = request.data.get('amount')
-        
-        if not amount or not isinstance(amount, int) or amount <= 0:
+
+        try:
+            amount = int(amount)
+        except (TypeError, ValueError):
             raise ValidationError({'amount': 'Amount must be a positive integer.'})
+        
+        if not amount or amount <= 0:
+            raise ValidationError({'amount': 'Amount must be a positive amount.'})
         
         try:
             variant.increment_stock(amount)
@@ -523,9 +530,14 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         """Decrement the stock quantity of the variant."""
         variant = self.get_object()
         amount = request.data.get('amount')
-        
-        if not amount or not isinstance(amount, int) or amount <= 0:
+
+        try:
+            amount = int(amount)
+        except (TypeError, ValueError):
             raise ValidationError({'amount': 'Amount must be a positive integer.'})
+        
+        if not amount or amount <= 0:
+            raise ValidationError({'amount': 'Amount must be a positive amount.'})
         
         try:
             variant.decrement_stock(amount)
@@ -558,6 +570,11 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         """Set the stock quantity to a specific value."""
         variant = self.get_object()
         stock_quantity = request.data.get('stock_quantity')
+
+        try:
+            stock_quantity = int(stock_quantity)
+        except (TypeError, ValueError):
+            raise ValidationError({'stock_quantity': 'Stock quantity must be a non-negative integer.'})
         
         if stock_quantity is None or not isinstance(stock_quantity, int) or stock_quantity < 0:
             raise ValidationError({'stock_quantity': 'Stock quantity must be a non-negative integer.'})
@@ -757,7 +774,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         try:
             variant = ProductVariant.objects.get(variant_id=variant_id)
             order_item = order.add_order_item(variant, quantity)
-            
+
             item_serializer = OrderItemSerializer(order_item, context={'request': request})
             return Response({
                 'status': 'success',

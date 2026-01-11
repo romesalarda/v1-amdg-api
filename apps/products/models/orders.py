@@ -251,6 +251,7 @@ class Order(SoftDeleteModel): # no admin model
             product_variant.decrement_stock(quantity) # adjust stock
 
             # Recalculate and save order total within transaction for consistency
+            self.refresh_from_db()
             self.total_amount = self.get_total_amount()
             self.full_clean()
             self.save() # persist changes

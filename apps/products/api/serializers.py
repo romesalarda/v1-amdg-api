@@ -898,7 +898,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Order
-        fields = ('customer', 'attendee', 'items')
+        fields = ('customer', 'attendee', 'items', 'order_id')
     
     def validate(self, attrs):
         """Validate order creation."""
@@ -969,7 +969,8 @@ class OrderCreateSerializer(serializers.ModelSerializer):
             
             # Use the model's add_order_item method which handles all business logic
             order.add_order_item(variant, quantity)
-        
+            
+        order.recalculate_total_amount()
         return order
 
 
