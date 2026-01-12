@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
-from django.core.validators import EmailValidator
+from django.core import validators
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.models import ContentType
 from core.utils.validators import PhoneNumberValidator
@@ -34,12 +34,12 @@ class Attendee(SoftDeleteModel):
     
     user = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='attendees', null=True, blank=True)
     
-    first_name = models.CharField(max_length=150)
-    last_name = models.CharField(max_length=150)
+    first_name = models.CharField(max_length=150, validators=[validators.MinLengthValidator(1)])
+    last_name = models.CharField(max_length=150, validators=[validators.MinLengthValidator(1)])
     
     event = models.ForeignKey('events.Event', on_delete=models.SET_NULL, related_name='attendees', null=True, blank=True)
     
-    email = models.EmailField(blank=True, null=True, validators=[EmailValidator()])
+    email = models.EmailField(blank=True, null=True, validators=[validators.EmailValidator()])
     phone_number = models.CharField(max_length=20, null=True, blank=True, validators=[PhoneNumberValidator()])
     
     date_of_birth = models.DateField(null=True)
@@ -70,6 +70,8 @@ class Attendee(SoftDeleteModel):
         ]
         
     def save(self, *args, **kwargs):
+        if self.gender:
+            self.gender = self.gender.upper().strip()
         if not self.attendee_display_id:
             self.attendee_display_id = display.generate_human_readable_id(20, "ATT", self.event.display_code[:5])
         self.clean()
@@ -82,6 +84,13 @@ class Attendee(SoftDeleteModel):
         return f"<Attendee {self.attendee_display_id}: {self.full_name}>"
     
     def clean(self):        
+        if self.date_of_birth and self.date_of_birth > date.today():
+            raise ValidationError("Date of birth cannot be in the future.")
+        
+        if self.gender:
+            if self.gender not in ['MALE', 'FEMALE', 'OTHER', 'PREFER_NOT_TO_SAY']:
+                raise ValidationError("Invalid gender value.")
+        
         if self.relationship_to_user == AttendeeRelationship.SELF and self.user is None:
             raise ValidationError("Attendees with 'self' relationship must be linked to a user account.")
         
@@ -90,6 +99,9 @@ class Attendee(SoftDeleteModel):
         
         if self.date_of_birth is None:
             raise ValidationError("Date of birth is required for attendee.")
+        
+        if not self.event_id:
+            raise ValidationError("Attendee must be linked to an event.")
         
         if not date_validation.valid_date_of_birth(self.date_of_birth, raise_exception=False):
             raise ValidationError("Date of birth cannot be in the future or unreasonably far in the past.")

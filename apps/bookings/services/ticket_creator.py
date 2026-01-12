@@ -89,14 +89,36 @@ class TicketCreatorService:
         try:
             with transaction.atomic():
                 for selection in package_selections:
+                    # Skip selections with invalid package_id
+                    package_id = selection.get('package_id')
+                    attendee_id = selection.get('attendee_id')
+                    
+                    if not package_id:
+                        logger.warning(
+                            f"Skipping ticket creation for selection with missing package_id: {selection}"
+                        )
+                        continue
+                    
+                    if not attendee_id:
+                        logger.warning(
+                            f"Skipping ticket creation for selection with missing attendee_id: {selection}"
+                        )
+                        continue
+                    
                     ticket = TicketCreatorService._create_ticket_for_attendee(
                         booking=booking,
                         payment=payment,
-                        attendee_id=selection['attendee_id'],
-                        package_id=selection['package_id'],
+                        attendee_id=attendee_id,
+                        package_id=package_id,
                         frozen_price=selection.get('frozen_price')
                     )
                     created_tickets.append(ticket)
+                
+                if not created_tickets:
+                    raise TicketCreationError(
+                        f"No valid tickets could be created from package selections in payment {payment.payment_reference}. "
+                        "All selections had missing or invalid data."
+                    )
                 
                 logger.info(
                     f"Successfully created {len(created_tickets)} tickets for "

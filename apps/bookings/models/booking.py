@@ -388,7 +388,33 @@ class Booking(models.Model, PaymentMixin):
         if include_ticket_pricing:
             metadata['ticket_breakdown'] = ticket_breakdown
         
-        return metadata    
+        return metadata
+    
+    def get_related_orders(self):
+        """
+        Get all Orders related to this Booking via booking_package relationships.
+        
+        When a user books a package that includes products, orders are created
+        with booking_package FK linking back to the package. This helper finds
+        all such orders.
+        
+        @return: QuerySet of Order objects linked to this booking's packages
+        """
+        from apps.products.models import Order
+        from apps.bookings.models import Ticket
+        
+        # Get all booking packages from tickets belonging to this booking's attendees
+        package_ids = Ticket.objects.filter(
+            attendee__booking=self
+        ).exclude(
+            package__isnull=True
+        ).values_list('package_id', flat=True).distinct()
+        
+        # Find orders that reference these packages
+        return Order.objects.filter(
+            booking_package_id__in=package_ids
+        ).select_related('attendee', 'booking_package', 'payment')
+    
     class Meta:
         ordering = ['-booked_at']
         verbose_name = 'Booking'

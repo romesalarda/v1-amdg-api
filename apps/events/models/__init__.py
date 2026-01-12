@@ -6,6 +6,7 @@ from .authorization import EventAuthorization, EventAuthorizationStatusChoices
 from .review import EventReview
 from .questions import EventQuestion, EventQuestionTypeChoices, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice
 from .venue import EventVenue
+from .notifications import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
 
 __all__ = [
     'Event',
@@ -30,4 +31,7 @@ __all__ = [
     'EventQuestionAnswerChoice',
     'EventSettings',
     'EventVenue',
+    'EventNotification',
+    'NotificationTypeChoices',
+    'NotificationPriorityChoices',
 ]

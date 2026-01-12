@@ -26,8 +26,8 @@ class TicketType(models.Model): # e.g. VIP, General Admission, Early Bird
         choices=TicketScopeChoices.choices,
         default=TicketScopeChoices.FULL_EVENT
     )
-    valid_from = models.DateTimeField()
-    valid_until = models.DateTimeField()
+    valid_from = models.DateTimeField() # set based on event start date?
+    valid_until = models.DateTimeField() # need to be autoset based on event end date?
     
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -56,6 +56,8 @@ class TicketType(models.Model): # e.g. VIP, General Admission, Early Bird
     
     def save(self, *args, **kwargs):
         self.clean()
+        # todo: override datetimes based on event dates and timezone?
+        # todo: autoset code: mix of event name and ticket type title?
         super().save(*args, **kwargs)
     
     class Meta:
@@ -148,7 +150,7 @@ class Ticket(models.Model):
         if not skip_generation:
             self.clean()
         
-        if not self.ticket_code and not skip_generation:
+        if not self.ticket_code and not skip_generation: # todo: migrate to utility function
             # Generate unique ticket code
             for attempt in range(5):
                 self.ticket_code = generate_human_readable_id(

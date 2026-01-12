@@ -29,6 +29,7 @@ from django.contrib.contenttypes.models import ContentType
 from datetime import date, timedelta
 from decimal import Decimal
 from djmoney.money import Money
+from unittest.mock import patch, MagicMock
 
 from apps.bookings.models import (
     Booking, BookingPackage, TicketType, Ticket, 
@@ -266,8 +267,9 @@ class AttendeePartialRefundTest(TestCase):
             attendee=self.daughter_attendee,
             relationship=HumanRelationshipChoices.CHILD
         )
-        
-    def test_partial_refund_single_attendee_with_ticket_and_product(self):
+    
+    @patch('stripe.Refund.create')
+    def test_partial_refund_single_attendee_with_ticket_and_product(self, mock_stripe_refund):
         """
         Test: Family realizes dad can't attend. They request a refund for ONLY dad's items.
         
@@ -278,6 +280,13 @@ class AttendeePartialRefundTest(TestCase):
         4. Staff verifies and processes the refund
         5. Other family members' bookings remain active
         """
+        
+        # Mock Stripe refund to return success
+        mock_refund = MagicMock()
+        mock_refund.id = 're_mock123'
+        mock_refund.status = 'succeeded'
+        mock_refund.amount = 1200
+        mock_stripe_refund.return_value = mock_refund
         
         # ===== STEP 1: PARTICIPANT COMPLETES INITIAL BOOKING =====
         # Calculate costs:
@@ -917,7 +926,8 @@ class AttendeeRemovalWithRefundPolicyTest(TestCase):
         
         return active_payments
     
-    def test_full_refund_early_cancellation(self):
+    @patch('stripe.Refund.create')
+    def test_full_refund_early_cancellation(self, mock_stripe_refund):
         """
         Test: Attendee cancels well in advance (100% refund policy).
         
@@ -927,6 +937,12 @@ class AttendeeRemovalWithRefundPolicyTest(TestCase):
         3. Staff processes 100% refund of all payments
         4. Staff removes attendee from event
         """
+        
+        # Mock Stripe refund to return success
+        mock_refund = MagicMock()
+        mock_refund.id = 're_mock456'
+        mock_refund.status = 'succeeded'
+        mock_stripe_refund.return_value = mock_refund
         
         # ===== STEP 1: CREATE ATTENDEE WITH BOOKING =====
         user, attendee, ticket_payment, product_payment, ticket, order = \
@@ -1035,8 +1051,9 @@ class AttendeeRemovalWithRefundPolicyTest(TestCase):
         # Verify attendee marked as deleted
         attendee.refresh_from_db()
         self.assertIsNotNone(attendee.deleted_at)
-        
-    def test_partial_refund_with_cancellation_penalty(self):
+    
+    @patch('stripe.Refund.create')
+    def test_partial_refund_with_cancellation_penalty(self, mock_stripe_refund):
         """
         Test: Attendee cancels with moderate notice (50% refund policy).
         
@@ -1046,6 +1063,12 @@ class AttendeeRemovalWithRefundPolicyTest(TestCase):
         3. Staff processes 50% refund of all payments
         4. Staff documents cancellation penalty
         """
+        
+        # Mock Stripe refund to return success
+        mock_refund = MagicMock()
+        mock_refund.id = 're_mock789'
+        mock_refund.status = 'succeeded'
+        mock_stripe_refund.return_value = mock_refund
         
         # ===== STEP 1: CREATE ATTENDEE WITH BOOKING =====
         user, attendee, ticket_payment, product_payment, ticket, order = \
@@ -1273,12 +1296,19 @@ class AttendeeRefundComplexScenariosTest(TestCase):
             is_active=True,
             created_by=self.organizer
         )
-        
-    def test_refund_attendee_with_multiple_payments(self):
+    
+    @patch('stripe.Refund.create')
+    def test_refund_attendee_with_multiple_payments(self, mock_stripe_refund):
         """
         Test: Attendee has multiple separate payments (ticket, upgrade, merchandise).
         All must be identified and refunded when removing attendee.
         """
+        
+        # Mock Stripe refund to return success
+        mock_refund = MagicMock()
+        mock_refund.id = 're_mock_multi'
+        mock_refund.status = 'succeeded'
+        mock_stripe_refund.return_value = mock_refund
         
         # Create user and booking
         user = User.objects.create_user(
@@ -1396,12 +1426,19 @@ class AttendeeRefundComplexScenariosTest(TestCase):
         ).count()
         
         self.assertEqual(refunded_count, 3)
-        
-    def test_refund_with_already_partially_refunded_payment(self):
+    
+    @patch('stripe.Refund.create')
+    def test_refund_with_already_partially_refunded_payment(self, mock_stripe_refund):
         """
         Test: Attendee has a payment that was already partially refunded.
         When removing attendee, only refund the remaining amount.
         """
+        
+        # Mock Stripe refund to return success
+        mock_refund = MagicMock()
+        mock_refund.id = 're_mock_partial'
+        mock_refund.status = 'succeeded'
+        mock_stripe_refund.return_value = mock_refund
         
         user = User.objects.create_user(
             username='emily',

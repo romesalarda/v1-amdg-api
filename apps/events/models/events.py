@@ -274,6 +274,11 @@ class EventSettings(models.Model):
         help_text="Whether payment processing is enabled for this event. Note that disabling this will also disable donations, refunds, and product selling."
     ) # whether payment processing is enabled for this event - if false, no payments can be made for products, donations, etc. 
       # Ensures events can be free if needed.
+
+    products_require_approval = models.BooleanField(
+        default=False,
+        help_text="Whether products for this event require admin approval before being purchasable."    
+    ) # products added to this event require admin approval before being purchasable
     
     product_publication_requires_verification = models.BooleanField(
         default=False,
@@ -283,6 +288,12 @@ class EventSettings(models.Model):
         default=False,
         help_text="Whether selling products is enabled for this event."
     ) # whether selling products is enabled for this event
+    
+    orders_require_approval = models.BooleanField(
+        default=True,
+        help_text="Whether orders for this event require manual approval before being auto-processed on payment completion. "
+                  "If False, orders will automatically transition to PROCESSING status when payment completes."
+    ) # whether orders require manual approval before processing
 
     donation_enabled = models.BooleanField(
         default=False,
