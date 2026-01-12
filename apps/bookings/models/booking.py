@@ -275,7 +275,7 @@ class Booking(models.Model, PaymentMixin):
         on_delete=models.CASCADE,
         related_name='bookings'
     )
-    booking_reference = models.CharField(max_length=50, unique=True)
+    booking_reference = models.CharField(max_length=50, unique=True, blank=True)
     booked_at = models.DateTimeField(auto_now_add=True)
     
     made_by = models.ForeignKey(
@@ -293,11 +293,6 @@ class Booking(models.Model, PaymentMixin):
         return f"<Booking id={self.id} reference={self.booking_reference} user={self.made_by}>"
     
     def clean(self):
-        if not self.booking_reference or not self.booking_reference.strip():
-            raise ValidationError({
-                'booking_reference': 'Booking reference cannot be empty.'
-            })
-        
         # Validate that all attendees belong to the same event as the booking
         if self.pk and self.event:
             mismatched_attendees = self.attendees.exclude(event=self.event)
@@ -307,6 +302,19 @@ class Booking(models.Model, PaymentMixin):
                 })
     
     def save(self, *args, **kwargs):
+        if not self.booking_reference:
+            from core.utils.display import try_generate_unique_display_code
+            try:
+                self.booking_reference = try_generate_unique_display_code(
+                    model_class=Booking,
+                    length=50,
+                    prefix='BK',
+                    args=[str(self.event.display_code)],
+                    lookup_field='booking_reference',
+                    max_attempts=5
+                )
+            except ValueError as e:
+                raise ValidationError({'booking_reference': 'Could not generate unique booking reference.'})
         self.clean()
         super().save(*args, **kwargs)
     

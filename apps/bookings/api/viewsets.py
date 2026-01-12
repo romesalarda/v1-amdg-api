@@ -353,7 +353,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             "5. Handles failures with automatic cleanup and stock restoration"
         ),
         tags=["Bookings"],
-        request={'application/json': 'CheckoutSerializer'},
+        request={'application/json': CheckoutSerializer},
         responses={
             201: OpenApiResponse(
                 description="Checkout successful",
