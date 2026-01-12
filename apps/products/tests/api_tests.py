@@ -286,10 +286,7 @@ class ProductAPITestCase(APITestCase):
             'main_image': image_file
         }
         response = self.client.post('/api/products/list/', data, format='multipart')
-        
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Response data: {response.data}")
-        
+            
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         # Title gets titlecased in Product.clean(), so look for the titlecased version
         product = Product.objects.get(title='Product With Image')
@@ -339,10 +336,7 @@ class ProductAPITestCase(APITestCase):
             'additional_images': [additional_image_file1, additional_image_file2]
         }
         response = self.client.post('/api/products/list/', data, format='multipart')
-        
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Response data: {response.data}")
-        
+            
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         # Title gets titlecased in Product.clean()
         product = Product.objects.get(title='Product With Multiple Images')

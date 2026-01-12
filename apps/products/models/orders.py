@@ -17,6 +17,10 @@ from .product import ProductVariant
 import uuid
 from decimal import Decimal
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 ORDER_STATUS_TRANSITIONS = {
     'draft': ['pending', 'cancelled'],
     'pending': ['processing', 'cancelled'],
@@ -186,8 +190,8 @@ class Order(SoftDeleteModel): # no admin model
                         item.product_variant.increment_stock(item.quantity)
                     except exceptions.ValidationError as e  :
                         # If stock restoration fails (e.g., would exceed max), log but don't block cancellation
-                        print(f"Warning: Could not restore stock for ProductVariant {item.product_variant.id} when cancelling/refunding Order {self.id}.")
-                        print(f"Reason: {str(e)}")
+                        logger.warning(f"Could not restore stock for ProductVariant {item.product_variant.id} when cancelling/refunding Order {self.id}.")
+                        logger.warning(f"Reason: {str(e)}")
         
         self.save()
 

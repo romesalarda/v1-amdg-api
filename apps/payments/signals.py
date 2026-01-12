@@ -73,7 +73,7 @@ def handle_payment_completion(sender, instance, created, **kwargs):
         # Manual intervention or retry mechanism can handle failures
 
 
-def _handle_booking_payment(payment: Payment, booking: 'Booking') -> None:
+def _handle_booking_payment(payment: Payment, booking) -> None:
     """
     Handle payment completion for Booking targets.
     
@@ -176,7 +176,7 @@ def _handle_booking_payment(payment: Payment, booking: 'Booking') -> None:
                 )
 
 
-def _handle_order_payment(payment: Payment, order: 'Order') -> None:
+def _handle_order_payment(payment: Payment, order) -> None:
     """
     Handle payment completion for standalone Order targets.
     

@@ -196,7 +196,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
 
     @property
     def can_participants_register(self):
-        print(self.status, self.is_approved, self.max_capacity_reached)
         return (
             self.status == EventStatusChoices.OPEN and 
             self.is_approved and 

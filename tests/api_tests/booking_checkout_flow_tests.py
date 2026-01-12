@@ -31,6 +31,10 @@ from apps.organisations.models import Organisation
 from apps.products.models import Product, ProductVariant, ProductSizeChoices
 from apps.bookings.models import PackageProduct
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 User = get_user_model()
 
 
@@ -397,7 +401,7 @@ class CheckoutAPITestCase(TestCase):
             ]
         }, format='json')
 
-        print(response.data)
+        logger.debug(response.data)
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertGreater(len(response.data['orders']), 0)
@@ -469,6 +473,7 @@ class CheckoutAPITestCase(TestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('attendees', response.data or {})
+        logger.debug(response.data)
 
 
 class CheckoutEdgeCasesTest(TestCase):

@@ -37,6 +37,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False") == "True"
 SENTRY_DSN = os.getenv("SENTRY_DSN", "")
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 if SENTRY_ENABLED and SENTRY_DSN:
     import sentry_sdk
     from sentry_sdk.integrations.django import DjangoIntegration
@@ -85,7 +89,7 @@ if USE_SSM:
         
         ssm_client = boto3.client('ssm', region_name=os.getenv("AWS_REGION", "eu-west-2"))
     except (ImportError, NoCredentialsError) as e:
-        print(f"WARNING: Could not initialize SSM client: {e}")
+        logger.warning(f"WARNING: Could not initialize SSM client: {e}")
         USE_SSM = False
 
 
@@ -122,12 +126,11 @@ def _load_all_secrets_from_ssm():
             
             # Log any invalid parameters
             if response.get('InvalidParameters'):
-                print(f"WARNING: Invalid SSM parameters: {response['InvalidParameters']}")
+                logger.warning(f"WARNING: Invalid SSM parameters: {response['InvalidParameters']}")
     
     except Exception as e:
-        print(f"ERROR loading secrets from SSM: {e}")
-        print("Falling back to environment variables")
-
+        logger.error(f"ERROR loading secrets from SSM: {e}")
+        logger.error("Falling back to environment variables")
 
 # Load secrets at startup
 _load_all_secrets_from_ssm()
