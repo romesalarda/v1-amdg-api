@@ -20,7 +20,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.utils import extend_schema_field, extend_schema_serializer, inline_serializer
 from drf_spectacular.types import OpenApiTypes
 from djmoney.money import Money
 from djmoney.contrib.django_rest_framework import MoneyField
@@ -211,6 +211,58 @@ class EventProductCategoryCreateUpdateSerializer(serializers.ModelSerializer):
 class ProductImageField(serializers.Field):
     """Custom field for handling product images."""
     
+    class Meta:
+        swagger_schema_fields = {
+            'type': 'object',
+            'properties': {
+                'main': {
+                    'type': 'object',
+                    'nullable': True,
+                    'properties': {
+                        'id': {'type': 'integer'},
+                        'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                        'alt_text': {'type': 'string'},
+                    }
+                },
+                'additional': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'id': {'type': 'integer'},
+                            'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                            'alt_text': {'type': 'string'},
+                        }
+                    }
+                }
+            }
+        }
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'main': {
+                'type': 'object',
+                'nullable': True,
+                'properties': {
+                    'id': {'type': 'integer'},
+                    'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                    'alt_text': {'type': 'string'},
+                }
+            },
+            'additional': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'id': {'type': 'integer'},
+                        'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                        'alt_text': {'type': 'string'},
+                    }
+                }
+            }
+        }
+    })
     def to_representation(self, value):
         """Convert product to its images."""
         request = self.context.get('request')
@@ -266,6 +318,14 @@ class ProductListSerializer(serializers.ModelSerializer):
         """Return the modified price as string."""
         return str(obj.modified_amount)
     
+    @extend_schema_field({
+        'type': 'object',
+        'nullable': True,
+        'properties': {
+            'id': {'type': 'integer'},
+            'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+        }
+    })
     def get_main_image(self, obj):
         """Get main product image URL."""
         request = self.context.get('request')
@@ -301,7 +361,7 @@ class ProductListSerializer(serializers.ModelSerializer):
 class ProductDetailSerializer(ProductListSerializer):
     """Detailed serializer for Product with full information including images."""
     
-    images = ProductImageField(source='*', read_only=True)
+    images = serializers.SerializerMethodField()
     availability_windows = serializers.SerializerMethodField()
     rules = serializers.SerializerMethodField()
     variants = serializers.SerializerMethodField()
@@ -315,6 +375,55 @@ class ProductDetailSerializer(ProductListSerializer):
             'variants', 'added_by', 'added_by_name', 'last_updated_by',
             'last_updated_by_name', 'last_updated_at'
         )
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'main': {
+                'type': 'object',
+                'nullable': True,
+                'properties': {
+                    'id': {'type': 'integer'},
+                    'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                    'alt_text': {'type': 'string'},
+                }
+            },
+            'additional': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'id': {'type': 'integer'},
+                        'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                        'alt_text': {'type': 'string'},
+                    }
+                }
+            }
+        }
+    })
+    def get_images(self, obj):
+        """Get all product images (main and additional)."""
+        request = self.context.get('request')
+        images = obj.product_images.all()
+        
+        result = {
+            'main': None,
+            'additional': []
+        }
+        
+        for img in images:
+            img_data = {
+                'id': img.id,
+                'url': request.build_absolute_uri(img.file.url) if request and img.file else None,
+                'alt_text': img.name or obj.title,
+            }
+            
+            if img.tag == 'PRODUCT_PHOTO_MAIN':
+                result['main'] = img_data
+            else:
+                result['additional'].append(img_data)
+        
+        return result
     
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_availability_windows(self, obj) -> list:

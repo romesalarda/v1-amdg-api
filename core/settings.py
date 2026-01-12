@@ -438,6 +438,32 @@ SIMPLE_JWT = {
 # =============================================================================
 # DRF SPECTACULAR (OpenAPI Schema)
 # =============================================================================
+def preprocess_timezone_field(result, generator, request, public):
+    """Postprocessing hook to normalize timezone enum names."""
+    # Find and rename all timezone enums to a single name
+    if 'components' in result and 'schemas' in result['components']:
+        schemas = result['components']['schemas']
+        timezone_enum_name = 'TimezoneEnum'
+        
+        # Find all timezone-related enums and consolidate them
+        timezone_keys = [k for k in schemas.keys() if 'timezone' in k.lower() and 'Enum' in k]
+        
+        if timezone_keys:
+            # Use the first one as the canonical enum
+            first_key = timezone_keys[0]
+            canonical_enum = schemas[first_key]
+            
+            # Replace all references to other timezone enums with the canonical one
+            for key in timezone_keys[1:]:
+                if key in schemas:
+                    del schemas[key]
+            
+            # Rename the first one to our standard name if needed
+            if first_key != timezone_enum_name and first_key in schemas:
+                schemas[timezone_enum_name] = schemas.pop(first_key)
+    
+    return result
+
 SPECTACULAR_SETTINGS = {
     'TITLE': 'AMDG API',
     'DESCRIPTION': 'AMDG Platform API Documentation',
@@ -445,17 +471,23 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
     'SCHEMA_PATH_PREFIX': r'/api',
+    'POSTPROCESSING_HOOKS': ['core.settings.preprocess_timezone_field'],
     'ENUM_NAME_OVERRIDES': {
         'EventStatusChoices': 'apps.events.models.events.EventStatusChoices',
         'EventAuthorizationStatusChoices': 'apps.events.models.authorization.EventAuthorizationStatusChoices',
         'PaymentStatusChoices': 'apps.payments.models.payments.PaymentStatusChoices',
+        'OrderStatusChoices': 'apps.products.models.orders.OrderStatusChoices',
+        'TicketStatusChoices': 'apps.bookings.models.ticket.TicketStatusChoices',
+        'BookingIntentStatusChoices': 'apps.bookings.models.booking.BookingIntentStatusChoices',
         'AttendeeRelationshipEnum': 'apps.attendee.models.attendee.AttendeeRelationship',
         'HumanRelationshipEnum': 'apps.attendee.models.groups.HumanRelationshipChoices',
         'AttendeeActionEnum': 'apps.attendee.models.attendee.AttendeeActionChoices',
         'AttendeeMessagePriorityEnum': 'apps.attendee.models.messages.AttendeeMessagePriority',
         'VerificationStatusEnum': 'apps.common.models.verification.VerificationStatus',
-        'DefaultTimezoneEnum': 'timezone_field.choices.TimeZoneFormField',
+        'VenueContactRoleChoices': 'apps.locations.models.venues.VenueContactRoleChoice',
+        'InvolvedOrganisationRoleChoices': 'apps.organisations.models.organisation.InvolvedOrganisationRoleChoices',
     },
+    'ENUM_ADD_EXPLICIT_BLANK_NULL_CHOICE': False,
 }
 
 # =============================================================================

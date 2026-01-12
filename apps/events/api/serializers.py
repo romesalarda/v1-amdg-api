@@ -64,7 +64,10 @@ class EventTypeSerializer(serializers.ModelSerializer):
 
 
 class EventSettingsSerializer(serializers.ModelSerializer):
-    default_timezone = serializers.ChoiceField(choices=[(tz, tz) for tz in pytz.all_timezones])
+    default_timezone = serializers.ChoiceField(
+        choices=[(tz, tz) for tz in pytz.all_timezones],
+        help_text="Default timezone for event"
+    )
     _links = serializers.SerializerMethodField()
     
     class Meta:
