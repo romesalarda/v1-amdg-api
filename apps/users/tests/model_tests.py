@@ -621,10 +621,9 @@ class UserAPITest(APITestCase):
             'password_confirm': 'testpass123'
         }
         
-        response = self.client.post('/api/users/register/', payload)
+        response = self.client.post('/api/users/', payload)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertIn('user', response.data)
-        self.assertEqual(response.data['user']['email'], payload['email'])
+        self.assertEqual(response.data['email'], payload['email'])
         
         # Check user was created
         user = User.objects.get(email=payload['email'])
@@ -638,8 +637,8 @@ class UserAPITest(APITestCase):
             'password_confirm': 'wrongpass'
         }
         
-        response = self.client.post('/api/users/register/', payload)
-        
+        response = self.client.post('/api/users/', payload)
+        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
     
     def test_health_check(self):

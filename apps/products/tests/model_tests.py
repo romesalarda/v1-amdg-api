@@ -22,6 +22,7 @@ from apps.common.models.rules import AccessRule, BaseEventRuleChoices
 from apps.payments.models import Discount, DiscountType, DiscountRule, DiscountRuleTypeChoices
 from apps.payments.evaluator import DiscountContext
 from apps.bookings.models import Booking
+from apps.organisations.models import Organisation
 
 User = get_user_model()
 
@@ -42,6 +43,11 @@ class ProductModelTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Test Conference 2025',
@@ -51,7 +57,8 @@ class ProductModelTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
     def test_product_creation_with_valid_data(self):
@@ -238,6 +245,11 @@ class ProductImageManagementTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Image Test Event',
@@ -247,7 +259,8 @@ class ProductImageManagementTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.product = Product.objects.create(
@@ -402,6 +415,11 @@ class ProductAvailabilityTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Availability Test Event',
@@ -411,7 +429,8 @@ class ProductAvailabilityTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.product = Product.objects.create(
@@ -507,6 +526,11 @@ class ProductDiscountTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Discount Test Event',
@@ -516,7 +540,8 @@ class ProductDiscountTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.product = Product.objects.create(
@@ -725,6 +750,11 @@ class ProductVariantModelTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Variant Test Event',
@@ -734,7 +764,8 @@ class ProductVariantModelTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.product = Product.objects.create(
@@ -890,6 +921,11 @@ class ProductVariantStockManagementTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Stock Test Event',
@@ -899,7 +935,8 @@ class ProductVariantStockManagementTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.product = Product.objects.create(
@@ -1010,6 +1047,11 @@ class ProductVariantPurchaseTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Purchase Test Event',
@@ -1019,7 +1061,8 @@ class ProductVariantPurchaseTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.product = Product.objects.create(
@@ -1171,6 +1214,11 @@ class OrderModelTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Order Test Event',
@@ -1180,7 +1228,8 @@ class OrderModelTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.booking = Booking.objects.create(
@@ -1449,6 +1498,11 @@ class OrderItemManagementTest(TestCase):
             email='orderitem@example.com',
             password='testpass123'
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event_type = EventType.objects.create(
             title='Conference',
@@ -1464,7 +1518,8 @@ class OrderItemManagementTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.booking = Booking.objects.create(
@@ -1619,6 +1674,11 @@ class OrderItemModelTest(TestCase):
             code='CONF',
             created_by=self.user
         )
+
+        self.organisation = Organisation.objects.create(
+            title='Test Org',
+            created_by=self.user
+        )
         
         self.event = Event.objects.create(
             title='Item Test Event',
@@ -1628,7 +1688,8 @@ class OrderItemModelTest(TestCase):
             event_type=self.event_type,
             start_datetime=timezone.now() + timedelta(days=30),
             end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
         )
         
         self.booking = Booking.objects.create(

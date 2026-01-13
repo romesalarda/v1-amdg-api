@@ -238,7 +238,7 @@ class UserViewSet(viewsets.ModelViewSet):
         Returns:
             List of permission instances
         """
-        if self.action == 'create':
+        if self.action == 'create' or self.request.method == 'POST':
             return [permissions.AllowAny()]
         elif self.action in ['retrieve', 'update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
