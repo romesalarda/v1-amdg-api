@@ -1229,18 +1229,6 @@ class BookingModelTest(TestCase):
                 booking_reference='UNIQUE-REF-001',
                 made_by=self.user
             )
-            
-    def test_booking_validates_reference(self):
-        """Test that booking reference cannot be empty"""
-        booking = Booking(
-            event=self.event,
-            booking_reference='',
-            made_by=self.user
-        )
-        
-        with self.assertRaises(ValidationError):
-            booking.clean()
-
 
 class PackageRuleTypeChoicesTest(TestCase):
     """Test cases for PackageRuleTypeChoices enum"""

@@ -638,7 +638,6 @@ class UserAPITest(APITestCase):
         }
         
         response = self.client.post('/api/users/', payload)
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
     
     def test_health_check(self):

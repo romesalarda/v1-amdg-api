@@ -201,8 +201,6 @@ class AttendeeEndpointTests(AttendeeAPITestCase):
         }
         response = self.client.post('/api/attendees/', data, format='json')
         
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Validation errors: {response.data}")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['first_name'], 'Alice')
         self.assertTrue(response.data['attendee_id'])
@@ -324,8 +322,6 @@ class NestedResourceTests(AttendeeAPITestCase):
             format='json'
         )
         
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Dietary requirement validation errors: {response.data}")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['notes'], 'Very strict')
     
@@ -366,9 +362,6 @@ class NestedResourceTests(AttendeeAPITestCase):
             format='json'
         )
         
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Emergency contact validation errors: {response.data}")
-            
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['first_name'], 'Mary')
         self.assertTrue(response.data['primary_contact'])
@@ -386,8 +379,6 @@ class NestedResourceTests(AttendeeAPITestCase):
             data,
             format='json'
         )
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Consent validation errors: {response.data}")
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(response.data['consent_given'])

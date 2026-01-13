@@ -269,9 +269,6 @@ class BookingEndpointTests(BookingsAPITestCase):
         data = {}
         response = self.client.post(f'/api/bookings/list/?intent={intent.booking_intent_id}', data, format='json')
         
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Booking validation errors: {response.data}")
-        
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn('booking_reference', response.data)
         self.assertTrue(response.data['booking_reference'])
@@ -551,9 +548,6 @@ class TicketTypeEndpointTests(BookingsAPITestCase):
         }
         response = self.client.post('/api/bookings/ticket-types/', data, format='json')
         
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Ticket type validation errors: {response.data}")
-        
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['title'], 'VIP Pass')
         if 'code' in response.data:
@@ -571,10 +565,7 @@ class TicketTypeEndpointTests(BookingsAPITestCase):
             'is_active': True
         }
         response = self.client.post('/api/bookings/ticket-types/', data, format='json')
-        
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Ticket type validation errors: {response.data}")
-        
+                
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     
     def test_create_ticket_type_without_admin_fails(self):
@@ -744,8 +735,6 @@ class BookingPackageEndpointTests(BookingsAPITestCase):
         }
         response = self.client.post('/api/bookings/packages/', data, format='json')
         
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Package validation errors: {response.data}")
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['name'], 'Youth Discount')
@@ -895,9 +884,6 @@ class EventAlternativeSigninEndpointTests(BookingsAPITestCase):
         }
         response = self.client.post('/api/bookings/alternative-signins/', data, format='json')
         
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Event signin validation errors: {response.data}")
-        
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn(response.data['title'], ['Student ID', 'Student Id'])  # Accept title case
     
@@ -939,10 +925,7 @@ class AttendeeAlternativeSigninEndpointTests(BookingsAPITestCase):
             data,
             format='json'
         )
-        
-        if response.status_code != status.HTTP_201_CREATED:
-            print(f"Attendee signin validation errors: {response.data}")
-        
+                
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['identifier'], '123456')
     
@@ -1184,7 +1167,6 @@ class BookingIntentEndpointTests(BookingsAPITestCase):
         }
         
         response = self.client.post('/api/bookings/intents/', data)
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['intended_ticket_count'], 3)
         self.assertEqual(response.data['status'], BookingIntentStatusChoices.PENDING)

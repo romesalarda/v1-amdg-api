@@ -372,6 +372,8 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         user = request.user
+
+        self.check_permissions(request)
         
         # Verify old password
         if not user.check_password(serializer.validated_data['old_password']):
