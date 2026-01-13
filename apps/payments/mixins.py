@@ -129,13 +129,13 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
     def clean(self):
 
         if self.base_amount is None:
-            raise ValidationError({'base_amount': 'Base amount must be set.'})
+            raise ValidationError('Base amount must be set.')
         
         if self.base_amount.amount < 0:
-            raise ValidationError({'base_amount': 'Base amount must be non-negative.'})
+            raise ValidationError('Base amount must be non-negative.')
 
         if not Decimal('-100.00') <= self.percentage_modifier <= Decimal('100.00'):
-            raise ValidationError({'percentage_modifier': 'Modifier must be between -100 and 100.'})
+            raise ValidationError('Modifier must be between -100 and 100.')
 
     @property
     def currency(self):

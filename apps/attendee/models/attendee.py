@@ -74,6 +74,10 @@ class Attendee(SoftDeleteModel):
             self.gender = self.gender.upper().strip()
         if not self.attendee_display_id:
             self.attendee_display_id = display.generate_human_readable_id(20, "ATT", self.event.display_code[:5])
+
+        self.first_name = self.first_name.strip().title()
+        self.last_name = self.last_name.strip().title()
+        
         self.clean()
         super().save(*args, **kwargs)
     
@@ -93,9 +97,6 @@ class Attendee(SoftDeleteModel):
         
         if self.relationship_to_user == AttendeeRelationship.SELF and self.user is None:
             raise ValidationError("Attendees with 'self' relationship must be linked to a user account.")
-        
-        self.first_name = self.first_name.strip().title()
-        self.last_name = self.last_name.strip().title()
         
         if self.date_of_birth is None:
             raise ValidationError("Date of birth is required for attendee.")

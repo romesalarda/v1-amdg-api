@@ -3,8 +3,10 @@ from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 
+from django.core import validators
+
 import uuid
-from core.utils.display import generate_human_readable_id
+from core.utils.display import generate_human_readable_id, try_generate_unique_display_code
 from core.utils.data import save_with_unique_field
 
 class TicketScopeChoices(models.TextChoices):
@@ -26,8 +28,8 @@ class TicketType(models.Model): # e.g. VIP, General Admission, Early Bird
         choices=TicketScopeChoices.choices,
         default=TicketScopeChoices.FULL_EVENT
     )
-    valid_from = models.DateTimeField() # set based on event start date?
-    valid_until = models.DateTimeField() # need to be autoset based on event end date?
+    valid_from = models.DateTimeField(blank=True, null=True) # set based on event start date?
+    valid_until = models.DateTimeField(blank=True, null=True) # need to be autoset based on event end date?
     
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -55,9 +57,31 @@ class TicketType(models.Model): # e.g. VIP, General Admission, Early Bird
             })
     
     def save(self, *args, **kwargs):
-        self.clean()
+        
+        if self.valid_from is None and self.event.start_datetime:
+            self.valid_from = self.event.start_datetime
+
+        if self.valid_until is None and self.event.end_datetime:
+            self.valid_until = self.event.end_datetime
+
+        if not self.code:
+            try:
+                self.code = try_generate_unique_display_code(
+                    model_class=TicketType,
+                    length=20,
+                    prefix='TKT',
+                    args=[self.event.display_code],
+                    lookup_field='code',
+                    max_attempts=5
+                )
+            except Exception:
+                raise ValidationError("Could not generate unique ticket type code. Please try saving again.")
+                
+
         # todo: override datetimes based on event dates and timezone?
         # todo: autoset code: mix of event name and ticket type title?
+        self.clean()
+
         super().save(*args, **kwargs)
     
     class Meta:
