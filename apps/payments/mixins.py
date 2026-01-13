@@ -126,13 +126,13 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
     class Meta:
         abstract = True
 
-    def clean(self):
-
-        if self.base_amount is None:
-            raise ValidationError('Base amount must be set.')
+    def clean(self, *args, **kwargs):
+        if not kwargs.get('skip_base_amount_check', False):
+            if self.base_amount is None:
+                raise ValidationError('Base amount must be set.')
         
-        if self.base_amount.amount < 0:
-            raise ValidationError('Base amount must be non-negative.')
+            if self.base_amount.amount < 0:
+                raise ValidationError('Base amount must be non-negative.')
 
         if not Decimal('-100.00') <= self.percentage_modifier <= Decimal('100.00'):
             raise ValidationError('Modifier must be between -100 and 100.')

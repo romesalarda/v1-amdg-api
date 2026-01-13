@@ -1,12 +1,15 @@
 from decimal import Decimal
+import logging
 from apps.payments.mixins import PayableModel
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
+from django.core import validators
 from django.db import IntegrityError, transaction
 from djmoney.money import Money
+from djmoney.models.fields import MoneyField
 
 from core.utils.display import generate_human_readable_id, generate_alphanumeric_id
 from core.utils.data import save_with_unique_field
@@ -16,6 +19,8 @@ from apps.payments.models.methods import PaymentMethod, PaymentMethodTypeChoices
 import uuid
 
 User = get_user_model()
+
+logger = logging.getLogger(__name__)
 
 class PaymentStatusChoices(models.TextChoices):
     DRAFTING = 'DRAFTING', 'Drafting'
@@ -96,6 +101,14 @@ class Payment(PayableModel):
         null=True,
         blank=True
     )
+
+    base_amount = MoneyField(
+        max_digits=14,
+        decimal_places=2,
+        default_currency='GBP',
+        null=True,
+        blank=True,
+    )
     
     class Meta:
         ordering = ['-created_at']
@@ -133,7 +146,13 @@ class Payment(PayableModel):
             try:
                 with transaction.atomic():
                     return super().save(*args, **kwargs)
-            except IntegrityError:
+            except IntegrityError as e:
+                logger.warning(
+                    f"IntegrityError when saving Payment. Likely due to duplicate payment_reference or bank_transfer"
+                    f"_reference. Retrying generation. PaymentReference: {self.payment_reference}, "
+                    f"BankTransferReference: {self.bank_transfer_reference}"
+                )
+                logger.error(e)
                 # reset fields that must be regenerated
                 self.payment_reference = None
                 self.bank_transfer_reference = None
@@ -155,7 +174,7 @@ class Payment(PayableModel):
                     )
         if self.percentage_modifier != 0:
             raise ValidationError("Payments cannot have percentage modifiers.")
-        super().clean()
+        super().clean(skip_base_amount_check=False)
 
     def absolute_amount(self) -> Money:
         '''

@@ -228,7 +228,7 @@ class PaymentAdmin(admin.ModelAdmin):
     )
     readonly_fields = (
         'payment_id', 'payment_reference',
-        'created_at', 'updated_at', 'base_amount', 'modified_amount',
+        'created_at', 'updated_at', 'modified_amount',
         'target', 'get_refund_summary', 'get_donation_summary'
     )
     date_hierarchy = 'created_at'
