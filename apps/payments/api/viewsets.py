@@ -18,9 +18,10 @@ ViewSets:
 Author: AMDG Platform Team
 Version: 1.0.0
 """
-from rest_framework import viewsets, status, permissions, filters
+from rest_framework import viewsets, status, permissions, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Prefetch
@@ -30,12 +31,14 @@ from drf_spectacular.utils import (
     extend_schema_view,
     OpenApiParameter,
     OpenApiResponse,
+    inline_serializer,
 )
 from drf_spectacular.types import OpenApiTypes
+from djmoney.contrib.django_rest_framework import MoneyField
 from typing import Any
 
 from apps.payments.models import (
-    Payment, PaymentMethod, PaymentStatusChoices,
+    Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
     Discount, DiscountRule,
     RefundRequest, RefundAssociation, RefundPolicy,
     Donation, PaymentHistoryAction
@@ -311,16 +314,21 @@ class PaymentViewSet(viewsets.ModelViewSet):
     )
     def verify_bank_transfer(self, request, payment_id=None):
         """
-        Verify bank transfer payment and create tickets.
+        Verify bank transfer payment and process target.
         
         This is the manual verification endpoint for BANK_TRANSFER payments.
         After admin confirms they received the bank transfer, this endpoint:
         1. Completes the payment
-        2. Creates tickets for the booking
+        2. Processes the target (creates tickets for Booking, transitions Order, verifies Donation)
         3. Logs the verification
+        
+        Supports targets: Booking, Order, Donation
         """
         from apps.bookings.services import TicketCreatorService
         from apps.payments.models import PaymentMethodTypeChoices
+        from apps.bookings.models import Booking
+        from apps.products.models import Order, OrderStatusChoices
+        from apps.payments.models import Donation
         import logging
         logger = logging.getLogger(__name__)
         
@@ -355,15 +363,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Verify payment target is a booking
-        from apps.bookings.models import Booking
-        if not isinstance(payment.target, Booking):
-            return Response(
-                {
-                    'error': f'Payment target must be a Booking. Got: {type(payment.target).__name__}'
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        target = payment.target
+        target_type = type(target).__name__
         
         try:
             # Transition payment to completed
@@ -374,40 +375,96 @@ class PaymentViewSet(viewsets.ModelViewSet):
             PaymentHistoryAction.objects.create(
                 payment=payment,
                 action='BANK_TRANSFER_VERIFIED',
-                description=f'Bank transfer verified and payment completed by administrator',
+                description=f'Bank transfer verified for {target_type} by administrator',
                 metadata={
                     'verified_by_id': request.user.id,
                     'verified_by_username': request.user.username,
                     'bank_reference': payment.bank_transfer_reference,
+                    'target_type': target_type,
                     'notes': notes,
                 },
                 notes=notes,
                 performed_by=request.user
             )
             
-            # Create tickets
-            tickets = TicketCreatorService.create_tickets_for_payment(payment)
+            response_data = {}
             
-            logger.info(
-                f"Bank transfer verified for payment {payment.payment_reference} by "
-                f"{request.user.username}. Created {len(tickets)} tickets."
-            )
+            # Handle target-specific actions
+            if isinstance(target, Booking):
+                # Create tickets for booking
+                tickets = TicketCreatorService.create_tickets_for_payment(payment)
+                
+                logger.info(
+                    f"Bank transfer verified for booking payment {payment.payment_reference}. "
+                    f"Created {len(tickets)} tickets."
+                )
+                
+                response_data['tickets_created'] = len(tickets)
+                response_data['message'] = (
+                    f'Bank transfer verified. Payment completed and {len(tickets)} ticket(s) created for '
+                    f'booking {target.booking_reference}.'
+                )
             
-            # Return payment with tickets info
+            elif isinstance(target, Order):
+                # Order will be transitioned by signal handler based on event settings
+                logger.info(
+                    f"Bank transfer verified for order payment {payment.payment_reference}. "
+                    f"Order {target.order_reference_id} will be processed per event settings."
+                )
+                
+                response_data['order_reference'] = target.order_reference_id
+                response_data['order_status'] = target.status
+                response_data['message'] = (
+                    f'Bank transfer verified. Payment completed for order {target.order_reference_id}. '
+                    f'Order will be processed according to event settings.'
+                )
+
+                if target.can_transition_to(OrderStatusChoices.PROCESSING):
+                    target.transition_to(OrderStatusChoices.PROCESSING)
+                    target.save()
+                    response_data['order_status'] = target.status
+                
+                
+            
+            elif isinstance(target, Donation):
+                # Donation payment verified - still needs admin verification via verify_donation
+                logger.info(
+                    f"Bank transfer verified for donation payment {payment.payment_reference}. "
+                    f"Donation {target.tracking_reference} awaits verification."
+                )
+                
+                response_data['donation_tracking_reference'] = target.tracking_reference
+                response_data['donation_status'] = target.verification_status
+                response_data['message'] = (
+                    f'Bank transfer verified. Payment completed for donation {target.tracking_reference}. '
+                    f'Donation still requires verification via verify_donation endpoint.'
+                )
+            
+            else:
+                response_data['message'] = (
+                    f'Bank transfer verified. Payment completed for {target_type}.'
+                )
+            
+            # Return payment details with target-specific info
             serializer = self.get_serializer(payment)
-            response_data = serializer.data
-            response_data['tickets_created'] = len(tickets)
-            response_data['message'] = (
-                f'Bank transfer verified successfully. {len(tickets)} ticket(s) created.'
-            )
+            response_data.update(serializer.data)
             
             return Response(response_data, status=status.HTTP_200_OK)
-        
+            
         except Exception as e:
             logger.error(
-                f"Failed to verify bank transfer for payment {payment.payment_reference}: {str(e)}",
+                f"Error verifying bank transfer for payment {payment.payment_reference}: {str(e)}",
                 exc_info=True
             )
+            return Response(
+                {'error': f'Failed to verify payment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================================================
+# REFUND REQUEST VIEWSETS
+# ============================================================================
             
             return Response(
                 {
@@ -875,9 +932,330 @@ class DonationViewSet(viewsets.ModelViewSet):
                 raise PermissionDenied("You can only create donations for your own payments.")
         
         serializer.save()
+    
+    @extend_schema(
+        summary="Create donation with payment",
+        description="Create a donation and payment in one transaction. Handles STRIPE (returns client_secret), BANK_TRANSFER (returns reference), and CASH (pending approval). Supports both event-specific and general donations.",
+        request=inline_serializer(
+            name='DonationCheckoutRequest',
+            fields={
+                'amount': MoneyField(max_digits=10, decimal_places=2, help_text="Donation amount"),
+                'payment_method_id': serializers.IntegerField(help_text="Payment method ID"),
+                'event_id': serializers.UUIDField(required=False, help_text="Optional event ID"),
+                'message': serializers.CharField(required=False, max_length=500, help_text="Optional donor message")
+            }
+        ),
+        responses={
+            201: {
+                'description': 'Donation created successfully',
+                'content': {
+                    'application/json': {
+                        'examples': {
+                            'stripe': {
+                                'summary': 'Stripe donation',
+                                'value': {
+                                    'donation_id': 'uuid-here',
+                                    'tracking_reference': 'DON-ABC123',
+                                    'payment_reference': 'PAY-1-1-XYZ456',
+                                    'amount': '100.00',
+                                    'currency': 'GBP',
+                                    'status': 'pending_payment',
+                                    'stripe_client_secret': 'pi_xxx_secret_yyy',
+                                    '_links': {}
+                                }
+                            },
+                            'bank_transfer': {
+                                'summary': 'Bank transfer donation',
+                                'value': {
+                                    'donation_id': 'uuid-here',
+                                    'tracking_reference': 'DON-ABC123',
+                                    'payment_reference': 'PAY-1-1-XYZ456',
+                                    'amount': '100.00',
+                                    'currency': 'GBP',
+                                    'status': 'pending_verification',
+                                    'bank_transfer_reference': 'BNK-XYZ789',
+                                    'bank_transfer_instructions': 'Transfer £100.00 to account...',
+                                    '_links': {}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'}
+        },
+        tags=["Donations"],
+    )
+    @action(detail=False, methods=['post'], url_path='create-with-payment')
+    def create_with_payment(self, request):
+        """
+        Create donation with payment in one transaction.
+        
+        Creates both Donation and Payment atomically, handling different payment methods:
+        - STRIPE: Creates Stripe PaymentIntent, returns client_secret
+        - BANK_TRANSFER: Generates reference, returns instructions
+        - CASH: Marks as pending approval
+        """
+        from apps.payments.api.serializers import DonationCheckoutSerializer
+        from apps.payments.services.stripe.payment_intents import PaymentIntentService
+        from django.db import transaction
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Validate request data
+        serializer = DonationCheckoutSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        
+        amount = serializer.validated_data['amount']
+        
+        payment_method = serializer.validated_data['payment_method']
+        event = serializer.validated_data['event']
+        message = serializer.validated_data.get('message', '')
+        
+        # Create donation and payment atomically
+        with transaction.atomic():
+            # Create donation (status PENDING by default)
+            donation = Donation.objects.create(
+                amount=amount,
+                donated_by=request.user,
+                payment=None  # Will be linked after payment creation
+            )
+            
+            logger.info(
+                f"Created donation {donation.tracking_reference} for user {request.user.id}, "
+                f"amount: {amount}"
+            )
+            
+            # Create payment with donation as target
+            payment = Payment.objects.create(
+                user=request.user,
+                event=event,
+                method=payment_method,
+                base_amount=amount,
+                status=PaymentStatusChoices.PENDING,
+                target=donation,
+                metadata={
+                    'donation': {
+                        'donation_id': str(donation.donation_id),
+                        'tracking_reference': donation.tracking_reference,
+                        'amount': str(donation.amount.amount),
+                        'currency': donation.amount.currency.code,
+                        'message': message,
+                        'donated_by': request.user.username,
+                        'event': event.title if event else 'General'
+                    }
+                }
+            )
+            
+            # Link payment to donation
+            donation.payment = payment
+            donation.save()
+            
+            logger.info(
+                f"Created payment {payment.payment_reference} for donation {donation.tracking_reference}"
+            )
+            
+            # Prepare response with amount and currency as separate fields
+            response_data = {
+                'donation_id': str(donation.donation_id),
+                'tracking_reference': donation.tracking_reference,
+                'payment_id': str(payment.payment_id),
+                'payment_reference': payment.payment_reference,
+                'amount': str(donation.amount.amount),
+                'currency': str(donation.amount.currency.code),
+                'donation': DonationListSerializer(donation, context={'request': request}).data,
+                '_links': {
+                    'self': request.build_absolute_uri(),
+                    'donation': request.build_absolute_uri(f'/api/payments/donations/list/{donation.donation_id}/'),
+                    'payment': request.build_absolute_uri(f'/api/payments/list/{payment.payment_id}/')
+                }
+            }
+            
+            # Handle payment method-specific logic
+            if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
+                try:
+                    stripe_metadata = payment.prepare_stripe_metadata()
+                    payment_intent = PaymentIntentService.create(
+                        amount=donation.amount,
+                        currency=donation.amount.currency.code,
+                        payment_reference=payment.payment_reference,
+                        metadata=stripe_metadata,
+                        customer_email=request.user.email
+                    )
+                    
+                    payment.stripe_payment_intent_id = payment_intent['id']
+                    payment.save()
+                    
+                    response_data['stripe_client_secret'] = payment_intent['client_secret']
+                    response_data['status'] = 'pending_payment'
+                    
+                    logger.info(f"Created Stripe PaymentIntent for donation {donation.tracking_reference}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to create Stripe PaymentIntent for donation {donation.tracking_reference}: {e}")
+                    raise ValidationError({'stripe': f'Failed to create payment intent: {str(e)}'})
+            
+            elif payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+                response_data['bank_transfer_reference'] = payment.bank_transfer_reference
+                response_data['bank_transfer_instructions'] = (
+                    f"Please transfer {donation.amount} using reference: {payment.bank_transfer_reference}. "
+                    f"Your donation will be processed after verification."
+                )
+                response_data['status'] = 'pending_verification'
+                
+                logger.info(f"Generated bank transfer for donation {donation.tracking_reference}")
+            
+            elif payment_method.method_type == PaymentMethodTypeChoices.CASH:
+                response_data['status'] = 'pending_approval'
+                response_data['message'] = 'Cash donation will be collected at the venue.'
+                
+                logger.info(f"Cash donation created: {donation.tracking_reference}")
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+    
+    @extend_schema(
+        summary="Verify donation",
+        description="Admin endpoint to verify or reject a donation after payment is received. Marks donation as VERIFIED or REJECTED based on admin review.",
+        request=inline_serializer(
+            name='DonationVerificationRequest',
+            fields={
+                'verified': serializers.BooleanField(help_text="True to verify, False to reject"),
+                'notes': serializers.CharField(required=False, help_text="Optional verification notes")
+            }
+        ),
+        responses={
+            200: {
+                'description': 'Donation verified successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'donation_id': 'uuid-here',
+                            'tracking_reference': 'DON-ABC123',
+                            'verification_status': 'verified',
+                            'message': 'Donation verified successfully',
+                            '_links': {}
+                        }
+                    }
+                }
+            },
+            400: {'description': 'Validation error'},
+            403: {'description': 'Admin access required'},
+            404: {'description': 'Donation not found'}
+        },
+        tags=["Donations"],
+    )
+    @action(
+        detail=True, 
+        methods=['post'], 
+        url_path='verify-donation',
+        permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly]
+    )
+    def verify_donation(self, request, donation_id=None):
+        """
+        Verify or reject a donation.
+        
+        Admin reviews donation and marks as VERIFIED or REJECTED.
+        Payment must be completed before donation can be verified.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"Donation verification attempt for donation_id={donation_id} by user={request.user.username}"
+        )
+        donation = self.get_object()
+        
+        # Validate input
+        verified = request.data.get('verified')
+        notes = request.data.get('notes', '')
+        
+        if verified is None:
+            return Response(
+                {'error': 'verified field is required (true or false)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if payment is completed
+        if donation.payment.status != PaymentStatusChoices.COMPLETED:
+            return Response(
+                {
+                    'error': f'Cannot verify donation until payment is completed. '
+                             f'Current payment status: {donation.payment.status}'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if already processed
+        if donation.is_processed or donation.is_verified or donation.is_rejected:
+            logger.warning(
+                f"Attempt to re-verify already processed donation {donation.tracking_reference} "
+                f"by {request.user.username}"
+            )
+            return Response(
+                {
+                    'error': f'Donation has already been processed. Current status: {donation.verification_status}'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            if verified:
+                # Mark as verified
+                donation.mark_verified(request.user)
+                logger.info(
+                    f"Donation {donation.tracking_reference} verified by {request.user.username}"
+                )
+                message = 'Donation verified successfully'
+            else:
+                # Mark as rejected
+                donation.mark_rejected(request.user)
+                logger.info(
+                    f"Donation {donation.tracking_reference} rejected by {request.user.username}"
+                )
+                message = 'Donation rejected'
+            
+            # Log action in payment history
+            PaymentHistoryAction.objects.create(
+                payment=donation.payment,
+                action='DONATION_VERIFIED' if verified else 'DONATION_REJECTED',
+                description=f'Donation {donation.tracking_reference} {"verified" if verified else "rejected"} by administrator',
+                metadata={
+                    'donation_id': str(donation.donation_id),
+                    'tracking_reference': donation.tracking_reference,
+                    'verified_by_id': request.user.id,
+                    'verified_by_username': request.user.username,
+                    'verified': verified,
+                    'notes': notes,
+                },
+                notes=notes,
+                performed_by=request.user
+            )
+            
+            # Return donation details
+            serializer = self.get_serializer(donation)
+            response_data = serializer.data
+            response_data['message'] = message
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(
+                f"Error verifying donation {donation.tracking_reference}: {str(e)}",
+                exc_info=True
+            )
+            return Response(
+                {'error': f'Failed to verify donation: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ============================================================================
+# PAYMENT HISTORY VIEWSETS
+# ============================================================================# ============================================================================
 # PAYMENT HISTORY VIEWSETS
 # ============================================================================
 

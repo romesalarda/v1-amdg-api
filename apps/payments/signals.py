@@ -57,6 +57,11 @@ def handle_payment_completion(sender, instance, created, **kwargs):
                 _handle_booking_payment(instance, target)
             elif isinstance(target, Order):
                 _handle_order_payment(instance, target)
+            elif hasattr(target, '__class__') and target.__class__.__name__ == 'Donation':
+                # Import here to avoid circular imports
+                from apps.payments.models import Donation
+                if isinstance(target, Donation):
+                    _handle_donation_payment(instance, target)
             elif target is None:
                 _handle_null_target_payment(instance)
             else:
@@ -190,7 +195,8 @@ def _handle_order_payment(payment: Payment, order) -> None:
     from apps.events.models import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
     from apps.products.models import OrderStatusChoices
     
-    event = order.event
+    # Get event from order's attendee
+    event = order.attendee.event if order.attendee else None
     if not event:
         logger.warning(
             f"Order {order.order_reference_id} has no associated event. Cannot determine settings."
@@ -199,13 +205,13 @@ def _handle_order_payment(payment: Payment, order) -> None:
     
     event_settings = getattr(event, 'settings', None)
     
-    # Check if orders should be auto-processed
-    auto_process = (
+    # Check if orders should be auto-completed (use auto_complete_orders setting)
+    auto_complete = (
         event_settings and 
-        not event_settings.orders_require_approval
+        getattr(event_settings, 'auto_complete_orders', False)
     )
     
-    if auto_process:
+    if auto_complete:
         # Automatically transition to processing
         try:
             if order.can_transition_to(OrderStatusChoices.PROCESSING):
@@ -252,6 +258,26 @@ def _handle_order_payment(payment: Payment, order) -> None:
             f"Created approval notification for order {order.order_reference_id} "
             f"(event requires manual approval)"
         )
+
+
+def _handle_donation_payment(payment: Payment, donation) -> None:
+    """
+    Handle payment completion for Donation targets.
+    
+    Donation is linked to the payment, so payment completion status is tracked
+    via the payment relationship. Donation still requires admin verification
+    before being marked as VERIFIED/PROCESSED.
+    
+    Args:
+        payment: Completed payment instance
+        donation: Donation associated with the payment
+    """
+    logger.info(
+        f"Payment completed for donation {donation.tracking_reference} "
+        f"(payment {payment.payment_reference}). Awaiting admin verification."
+    )
+
+    donation.mark_verified()
 
 
 def _handle_null_target_payment(payment: Payment) -> None:

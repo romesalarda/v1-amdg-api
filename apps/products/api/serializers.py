@@ -1238,3 +1238,77 @@ class OrderUpdateSerializer(serializers.ModelSerializer):
             instance.save()
         
         return instance
+
+
+# ============================================================================
+# ORDER CHECKOUT SERIALIZER
+# ============================================================================
+
+class OrderCheckoutSerializer(serializers.Serializer):
+    """
+    Checkout serializer for orders.
+    
+    Validates payment method and order status before creating payment.
+    Backend calculates all pricing from order.total_amount.
+    """
+    
+    payment_method_id = serializers.IntegerField(
+        help_text="ID of the PaymentMethod to use for this order"
+    )
+    
+    def validate_payment_method_id(self, value):
+        """Validate payment method exists and is active."""
+        from apps.payments.models import PaymentMethod
+        
+        try:
+            payment_method = PaymentMethod.objects.get(id=value)
+        except PaymentMethod.DoesNotExist:
+            raise serializers.ValidationError(
+                f'PaymentMethod with id {value} does not exist.'
+            )
+        
+        if not payment_method.is_active:
+            raise serializers.ValidationError(
+                f'Payment method "{payment_method.title}" is not active.'
+            )
+        
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation for order checkout."""
+        order = self.context.get('order')
+        
+        if not order:
+            raise serializers.ValidationError('Order context is required.')
+        
+        # Validate order is in pending status (already submitted)
+        if order.status != OrderStatusChoices.DRAFT:
+            raise serializers.ValidationError({
+                'order': f'Order must be in DRAFT status to checkout. Current status: {order.get_status_display()}'
+            })
+        
+        # Validate order has at least one item
+        if not order.order_items.exists():
+            raise serializers.ValidationError({
+                'order': 'Order must have at least one item.'
+            })
+        
+        # Validate payment method belongs to same event as order
+        from apps.payments.models import PaymentMethod
+        payment_method = PaymentMethod.objects.get(id=attrs['payment_method_id'])
+        
+        order_event = order.attendee.event if order.attendee else None
+        if not order_event:
+            raise serializers.ValidationError({
+                'order': 'Order must have an attendee with event context.'
+            })
+        
+        if payment_method.event_id != order_event.id:
+            raise serializers.ValidationError({
+                'payment_method_id': f'Payment method must belong to the same event as the order ({order_event.title}).'
+            })
+        
+        # Store payment method for use in viewset
+        attrs['payment_method'] = payment_method
+        
+        return attrs

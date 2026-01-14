@@ -8,9 +8,9 @@ User = get_user_model()
 
 class VerificationStatus(models.TextChoices):
     PENDING = 'pending', 'Pending' # initial state before verification
-    VERIFIED = 'verified', 'Verified' # state defining successful verification
+    VERIFIED = 'verified', 'Verified' # state defining successful verification either manual or automatic
     REJECTED = 'rejected', 'Rejected' # state defining rejection
-    PROCESSED = 'processed', 'Processed' # final state defining no action needed
+    PROCESSED = 'processed', 'Processed' # final state defining no action needed either manual or automatic
 
 class RequiresVerificationModel(models.Model):
     """
@@ -43,13 +43,13 @@ class RequiresVerificationModel(models.Model):
     class Meta:
         abstract = True
         
-    def mark_verified(self, verifier):
+    def mark_verified(self, verifier=None):
         self.verification_status = VerificationStatus.VERIFIED
         self.verified_updated_at = timezone.now()
         self.verified_by = verifier
         self.save()
         
-    def mark_rejected(self, verifier):
+    def mark_rejected(self, verifier=None):
         self.verification_status = VerificationStatus.REJECTED
         self.verified_updated_at = timezone.now()
         self.verified_by = verifier

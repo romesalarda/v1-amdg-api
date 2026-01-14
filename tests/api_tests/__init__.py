@@ -6,3 +6,5 @@ Tests the complete booking checkout API endpoints with all payment methods.
 
 from .booking_checkout_flow_tests import *
 from .event_booking_tests import *
+from .donation_checkout_flow_tests import *
+from .order_checkout_flow_tests import *

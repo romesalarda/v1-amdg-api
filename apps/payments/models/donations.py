@@ -3,6 +3,8 @@ from django.db import models
 from django.core import validators, exceptions
 from django.contrib.auth import get_user_model
 from djmoney.models.fields import MoneyField
+from djmoney.money import Money
+
 from django.conf import settings
 from apps.common.models.verification import RequiresVerificationModel
 
@@ -36,7 +38,9 @@ class Donation(RequiresVerificationModel): # don't inherit from PayableModel as 
     payment = models.ForeignKey(
         'payments.Payment',
         on_delete=models.CASCADE,
-        related_name='donations'
+        related_name='donations',
+        null=True,
+        blank=True
     )
 
     def __str__(self):
@@ -48,17 +52,24 @@ class Donation(RequiresVerificationModel): # don't inherit from PayableModel as 
     def save(self, *args, **kwargs):
         self.clean()
         try:
-            self.tracking_reference = try_generate_unique_code(
-                model_class=Donation,
-                length=10,
-                max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS,
-                lookup_field='tracking_reference'
-            )
+            if not self.tracking_reference:
+                self.tracking_reference = try_generate_unique_code(
+                    model_class=Donation,
+                    length=10,
+                    max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS,
+                    lookup_field='tracking_reference'
+                )
         except ValueError:
             raise exceptions.ValidationError("Could not generate a unique acceptance code. Please try again.")
         
         super().save(*args, **kwargs)
     
     def clean(self):
+        if not self.amount:
+            raise exceptions.ValidationError("Donation amount is required.")
+        
+        if not isinstance(self.amount, Money):
+            raise exceptions.ValidationError("Donation amount must be a Money instance.")
+        
         if Decimal(self.amount.amount) <= Decimal('0.00'):
             raise exceptions.ValidationError("Donation amount must be greater than zero.")

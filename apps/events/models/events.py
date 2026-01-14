@@ -293,6 +293,13 @@ class EventSettings(models.Model):
         help_text="Whether orders for this event require manual approval before being auto-processed on payment completion. "
                   "If False, orders will automatically transition to PROCESSING status when payment completes."
     ) # whether orders require manual approval before processing
+    
+    auto_complete_orders = models.BooleanField(
+        default=False,
+        help_text="Whether paid orders should automatically transition to COMPLETED status. "
+                  "If True, orders will go directly to COMPLETED after payment (for digital/virtual products). "
+                  "If False, orders will go to PROCESSING and require manual fulfillment completion."
+    ) # whether orders should auto-complete after payment (for digital products)
 
     donation_enabled = models.BooleanField(
         default=False,

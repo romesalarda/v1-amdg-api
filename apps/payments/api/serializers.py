@@ -991,6 +991,112 @@ class DonationCreateSerializer(serializers.ModelSerializer):
         """Create donation with donating user."""
         validated_data['donated_by'] = self.context.get('request').user if self.context.get('request') else None
         return super().create(validated_data)
+#
+class DonationCheckoutSerializer(serializers.Serializer):
+    """
+    Checkout serializer for creating donations with payment.
+    
+    Accepts donation amount, payment method, and optional event/message.
+    Backend validates amount and creates both Donation and Payment atomically.
+    """
+    
+    amount = MoneyField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Donation amount (must be > £0 and < £10,000)"
+    )
+    payment_method_id = serializers.IntegerField(
+        help_text="ID of the PaymentMethod to use"
+    )
+    event_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Optional event ID for event-specific donations"
+    )
+    message = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+        help_text="Optional message from donor"
+    )
+    
+    def validate_amount(self, value):
+        """Validate donation amount is reasonable."""
+        # Handle both Money objects (from internal use) and Decimal (from API input)
+        if isinstance(value, Money):
+            amount = value.amount
+        else:
+            # When sent as separate amount/currency fields, value is Decimal
+            amount = value
+        
+        if amount <= 0:
+            raise serializers.ValidationError("Donation amount must be greater than £0.")
+        
+        if amount > 10000:
+            raise serializers.ValidationError("Donation amount cannot exceed £10,000. Please contact support for larger donations.")
+        
+        return value
+    
+    def validate_payment_method_id(self, value):
+        """Validate payment method exists and is active."""
+        from apps.payments.models import PaymentMethod
+        
+        try:
+            payment_method = PaymentMethod.objects.get(id=value)
+        except PaymentMethod.DoesNotExist:
+            raise serializers.ValidationError(
+                f'PaymentMethod with id {value} does not exist.'
+            )
+        
+        if not payment_method.is_active:
+            raise serializers.ValidationError(
+                f'Payment method "{payment_method.title}" is not active.'
+            )
+        
+        return value
+    
+    def validate_event_id(self, value):
+        """Validate event exists if provided."""
+        if value:
+            from apps.events.models import Event
+            try:
+                Event.objects.get(event_id=value)
+            except Event.DoesNotExist:
+                raise serializers.ValidationError(
+                    f'Event with id {value} does not exist.'
+                )
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation."""
+        from apps.payments.models import PaymentMethod
+        from apps.events.models import Event
+        
+        payment_method = PaymentMethod.objects.get(id=attrs['payment_method_id'])
+        event_id = attrs.get('event_id')
+        
+        # If event is provided, validate payment method belongs to that event
+        if event_id:
+            event = Event.objects.get(event_id=event_id)
+            
+            if payment_method.event_id != event.id:
+                raise serializers.ValidationError({
+                    'payment_method_id': f'Payment method must belong to the selected event ({event.title}).'
+                })
+            
+            attrs['event'] = event
+        else:
+            # For general donations, payment method should have an event context
+            if not payment_method.event:
+                raise serializers.ValidationError({
+                    'payment_method_id': 'Payment method must have an event context.'
+                })
+            
+            attrs['event'] = payment_method.event
+        
+        attrs['payment_method'] = payment_method
+        
+        return attrs
 
 
 # ============================================================================

@@ -574,6 +574,9 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
 
+    
+SERIALIZATION_MODULES = {"json": "djmoney.serializers"}
+
 # =============================================================================
 # LOGGING
 # =============================================================================

@@ -16,7 +16,7 @@ ViewSets:
 Author: AMDG Platform Team
 Version: 1.0.0
 """
-from rest_framework import viewsets, status, permissions, filters
+from rest_framework import viewsets, status, permissions, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, PermissionDenied
@@ -31,6 +31,7 @@ from drf_spectacular.utils import (
     OpenApiParameter,
     OpenApiResponse,
     OpenApiExample,
+    inline_serializer,
 )
 from drf_spectacular.types import OpenApiTypes
 from typing import Any
@@ -1061,6 +1062,60 @@ class OrderViewSet(viewsets.ModelViewSet):
             raise ValidationError({'error': str(e)})
     
     @extend_schema(
+        summary="Complete order",
+        description="Mark an order as completed. Only staff members can complete orders. Order must be in 'processing' status. This action is typically performed once payment has been verified and items are ready for fulfillment or have been fulfilled.",
+        request=None,
+        responses={
+            200: {
+                'description': 'Order completed successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'status': 'success',
+                            'message': 'Order ORD-12345 marked as completed.',
+                            'order': {
+                                'id': 1,
+                                'order_id': 'uuid-here',
+                                'order_reference_id': 'ORD-12345',
+                                'status': 'completed',
+                                'total_amount': 'GBP 50.00'
+                            }
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Cannot complete order',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'error': 'Cannot transition from pending to completed.'
+                        }
+                    }
+                }
+            },
+            403: {'description': 'Permission denied - staff only'},
+            404: {'description': 'Order not found'}
+        },
+        tags=["Orders"],
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
+    def complete(self, request, order_id=None):
+        """Complete the order (processing → completed). Staff only."""
+        order = self.get_object()
+        
+        try:
+            order.transition_to(OrderStatusChoices.COMPLETED)
+            serializer = self.get_serializer(order)
+            return Response({
+                'status': 'success',
+                'message': f'Order {order.order_reference_id} marked as completed.',
+                'order': serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            raise ValidationError({'error': str(e)})
+    
+    @extend_schema(
         summary="Add item to order",
         description="Add an item to a draft order. Only draft orders can have items added. Stock availability and purchase limits are validated. Order total is automatically recalculated.",
         request=OrderItemCreateSerializer,
@@ -1136,6 +1191,222 @@ class OrderViewSet(viewsets.ModelViewSet):
             raise ValidationError({'product_variant_id': 'Product variant does not exist.'})
         except Exception as e:
             raise ValidationError({'error': str(e)})
+    
+    @extend_schema(
+        summary="Checkout order with payment",
+        description="Complete order checkout by creating payment. Handles STRIPE (returns client_secret), BANK_TRANSFER (returns reference), and CASH (pending approval at venue). Free orders (£0) skip payment creation. Order must be in PENDING status.",
+        request=inline_serializer(
+            name='OrderCheckoutRequest',
+            fields={
+                'payment_method_id': serializers.IntegerField(help_text="ID of payment method to use")
+            }
+        ),
+        responses={
+            201: {
+                'description': 'Checkout successful',
+                'content': {
+                    'application/json': {
+                        'examples': {
+                            'stripe': {
+                                'summary': 'Stripe payment',
+                                'value': {
+                                    'order_id': 'uuid-here',
+                                    'order_reference': 'ORD-12345',
+                                    'payment_reference': 'PAY-1-1-ABC123',
+                                    'total_amount': '50.00',
+                                    'currency': 'GBP',
+                                    'status': 'pending_payment',
+                                    'stripe_client_secret': 'pi_xxx_secret_yyy',
+                                    '_links': {}
+                                }
+                            },
+                            'bank_transfer': {
+                                'summary': 'Bank transfer payment',
+                                'value': {
+                                    'order_id': 'uuid-here',
+                                    'order_reference': 'ORD-12345',
+                                    'payment_reference': 'PAY-1-1-ABC123',
+                                    'total_amount': '50.00',
+                                    'currency': 'GBP',
+                                    'status': 'pending_verification',
+                                    'bank_transfer_reference': 'BNK-ABC123XYZ',
+                                    'bank_transfer_instructions': 'Transfer £50.00 to account...',
+                                    '_links': {}
+                                }
+                            },
+                            'cash': {
+                                'summary': 'Cash payment',
+                                'value': {
+                                    'order_id': 'uuid-here',
+                                    'order_reference': 'ORD-12345',
+                                    'payment_reference': 'PAY-1-1-ABC123',
+                                    'total_amount': '50.00',
+                                    'currency': 'GBP',
+                                    'status': 'pending_approval',
+                                    '_links': {}
+                                }
+                            },
+                            'free': {
+                                'summary': 'Free order',
+                                'value': {
+                                    'order_id': 'uuid-here',
+                                    'order_reference': 'ORD-12345',
+                                    'total_amount': '0.00',
+                                    'currency': 'GBP',
+                                    'status': 'processing',
+                                    'message': 'Free order, no payment required',
+                                    '_links': {}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'},
+            404: {'description': 'Order not found'}
+        },
+        tags=["Orders"],
+    )
+    @action(detail=True, methods=['post'])
+    def checkout(self, request, order_id=None):
+        """
+        Checkout order with payment.
+        
+        Creates payment for the order and handles different payment methods:
+        - STRIPE: Creates Stripe PaymentIntent, returns client_secret
+        - BANK_TRANSFER: Generates bank reference, returns instructions
+        - CASH: Marks as pending (approved at venue)
+        - FREE: Skips payment if order total is £0
+        """
+        from apps.products.api.serializers import OrderCheckoutSerializer
+        from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
+        from apps.payments.services.stripe.payment_intents import PaymentIntentService
+        from django.db import transaction
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        order = self.get_object()
+        
+        # Validate request data
+        serializer = OrderCheckoutSerializer(
+            data=request.data,
+            context={'request': request, 'order': order}
+        )
+        serializer.is_valid(raise_exception=True)
+        
+        payment_method = serializer.validated_data['payment_method']
+        
+        # Check if order is free (£0 total)
+        if order.total_amount.amount == 0:
+            with transaction.atomic():
+                logger.info(f"Processing free order {order.order_reference_id}, moving from DRAFT to PROCESSING")
+                # No payment needed, transition from DRAFT to PROCESSING
+                if order.status == OrderStatusChoices.DRAFT:
+                    order.transition_to(OrderStatusChoices.PENDING)
+                    logger.info(f"Free order {order.order_reference_id} transitioned to pending")
+                    order.transition_to(OrderStatusChoices.PROCESSING)
+                    logger.info(f"Free order {order.order_reference_id} transitioned to processing")
+                else:
+                    raise ValidationError({'order': f'Cannot checkout free order in {order.status} status.'})
+                
+                return Response({
+                    'order_id': str(order.order_id),
+                    'order_reference': order.order_reference_id,
+                    'total_amount': str(order.total_amount.amount),
+                    'currency': str(order.total_amount.currency.code),
+                    'status': 'processing',
+                    'message': 'Free order, no payment required',
+                    '_links': {
+                        'self': request.build_absolute_uri(),
+                        'order': request.build_absolute_uri(f'/api/products/orders/list/{order.order_id}/')
+                    }
+                }, status=status.HTTP_201_CREATED)
+        
+        order.transition_to(OrderStatusChoices.PENDING)
+
+        # Create payment for non-free orders
+        with transaction.atomic():
+            # Create payment with order as target
+            payment = Payment.objects.create(
+                user=request.user,
+                event=order.attendee.event,
+                method=payment_method,
+                base_amount=order.total_amount,
+                status=PaymentStatusChoices.PENDING,
+                target=order,
+                metadata=order.get_metadata()
+            )
+            
+            # Link payment to order
+            order.payment = payment
+            order.save()
+            
+            logger.info(
+                f"Created payment {payment.payment_reference} for order {order.order_reference_id}, "
+                f"amount: {order.total_amount}"
+            )
+            
+            # Prepare response data with amount and currency as separate fields
+            response_data = {
+                'order_id': str(order.order_id),
+                'order_reference': order.order_reference_id,
+                'payment_id': str(payment.payment_id),
+                'payment_reference': payment.payment_reference,
+                'total_amount': str(order.total_amount.amount),
+                'currency': str(order.total_amount.currency.code),
+                '_links': {
+                    'self': request.build_absolute_uri(),
+                    'order': request.build_absolute_uri(f'/api/products/orders/list/{order.order_id}/'),
+                    'payment': request.build_absolute_uri(f'/api/payments/list/{payment.payment_id}/')
+                }
+            }
+            
+            # Handle payment method-specific logic
+            if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
+                # Create Stripe PaymentIntent
+                try:
+                    stripe_metadata = payment.prepare_stripe_metadata()
+                    payment_intent = PaymentIntentService.create(
+                        amount=order.total_amount,
+                        currency=order.total_amount.currency.code,
+                        customer_email=request.user.email,
+                        metadata=stripe_metadata
+                    )
+                    
+                    payment.stripe_payment_intent_id = payment_intent['id']
+                    payment.save()
+                    
+                    response_data['stripe_client_secret'] = payment_intent['client_secret']
+                    response_data['status'] = 'pending_payment'
+                    
+                    logger.info(f"Created Stripe PaymentIntent {payment_intent['id']} for payment {payment.payment_reference}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to create Stripe PaymentIntent for payment {payment.payment_reference}: {e}")
+                    # Rollback will happen automatically due to atomic block
+                    raise ValidationError({'stripe': f'Failed to create payment intent: {str(e)}'})
+            
+            elif payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+                # Generate bank transfer reference (already done in Payment model)
+                response_data['bank_transfer_reference'] = payment.bank_transfer_reference
+                response_data['bank_transfer_instructions'] = (
+                    f"Please transfer {order.total_amount} to the event account using reference: "
+                    f"{payment.bank_transfer_reference}. Your order will be processed after verification."
+                )
+                response_data['status'] = 'pending_verification'
+                
+                logger.info(f"Generated bank transfer reference {payment.bank_transfer_reference} for payment {payment.payment_reference}")
+            
+            elif payment_method.method_type == PaymentMethodTypeChoices.CASH:
+                # Cash payment - pending approval at venue
+                response_data['status'] = 'pending_approval'
+                response_data['message'] = 'Payment will be collected at the venue. Your order will be processed after payment confirmation.'
+                
+                logger.info(f"Cash payment created for order {order.order_reference_id}, pending venue approval")
+
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 # ============================================================================
