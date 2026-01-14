@@ -107,39 +107,102 @@ class NestedAttendeeViewSetMixin:
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendees",
-        description="Retrieve a paginated list of attendees with advanced filtering and search",
+        summary="List Attendees",
+        description=(
+            "Retrieve a paginated list of attendees with comprehensive filtering and search capabilities. "
+            "Results include attendee demographics, contact information, event associations, and relationship details. "
+            "Staff members can view all attendees, while regular users can only view attendees they own or guard."
+        ),
+        tags=['Attendees'],
         parameters=[
-            OpenApiParameter('search', OpenApiTypes.STR, description='Search by name, email, phone, or ID'),
-            OpenApiParameter('event', OpenApiTypes.UUID, description='Filter by event ID'),
-            OpenApiParameter('age_min', OpenApiTypes.INT, description='Minimum age'),
-            OpenApiParameter('age_max', OpenApiTypes.INT, description='Maximum age'),
-            OpenApiParameter('is_minor', OpenApiTypes.BOOL, description='Filter minors (under 18)'),
+            OpenApiParameter(
+                'search',
+                OpenApiTypes.STR,
+                description='Search by first name, last name, email, phone number, or attendee display ID'
+            ),
+            OpenApiParameter(
+                'event',
+                OpenApiTypes.UUID,
+                description='Filter attendees by event UUID'
+            ),
+            OpenApiParameter(
+                'age_min',
+                OpenApiTypes.INT,
+                description='Filter attendees with minimum age (inclusive)'
+            ),
+            OpenApiParameter(
+                'age_max',
+                OpenApiTypes.INT,
+                description='Filter attendees with maximum age (inclusive)'
+            ),
+            OpenApiParameter(
+                'is_minor',
+                OpenApiTypes.BOOL,
+                description='Filter minors only (under 18 years old)'
+            ),
+            OpenApiParameter(
+                'include_deleted',
+                OpenApiTypes.BOOL,
+                description='Include soft-deleted attendees in results (staff only)'
+            ),
         ]
     ),
     retrieve=extend_schema(
-        summary="Get attendee details",
-        description="Retrieve detailed information about a specific attendee"
+        summary="Get Attendee Details",
+        description=(
+            "Retrieve comprehensive information about a specific attendee including personal details, "
+            "event associations, emergency contacts, dietary requirements, medical conditions, "
+            "accessibility requirements, and consent records. Includes HATEOAS links for related resources."
+        ),
+        tags=['Attendees']
     ),
     create=extend_schema(
-        summary="Create attendee",
-        description="Create a new attendee record"
+        summary="Create Attendee",
+        description=(
+            "Create a new attendee record with personal information and event association. "
+            "For attendees with 'SELF' relationship type, the authenticated user will be automatically linked. "
+            "Generates a unique attendee display ID for easy reference."
+        ),
+        tags=['Attendees']
     ),
     update=extend_schema(
-        summary="Update attendee",
-        description="Update an existing attendee record"
+        summary="Update Attendee",
+        description=(
+            "Update all fields of an existing attendee record. Requires full payload with all fields. "
+            "Use PATCH for partial updates. Only attendee owners, guardians, or staff can update records."
+        ),
+        tags=['Attendees']
     ),
     partial_update=extend_schema(
-        summary="Partially update attendee",
-        description="Partially update an existing attendee record"
+        summary="Partially Update Attendee",
+        description=(
+            "Update specific fields of an attendee record without providing complete payload. "
+            "Ideal for updating individual attributes like contact information or relationship status."
+        ),
+        tags=['Attendees']
     ),
     destroy=extend_schema(
-        summary="Delete attendee",
-        description="Soft delete an attendee record"
+        summary="Delete Attendee",
+        description=(
+            "Soft delete an attendee record by marking it as deleted without permanent removal. "
+            "Records deleted timestamp and deleting user for audit purposes. "
+            "Deleted attendees can be excluded from list queries."
+        ),
+        tags=['Attendees']
     )
 )
 class AttendeeViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing Attendee records with nested resource support."""
+    """
+    ViewSet for managing Attendee records with nested resource support.
+    
+    Provides comprehensive CRUD operations for attendee management including:
+    - Personal information (name, DOB, gender, contact details)
+    - Event associations and booking references
+    - User relationships (self, child, spouse, friend, etc.)
+    - Nested resources (emergency contacts, dietary/medical/accessibility requirements)
+    - Soft delete functionality for data retention
+    - Advanced filtering and search capabilities
+    """
     
     queryset = Attendee.objects.select_related(
         'event', 'user', 'area_from', 'booking', 'defined_by'
@@ -222,28 +285,55 @@ class AttendeeViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendee guardians",
-        description="Retrieve a list of guardian relationships"
+        summary="List Attendee Guardians",
+        description=(
+            "Retrieve a list of guardian relationships linking users to attendees they are responsible for. "
+            "Guardians have permission to view and manage attendee information for minors or dependents."
+        ),
+        tags=['Attendee Guardians']
     ),
     retrieve=extend_schema(
-        summary="Get guardian details",
-        description="Retrieve details of a specific guardian relationship"
+        summary="Get Guardian Details",
+        description=(
+            "Retrieve detailed information about a specific guardian relationship including "
+            "the user serving as guardian, the attendee under their care, and the relationship timestamp."
+        ),
+        tags=['Attendee Guardians']
     ),
     create=extend_schema(
-        summary="Create guardian relationship",
-        description="Create a new guardian relationship for an attendee"
+        summary="Create Guardian Relationship",
+        description=(
+            "Establish a new guardian relationship between a user and an attendee. "
+            "This grants the user permission to manage the attendee's information and make decisions on their behalf."
+        ),
+        tags=['Attendee Guardians']
     ),
     update=extend_schema(
-        summary="Update guardian relationship",
-        description="Update an existing guardian relationship"
+        summary="Update Guardian Relationship",
+        description="Update details of an existing guardian relationship.",
+        tags=['Attendee Guardians']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Guardian Relationship",
+        description="Partially update a guardian relationship without providing complete payload.",
+        tags=['Attendee Guardians']
     ),
     destroy=extend_schema(
-        summary="Delete guardian relationship",
-        description="Remove a guardian relationship"
+        summary="Delete Guardian Relationship",
+        description=(
+            "Remove a guardian relationship, revoking the user's permission to manage the attendee. "
+            "This action does not delete the user or attendee records."
+        ),
+        tags=['Attendee Guardians']
     )
 )
 class AttendeeGuardianViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing AttendeeGuardian relationships."""
+    """
+    ViewSet for managing AttendeeGuardian relationships.
+    
+    Handles the many-to-many relationship between users and attendees they are responsible for.
+    Guardians typically manage minors or dependents and have elevated permissions for those attendees.
+    """
     
     queryset = AttendeeGuardian.objects.select_related('user', 'attendee').all()
     serializer_class = AttendeeGuardianSerializer
@@ -261,20 +351,39 @@ class AttendeeGuardianViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendee actions",
-        description="Retrieve a list of actions performed on attendees"
+        summary="List Attendee Actions",
+        description=(
+            "Retrieve an audit log of actions performed on attendees. "
+            "Tracks check-ins, check-outs, registrations, and other attendee-related events. "
+            "Useful for compliance, reporting, and activity monitoring."
+        ),
+        tags=['Attendee Actions']
     ),
     retrieve=extend_schema(
-        summary="Get action details",
-        description="Retrieve details of a specific attendee action"
+        summary="Get Action Details",
+        description=(
+            "Retrieve detailed information about a specific attendee action including "
+            "the action type, performer, timestamp, and associated attendee."
+        ),
+        tags=['Attendee Actions']
     ),
     create=extend_schema(
-        summary="Create attendee action",
-        description="Log a new action performed on an attendee"
+        summary="Create Attendee Action",
+        description=(
+            "Log a new action performed on an attendee such as check-in, check-out, or status change. "
+            "Creates an immutable audit trail entry for compliance and tracking purposes."
+        ),
+        tags=['Attendee Actions']
     )
 )
 class AttendeeActionViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing AttendeeAction records."""
+    """
+    ViewSet for managing AttendeeAction records.
+    
+    Provides an audit trail of actions performed on attendees throughout their lifecycle.
+    Actions are immutable once created (no update/delete) to maintain audit integrity.
+    Restricted to event staff for action creation.
+    """
     
     queryset = AttendeeAction.objects.select_related('attendee', 'performed_by').all()
     serializer_class = AttendeeActionSerializer
@@ -293,28 +402,61 @@ class AttendeeActionViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List family groups",
-        description="Retrieve a list of family groups"
+        summary="List Family Groups",
+        description=(
+            "Retrieve a list of family groups with their associated members. "
+            "Family groups organize attendees into related units for easier management and communication. "
+            "Results include family name, creation details, and member count."
+        ),
+        tags=['Family Groups']
     ),
     retrieve=extend_schema(
-        summary="Get family group details",
-        description="Retrieve detailed information about a family group including members"
+        summary="Get Family Group Details",
+        description=(
+            "Retrieve comprehensive information about a specific family group including all members, "
+            "their relationships within the family (parent, child, sibling, etc.), "
+            "and primary guardian designations."
+        ),
+        tags=['Family Groups']
     ),
     create=extend_schema(
-        summary="Create family group",
-        description="Create a new family group"
+        summary="Create Family Group",
+        description=(
+            "Create a new family group to organize related attendees. "
+            "Family groups facilitate bulk operations and communication with multiple attendees "
+            "who share family relationships."
+        ),
+        tags=['Family Groups']
     ),
     update=extend_schema(
-        summary="Update family group",
-        description="Update an existing family group"
+        summary="Update Family Group",
+        description=(
+            "Update family group information such as the family name or designation. "
+            "Use member management endpoints to add or remove attendees from the group."
+        ),
+        tags=['Family Groups']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Family Group",
+        description="Partially update family group information without providing complete payload.",
+        tags=['Family Groups']
     ),
     destroy=extend_schema(
-        summary="Delete family group",
-        description="Delete a family group"
+        summary="Delete Family Group",
+        description=(
+            "Delete a family group and remove all member associations. "
+            "This does not delete the individual attendee records, only the grouping relationship."
+        ),
+        tags=['Family Groups']
     )
 )
 class FamilyGroupViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing FamilyGroup records."""
+    """
+    ViewSet for managing FamilyGroup records.
+    
+    Family groups organize related attendees (family members) for easier management.
+    Supports grouping attendees by family relationships and designating primary guardians.
+    """
     
     queryset = FamilyGroup.objects.prefetch_related('family_attendees__attendee').all()
     permission_classes = [IsAttendeeOwnerOrStaff]
@@ -334,8 +476,13 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
         return FamilyGroupDetailSerializer
     
     @extend_schema(
-        summary="Get family group members",
-        description="Retrieve all members of a family group",
+        summary="Get Family Group Members",
+        description=(
+            "Retrieve all members of a specific family group with their relationships and roles. "
+            "Shows which attendees belong to the family and their relationships (parent, child, sibling, etc.), "
+            "including primary guardian designations."
+        ),
+        tags=['Family Groups'],
         responses={200: FamilyAttendeeSerializer(many=True)}
     )
     @action(detail=True, methods=['get'], url_path='members')
@@ -349,28 +496,57 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List family attendee relationships",
-        description="Retrieve a list of family attendee memberships"
+        summary="List Family Attendee Memberships",
+        description=(
+            "Retrieve a list of family attendee memberships showing how attendees are associated with family groups. "
+            "Includes relationship types (parent, child, sibling) and primary guardian status."
+        ),
+        tags=['Family Attendees']
     ),
     retrieve=extend_schema(
-        summary="Get family attendee details",
-        description="Retrieve details of a specific family attendee membership"
+        summary="Get Family Membership Details",
+        description=(
+            "Retrieve details of a specific family attendee membership including "
+            "the attendee, family group, relationship type, and whether they are designated as primary guardian."
+        ),
+        tags=['Family Attendees']
     ),
     create=extend_schema(
-        summary="Add attendee to family",
-        description="Add an attendee to a family group"
+        summary="Add Attendee to Family",
+        description=(
+            "Add an attendee to a family group with a specified relationship (parent, child, sibling, spouse, etc.). "
+            "Optionally designate them as the primary guardian for the family."
+        ),
+        tags=['Family Attendees']
     ),
     update=extend_schema(
-        summary="Update family membership",
-        description="Update a family attendee membership"
+        summary="Update Family Membership",
+        description=(
+            "Update a family attendee membership to change relationship type or primary guardian status."
+        ),
+        tags=['Family Attendees']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Family Membership",
+        description="Partially update family membership details without providing complete payload.",
+        tags=['Family Attendees']
     ),
     destroy=extend_schema(
-        summary="Remove attendee from family",
-        description="Remove an attendee from a family group"
+        summary="Remove Attendee from Family",
+        description=(
+            "Remove an attendee from a family group. "
+            "This does not delete the attendee record, only the family association."
+        ),
+        tags=['Family Attendees']
     )
 )
 class FamilyAttendeeViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing FamilyAttendee relationships."""
+    """
+    ViewSet for managing FamilyAttendee relationships.
+    
+    Handles the many-to-many relationship between family groups and attendees,
+    including relationship types and primary guardian designations.
+    """
     
     queryset = FamilyAttendee.objects.select_related('family_group', 'attendee').all()
     serializer_class = FamilyAttendeeSerializer
@@ -388,28 +564,60 @@ class FamilyAttendeeViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendee messages",
-        description="Retrieve a list of attendee messages"
+        summary="List Attendee Messages",
+        description=(
+            "Retrieve a list of messages sent to or from attendees. "
+            "Messages can be inquiries, requests, or communications between attendees and staff. "
+            "Supports filtering by priority (low, medium, high) and response status."
+        ),
+        tags=['Attendee Messages']
     ),
     retrieve=extend_schema(
-        summary="Get message details",
-        description="Retrieve full details of a specific message"
+        summary="Get Message Details",
+        description=(
+            "Retrieve full details of a specific attendee message including subject, message content, "
+            "priority level, submission timestamp, response details, and staff notes. "
+            "Shows complete message thread with any staff responses."
+        ),
+        tags=['Attendee Messages']
     ),
     create=extend_schema(
-        summary="Create message",
-        description="Create a new attendee message"
+        summary="Create Message",
+        description=(
+            "Create a new message from or about an attendee. "
+            "Messages can be submitted by attendees with questions or requests, or by staff for record-keeping. "
+            "Priority levels (low, medium, high) help staff prioritize responses."
+        ),
+        tags=['Attendee Messages']
     ),
     update=extend_schema(
-        summary="Update message",
-        description="Update a message (primarily for staff responses)"
+        summary="Update Message",
+        description=(
+            "Update a message, primarily used by staff to add responses or administrative notes. "
+            "Can update priority level, response content, and internal staff notes. "
+            "Response timestamp is automatically recorded when staff responds."
+        ),
+        tags=['Attendee Messages']
     ),
     partial_update=extend_schema(
-        summary="Partially update message",
-        description="Partially update a message"
+        summary="Partially Update Message",
+        description=(
+            "Partially update message fields such as priority, response, or admin notes "
+            "without providing the complete message payload."
+        ),
+        tags=['Attendee Messages']
     )
 )
 class AttendeeMessageViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing AttendeeMessage records."""
+    """
+    ViewSet for managing AttendeeMessage records.
+    
+    Handles communication between attendees and event staff including:
+    - Inquiries and requests from attendees
+    - Staff responses and internal notes
+    - Priority management for message triage
+    - Message threading and history
+    """
     
     queryset = AttendeeMessage.objects.select_related('attendee', 'responsed_by').all()
     permission_classes = [CanAccessMessages]
@@ -436,24 +644,59 @@ class AttendeeMessageViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List accessibility requirements",
-        description="Retrieve a list of available accessibility requirements"
+        summary="List Accessibility Requirements",
+        description=(
+            "Retrieve a list of available accessibility requirement types that can be assigned to attendees. "
+            "These represent various accessibility needs such as wheelchair access, sign language interpretation, "
+            "visual aids, hearing assistance, and other accommodations. "
+            "Each requirement includes verification status for compliance tracking."
+        ),
+        tags=['Accessibility Requirements']
     ),
     retrieve=extend_schema(
-        summary="Get accessibility requirement details",
-        description="Retrieve details of a specific accessibility requirement"
+        summary="Get Accessibility Requirement Details",
+        description=(
+            "Retrieve detailed information about a specific accessibility requirement type including "
+            "code, label, description, verification status, and active status."
+        ),
+        tags=['Accessibility Requirements']
     ),
     create=extend_schema(
-        summary="Create accessibility requirement",
-        description="Create a new accessibility requirement type"
+        summary="Create Accessibility Requirement",
+        description=(
+            "Create a new accessibility requirement type for event accessibility planning. "
+            "Staff can define custom accessibility accommodations with codes, labels, and descriptions. "
+            "Supports verification workflows for compliance."
+        ),
+        tags=['Accessibility Requirements']
     ),
     update=extend_schema(
-        summary="Update accessibility requirement",
-        description="Update an existing accessibility requirement"
+        summary="Update Accessibility Requirement",
+        description=(
+            "Update an accessibility requirement type's details including label, description, "
+            "verification status, or active status. Used to maintain the accessibility catalog."
+        ),
+        tags=['Accessibility Requirements']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Accessibility Requirement",
+        description="Partially update an accessibility requirement without providing complete payload.",
+        tags=['Accessibility Requirements']
+    ),
+    destroy=extend_schema(
+        summary="Delete Accessibility Requirement",
+        description="Delete an accessibility requirement type (use with caution if assignments exist).",
+        tags=['Accessibility Requirements']
     )
 )
 class AccessibilityRequirementViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing AccessibilityRequirement types."""
+    """
+    ViewSet for managing AccessibilityRequirement types.
+    
+    Provides a catalog of accessibility accommodations that can be assigned to attendees.
+    Supports compliance tracking through verification status management.
+    Read-only for non-staff users.
+    """
     
     queryset = AccessibilityRequirement.objects.all()
     serializer_class = AccessibilityRequirementSerializer
@@ -468,28 +711,61 @@ class AccessibilityRequirementViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendee accessibility requirements",
-        description="Retrieve accessibility requirements assigned to attendees"
+        summary="List Attendee Accessibility Requirements",
+        description=(
+            "Retrieve accessibility requirements assigned to attendees. "
+            "Shows which attendees have specific accessibility needs with detailed notes and verification status. "
+            "Supports filtering by attendee, requirement type, and verification status for compliance reporting."
+        ),
+        tags=['Attendee Accessibility']
     ),
     retrieve=extend_schema(
-        summary="Get attendee accessibility requirement details",
-        description="Retrieve details of a specific attendee accessibility requirement"
+        summary="Get Attendee Accessibility Requirement Details",
+        description=(
+            "Retrieve detailed information about a specific attendee's accessibility requirement including "
+            "the requirement type, specific details, accommodation notes, verification status, and verification history."
+        ),
+        tags=['Attendee Accessibility']
     ),
     create=extend_schema(
-        summary="Assign accessibility requirement",
-        description="Assign an accessibility requirement to an attendee"
+        summary="Assign Accessibility Requirement",
+        description=(
+            "Assign an accessibility requirement to an attendee with specific details and accommodation notes. "
+            "Captures attendee-specific needs beyond the standard requirement definition. "
+            "Automatically tracks creation timestamp for audit purposes."
+        ),
+        tags=['Attendee Accessibility']
     ),
     update=extend_schema(
-        summary="Update accessibility requirement assignment",
-        description="Update an attendee's accessibility requirement"
+        summary="Update Accessibility Requirement Assignment",
+        description=(
+            "Update an attendee's accessibility requirement details, notes, or verification status. "
+            "Used to refine accommodation plans or update verification as accommodations are confirmed."
+        ),
+        tags=['Attendee Accessibility']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Accessibility Requirement Assignment",
+        description="Partially update accessibility requirement details without providing complete payload.",
+        tags=['Attendee Accessibility']
     ),
     destroy=extend_schema(
-        summary="Remove accessibility requirement",
-        description="Remove an accessibility requirement from an attendee"
+        summary="Remove Accessibility Requirement",
+        description=(
+            "Remove an accessibility requirement assignment from an attendee when it is no longer needed. "
+            "Does not delete the requirement type, only the assignment to this specific attendee."
+        ),
+        tags=['Attendee Accessibility']
     )
 )
 class AttendeeAccessibilityRequirementViewSet(NestedAttendeeViewSetMixin, viewsets.ModelViewSet):
-    """ViewSet for managing AttendeeAccessibilityRequirement assignments (nested under attendee)."""
+    """
+    ViewSet for managing AttendeeAccessibilityRequirement assignments.
+    
+    Handles the association of accessibility requirements with specific attendees,
+    including detailed notes, verification status, and accommodation planning.
+    Supports nested access under attendee resources.
+    """
     
     queryset = AttendeeAccessibilityRequirement.objects.select_related(
         'attendee', 'accessibility_requirement'
@@ -509,24 +785,59 @@ class AttendeeAccessibilityRequirementViewSet(NestedAttendeeViewSetMixin, viewse
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List dietary requirements",
-        description="Retrieve a list of available dietary requirements"
+        summary="List Dietary Requirements",
+        description=(
+            "Retrieve a list of available dietary requirement types for event meal planning. "
+            "Includes common dietary needs such as vegetarian, vegan, halal, kosher, gluten-free, "
+            "lactose-free, nut allergies, and other dietary restrictions. "
+            "Each requirement can be assigned to attendees for catering purposes."
+        ),
+        tags=['Dietary Requirements']
     ),
     retrieve=extend_schema(
-        summary="Get dietary requirement details",
-        description="Retrieve details of a specific dietary requirement"
+        summary="Get Dietary Requirement Details",
+        description=(
+            "Retrieve detailed information about a specific dietary requirement type including "
+            "code, label, description, verification status, and active status."
+        ),
+        tags=['Dietary Requirements']
     ),
     create=extend_schema(
-        summary="Create dietary requirement",
-        description="Create a new dietary requirement type"
+        summary="Create Dietary Requirement",
+        description=(
+            "Create a new dietary requirement type for meal planning and catering. "
+            "Staff can define custom dietary needs with codes, labels, and descriptions. "
+            "Supports verification workflows for dietary compliance."
+        ),
+        tags=['Dietary Requirements']
     ),
     update=extend_schema(
-        summary="Update dietary requirement",
-        description="Update an existing dietary requirement"
+        summary="Update Dietary Requirement",
+        description=(
+            "Update a dietary requirement type's details including label, description, "
+            "verification status, or active status. Used to maintain the dietary catalog."
+        ),
+        tags=['Dietary Requirements']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Dietary Requirement",
+        description="Partially update a dietary requirement without providing complete payload.",
+        tags=['Dietary Requirements']
+    ),
+    destroy=extend_schema(
+        summary="Delete Dietary Requirement",
+        description="Delete a dietary requirement type (use with caution if assignments exist).",
+        tags=['Dietary Requirements']
     )
 )
 class DietaryRequirementViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing DietaryRequirement types."""
+    """
+    ViewSet for managing DietaryRequirement types.
+    
+    Provides a catalog of dietary restrictions and preferences for event catering.
+    Supports meal planning, allergen management, and dietary compliance.
+    Read-only for non-staff users.
+    """
     
     queryset = DietaryRequirement.objects.all()
     serializer_class = DietaryRequirementSerializer
@@ -541,28 +852,62 @@ class DietaryRequirementViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendee dietary requirements",
-        description="Retrieve dietary requirements assigned to attendees"
+        summary="List Attendee Dietary Requirements",
+        description=(
+            "Retrieve dietary requirements assigned to attendees for meal planning and catering. "
+            "Shows which attendees have specific dietary needs with detailed notes and verification status. "
+            "Essential for event catering, allergen management, and dietary compliance."
+        ),
+        tags=['Attendee Dietary']
     ),
     retrieve=extend_schema(
-        summary="Get attendee dietary requirement details",
-        description="Retrieve details of a specific attendee dietary requirement"
+        summary="Get Attendee Dietary Requirement Details",
+        description=(
+            "Retrieve detailed information about a specific attendee's dietary requirement including "
+            "the requirement type, specific details, preparation notes, verification status, and verification history."
+        ),
+        tags=['Attendee Dietary']
     ),
     create=extend_schema(
-        summary="Assign dietary requirement",
-        description="Assign a dietary requirement to an attendee"
+        summary="Assign Dietary Requirement",
+        description=(
+            "Assign a dietary requirement to an attendee with specific details and preparation notes. "
+            "Captures attendee-specific dietary needs, allergies, and restrictions for safe meal preparation. "
+            "Automatically tracks creation timestamp for audit purposes."
+        ),
+        tags=['Attendee Dietary']
     ),
     update=extend_schema(
-        summary="Update dietary requirement assignment",
-        description="Update an attendee's dietary requirement"
+        summary="Update Dietary Requirement Assignment",
+        description=(
+            "Update an attendee's dietary requirement details, notes, or verification status. "
+            "Used to refine meal plans or update verification as dietary needs are confirmed."
+        ),
+        tags=['Attendee Dietary']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Dietary Requirement Assignment",
+        description="Partially update dietary requirement details without providing complete payload.",
+        tags=['Attendee Dietary']
     ),
     destroy=extend_schema(
-        summary="Remove dietary requirement",
-        description="Remove a dietary requirement from an attendee"
+        summary="Remove Dietary Requirement",
+        description=(
+            "Remove a dietary requirement assignment from an attendee when it is no longer applicable. "
+            "Does not delete the requirement type, only the assignment to this specific attendee."
+        ),
+        tags=['Attendee Dietary']
     )
 )
 class AttendeeDietaryRequirementViewSet(NestedAttendeeViewSetMixin, viewsets.ModelViewSet):
-    """ViewSet for managing AttendeeDietaryRequirement assignments (nested under attendee)."""
+    """
+    ViewSet for managing AttendeeDietaryRequirement assignments.
+    
+    Handles the association of dietary requirements with specific attendees,
+    including detailed notes, verification status, and meal planning information.
+    Critical for safe event catering and allergen management.
+    Supports nested access under attendee resources.
+    """
     
     queryset = AttendeeDietaryRequirement.objects.select_related(
         'attendee', 'dietary_requirement'
@@ -582,24 +927,59 @@ class AttendeeDietaryRequirementViewSet(NestedAttendeeViewSetMixin, viewsets.Mod
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List medical conditions",
-        description="Retrieve a list of available medical conditions"
+        summary="List Medical Conditions",
+        description=(
+            "Retrieve a list of available medical condition types for attendee health management. "
+            "Includes common conditions such as asthma, diabetes, epilepsy, heart conditions, "
+            "allergies, and other medical concerns requiring monitoring or emergency response. "
+            "Each condition can be assigned to attendees with severity levels (mild, moderate, severe)."
+        ),
+        tags=['Medical Conditions']
     ),
     retrieve=extend_schema(
-        summary="Get medical condition details",
-        description="Retrieve details of a specific medical condition"
+        summary="Get Medical Condition Details",
+        description=(
+            "Retrieve detailed information about a specific medical condition type including "
+            "code, label, description, verification status, and active status."
+        ),
+        tags=['Medical Conditions']
     ),
     create=extend_schema(
-        summary="Create medical condition",
-        description="Create a new medical condition type"
+        summary="Create Medical Condition",
+        description=(
+            "Create a new medical condition type for health management and emergency response planning. "
+            "Staff can define custom medical conditions with codes, labels, and descriptions. "
+            "Supports verification workflows for medical compliance."
+        ),
+        tags=['Medical Conditions']
     ),
     update=extend_schema(
-        summary="Update medical condition",
-        description="Update an existing medical condition"
+        summary="Update Medical Condition",
+        description=(
+            "Update a medical condition type's details including label, description, "
+            "verification status, or active status. Used to maintain the medical conditions catalog."
+        ),
+        tags=['Medical Conditions']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Medical Condition",
+        description="Partially update a medical condition without providing complete payload.",
+        tags=['Medical Conditions']
+    ),
+    destroy=extend_schema(
+        summary="Delete Medical Condition",
+        description="Delete a medical condition type (use with caution if assignments exist).",
+        tags=['Medical Conditions']
     )
 )
 class MedicalConditionViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing MedicalCondition types."""
+    """
+    ViewSet for managing MedicalCondition types.
+    
+    Provides a catalog of medical conditions for attendee health monitoring.
+    Supports emergency response planning and medical compliance tracking.
+    Read-only for non-staff users.
+    """
     
     queryset = MedicalCondition.objects.all()
     serializer_class = MedicalConditionSerializer
@@ -614,28 +994,62 @@ class MedicalConditionViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendee medical conditions",
-        description="Retrieve medical conditions assigned to attendees"
+        summary="List Attendee Medical Conditions",
+        description=(
+            "Retrieve medical conditions assigned to attendees for health monitoring and emergency response. "
+            "Shows which attendees have specific medical conditions with severity levels (mild, moderate, severe), "
+            "detailed notes, and verification status. Critical for event safety and medical preparedness."
+        ),
+        tags=['Attendee Medical']
     ),
     retrieve=extend_schema(
-        summary="Get attendee medical condition details",
-        description="Retrieve details of a specific attendee medical condition"
+        summary="Get Attendee Medical Condition Details",
+        description=(
+            "Retrieve detailed information about a specific attendee's medical condition including "
+            "the condition type, severity level, specific details, medical notes, verification status, and verification history."
+        ),
+        tags=['Attendee Medical']
     ),
     create=extend_schema(
-        summary="Assign medical condition",
-        description="Assign a medical condition to an attendee"
+        summary="Assign Medical Condition",
+        description=(
+            "Assign a medical condition to an attendee with severity level and specific medical details. "
+            "Captures attendee-specific medical needs for emergency response planning and health monitoring. "
+            "Severity levels: mild, moderate, severe. Automatically tracks creation timestamp for audit purposes."
+        ),
+        tags=['Attendee Medical']
     ),
     update=extend_schema(
-        summary="Update medical condition assignment",
-        description="Update an attendee's medical condition"
+        summary="Update Medical Condition Assignment",
+        description=(
+            "Update an attendee's medical condition details, severity level, notes, or verification status. "
+            "Used to refine emergency response plans or update verification as medical information is confirmed."
+        ),
+        tags=['Attendee Medical']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Medical Condition Assignment",
+        description="Partially update medical condition details without providing complete payload.",
+        tags=['Attendee Medical']
     ),
     destroy=extend_schema(
-        summary="Remove medical condition",
-        description="Remove a medical condition from an attendee"
+        summary="Remove Medical Condition",
+        description=(
+            "Remove a medical condition assignment from an attendee when it is no longer applicable. "
+            "Does not delete the condition type, only the assignment to this specific attendee."
+        ),
+        tags=['Attendee Medical']
     )
 )
 class AttendeeMedicalConditionViewSet(NestedAttendeeViewSetMixin, viewsets.ModelViewSet):
-    """ViewSet for managing AttendeeMedicalCondition assignments (nested under attendee)."""
+    """
+    ViewSet for managing AttendeeMedicalCondition assignments.
+    
+    Handles the association of medical conditions with specific attendees,
+    including severity levels, detailed medical notes, and verification status.
+    Critical for event safety, emergency response, and health management.
+    Supports nested access under attendee resources.
+    """
     
     queryset = AttendeeMedicalCondition.objects.select_related(
         'attendee', 'medical_condition'
@@ -655,28 +1069,63 @@ class AttendeeMedicalConditionViewSet(NestedAttendeeViewSetMixin, viewsets.Model
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List emergency contacts",
-        description="Retrieve a list of emergency contacts"
+        summary="List Emergency Contacts",
+        description=(
+            "Retrieve a list of emergency contacts for attendees. "
+            "Emergency contacts are individuals to be notified in case of medical emergencies, accidents, or urgent situations. "
+            "Each attendee can have multiple contacts with one designated as primary. "
+            "Essential for event safety and emergency response protocols."
+        ),
+        tags=['Emergency Contacts']
     ),
     retrieve=extend_schema(
-        summary="Get emergency contact details",
-        description="Retrieve details of a specific emergency contact"
+        summary="Get Emergency Contact Details",
+        description=(
+            "Retrieve detailed information about a specific emergency contact including "
+            "name, relationship to attendee, phone numbers, email, and primary contact designation."
+        ),
+        tags=['Emergency Contacts']
     ),
     create=extend_schema(
-        summary="Create emergency contact",
-        description="Create a new emergency contact for an attendee"
+        summary="Create Emergency Contact",
+        description=(
+            "Create a new emergency contact for an attendee. "
+            "Requires contact name, relationship, and at least one contact method (phone or email). "
+            "Designate as primary contact if this is the first or most important contact for emergencies."
+        ),
+        tags=['Emergency Contacts']
     ),
     update=extend_schema(
-        summary="Update emergency contact",
-        description="Update an existing emergency contact"
+        summary="Update Emergency Contact",
+        description=(
+            "Update emergency contact information including contact details, relationship, or primary designation. "
+            "Ensures attendee emergency information remains current for safety purposes."
+        ),
+        tags=['Emergency Contacts']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Emergency Contact",
+        description="Partially update emergency contact details without providing complete payload.",
+        tags=['Emergency Contacts']
     ),
     destroy=extend_schema(
-        summary="Delete emergency contact",
-        description="Remove an emergency contact"
+        summary="Delete Emergency Contact",
+        description=(
+            "Remove an emergency contact from an attendee's record. "
+            "Use caution when removing primary contacts to ensure attendee always has emergency contact information."
+        ),
+        tags=['Emergency Contacts']
     )
 )
 class EmergencyContactViewSet(NestedAttendeeViewSetMixin, viewsets.ModelViewSet):
-    """ViewSet for managing EmergencyContact records (nested under attendee)."""
+    """
+    ViewSet for managing EmergencyContact records.
+    
+    Handles emergency contact information for attendees including multiple contacts per attendee,
+    primary contact designation, and comprehensive contact information.
+    Critical for event safety and emergency response.
+    Supports nested access under attendee resources.
+    """
     
     queryset = EmergencyContact.objects.select_related('attendee').all()
     serializer_class = EmergencyContactSerializer
@@ -695,24 +1144,59 @@ class EmergencyContactViewSet(NestedAttendeeViewSetMixin, viewsets.ModelViewSet)
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List consents",
-        description="Retrieve a list of available consents for events"
+        summary="List Consents",
+        description=(
+            "Retrieve a list of available consent types for events. "
+            "Consents are legal agreements or permissions required from attendees such as photo/video release, "
+            "medical treatment authorization, liability waivers, code of conduct acknowledgment, "
+            "and data processing permissions. Each consent type is associated with a specific event."
+        ),
+        tags=['Consents']
     ),
     retrieve=extend_schema(
-        summary="Get consent details",
-        description="Retrieve details of a specific consent"
+        summary="Get Consent Details",
+        description=(
+            "Retrieve detailed information about a specific consent type including "
+            "code, title, description, associated event, and creation timestamp."
+        ),
+        tags=['Consents']
     ),
     create=extend_schema(
-        summary="Create consent",
-        description="Create a new consent type for an event"
+        summary="Create Consent",
+        description=(
+            "Create a new consent type for an event. "
+            "Define legal agreements or permissions required from attendees with unique codes, titles, and descriptions. "
+            "Each consent can then be individually granted or declined by attendees."
+        ),
+        tags=['Consents']
     ),
     update=extend_schema(
-        summary="Update consent",
-        description="Update an existing consent"
+        summary="Update Consent",
+        description=(
+            "Update a consent type's details including title or description. "
+            "Used to maintain consent definitions and legal language for compliance."
+        ),
+        tags=['Consents']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Consent",
+        description="Partially update a consent type without providing complete payload.",
+        tags=['Consents']
+    ),
+    destroy=extend_schema(
+        summary="Delete Consent",
+        description="Delete a consent type (use with caution if attendee consent records exist).",
+        tags=['Consents']
     )
 )
 class ConsentViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing Consent types."""
+    """
+    ViewSet for managing Consent types.
+    
+    Provides a catalog of consent types required for event participation.
+    Supports legal compliance, liability management, and data protection.
+    Read-only for non-staff users.
+    """
     
     queryset = Consent.objects.select_related('event').all()
     serializer_class = ConsentSerializer
@@ -727,28 +1211,64 @@ class ConsentViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendee consents",
-        description="Retrieve consent records for attendees"
+        summary="List Attendee Consents",
+        description=(
+            "Retrieve consent records for attendees showing which consents have been granted or declined. "
+            "Tracks attendee agreement to event terms, photo releases, liability waivers, and other legal permissions. "
+            "Includes consent status (granted/declined), timestamp, and optional consent giver information for minors. "
+            "Essential for legal compliance and event liability management."
+        ),
+        tags=['Attendee Consents']
     ),
     retrieve=extend_schema(
-        summary="Get attendee consent details",
-        description="Retrieve details of a specific attendee consent"
+        summary="Get Attendee Consent Details",
+        description=(
+            "Retrieve detailed information about a specific attendee's consent record including "
+            "the consent type, granted status, recording timestamp, when consent was given, and who gave consent (for minors)."
+        ),
+        tags=['Attendee Consents']
     ),
     create=extend_schema(
-        summary="Record attendee consent",
-        description="Record a consent for an attendee"
+        summary="Record Attendee Consent",
+        description=(
+            "Record a consent grant or decline for an attendee. "
+            "Captures whether consent is given, when it was given, and optionally who gave consent (parent/guardian for minors). "
+            "Creates an immutable audit trail for legal compliance."
+        ),
+        tags=['Attendee Consents']
     ),
     update=extend_schema(
-        summary="Update attendee consent",
-        description="Update an attendee's consent record"
+        summary="Update Attendee Consent",
+        description=(
+            "Update an attendee's consent record such as changing consent status or recording withdrawal of consent. "
+            "Maintains compliance with data protection regulations and consent management requirements."
+        ),
+        tags=['Attendee Consents']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Attendee Consent",
+        description="Partially update consent record details without providing complete payload.",
+        tags=['Attendee Consents']
     ),
     destroy=extend_schema(
-        summary="Remove consent record",
-        description="Remove a consent record"
+        summary="Remove Consent Record",
+        description=(
+            "Remove a consent record from an attendee. "
+            "Use with caution as consent records are typically maintained for legal compliance. "
+            "Consider marking as declined rather than deleting for audit trail purposes."
+        ),
+        tags=['Attendee Consents']
     )
 )
 class AttendeeConsentViewSet(NestedAttendeeViewSetMixin, viewsets.ModelViewSet):
-    """ViewSet for managing AttendeeConsent records (nested under attendee)."""
+    """
+    ViewSet for managing AttendeeConsent records.
+    
+    Handles the recording and management of consent grants/declines for attendees.
+    Supports legal compliance, GDPR/data protection, and liability management.
+    Maintains audit trail of consent decisions.
+    Supports nested access under attendee resources.
+    """
     
     queryset = AttendeeConsent.objects.select_related('attendee', 'consent').all()
     serializer_class = AttendeeConsentSerializer
@@ -766,24 +1286,60 @@ class AttendeeConsentViewSet(NestedAttendeeViewSetMixin, viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List event attendances",
-        description="Retrieve a list of event attendance records"
+        summary="List Event Attendances",
+        description=(
+            "Retrieve a list of event attendance records tracking attendee check-ins and check-outs. "
+            "Shows who attended events, arrival and departure times, and staff who processed check-in/check-out. "
+            "Useful for attendance reporting, capacity monitoring, and event analytics. "
+            "Supports filtering by event, attendee, and date ranges."
+        ),
+        tags=['Event Attendance']
     ),
     retrieve=extend_schema(
-        summary="Get attendance details",
-        description="Retrieve details of a specific attendance record"
+        summary="Get Attendance Details",
+        description=(
+            "Retrieve detailed information about a specific attendance record including "
+            "event details, attendee information, check-in and check-out timestamps, and processing staff members."
+        ),
+        tags=['Event Attendance']
     ),
     create=extend_schema(
-        summary="Create attendance record",
-        description="Create a new attendance record"
+        summary="Create Attendance Record",
+        description=(
+            "Create a new attendance record when an attendee arrives at an event. "
+            "Records check-in time and staff member who processed the check-in. "
+            "Enables real-time event capacity monitoring and attendance tracking."
+        ),
+        tags=['Event Attendance']
     ),
     update=extend_schema(
-        summary="Update attendance record",
-        description="Update an attendance record (check-in/check-out)"
+        summary="Update Attendance Record",
+        description=(
+            "Update an attendance record, typically to record check-out when an attendee leaves. "
+            "Can also be used to correct check-in times or update processing staff information. "
+            "Records check-out timestamp and staff member who processed departure."
+        ),
+        tags=['Event Attendance']
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Attendance Record",
+        description="Partially update attendance details such as check-out time without providing complete payload.",
+        tags=['Event Attendance']
+    ),
+    destroy=extend_schema(
+        summary="Delete Attendance Record",
+        description="Delete an attendance record (use with caution as this affects attendance history).",
+        tags=['Event Attendance']
     )
 )
 class EventAttendanceViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing EventAttendance records."""
+    """
+    ViewSet for managing EventAttendance records.
+    
+    Tracks attendee presence at events with check-in and check-out functionality.
+    Supports real-time attendance monitoring, capacity management, and event analytics.
+    Records staff responsible for processing attendance for audit purposes.
+    """
     
     queryset = EventAttendance.objects.select_related('event', 'attendee', 'check_in_by', 'check_out_by').all()
     serializer_class = EventAttendanceSerializer
@@ -801,24 +1357,49 @@ class EventAttendanceViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List attendee organisations",
-        description="Retrieve organisation associations for attendees"
+        summary="List Attendee Organisations",
+        description=(
+            "Retrieve organisation associations for attendees showing which organisations attendees belong to or represent. "
+            "Useful for tracking institutional affiliations, group registrations, and organisational analytics. "
+            "Supports filtering by organisation, attendee, or association date."
+        ),
+        tags=['Attendee Organisations']
     ),
     retrieve=extend_schema(
-        summary="Get attendee organisation details",
-        description="Retrieve details of a specific organisation association"
+        summary="Get Attendee Organisation Details",
+        description=(
+            "Retrieve detailed information about a specific organisation association including "
+            "the attendee, organisation details, association timestamp, and any additional context."
+        ),
+        tags=['Attendee Organisations']
     ),
     create=extend_schema(
-        summary="Link attendee to organisation",
-        description="Link an attendee to an organisation"
+        summary="Link Attendee to Organisation",
+        description=(
+            "Create a new association between an attendee and an organisation. "
+            "Links attendees to institutions, companies, parishes, or other organisational entities they represent. "
+            "Enables organisational reporting and group management."
+        ),
+        tags=['Attendee Organisations']
     ),
     destroy=extend_schema(
-        summary="Unlink attendee from organisation",
-        description="Remove an organisation association"
+        summary="Unlink Attendee from Organisation",
+        description=(
+            "Remove an organisation association from an attendee when the affiliation is no longer valid. "
+            "Does not delete the attendee or organisation records, only the association between them."
+        ),
+        tags=['Attendee Organisations']
     )
 )
 class AttendeeOrganisationViewSet(NestedAttendeeViewSetMixin, viewsets.ModelViewSet):
-    """ViewSet for managing AttendeeOrganisation associations (nested under attendee)."""
+    """
+    ViewSet for managing AttendeeOrganisation associations.
+    
+    Handles the many-to-many relationship between attendees and organisations.
+    Supports institutional affiliations, group registrations, and organisational analytics.
+    No update operation - associations are either created or deleted.
+    Supports nested access under attendee resources.
+    """
     
     queryset = AttendeeOrganisation.objects.select_related('attendee', 'organisation').all()
     serializer_class = AttendeeOrganisationSerializer

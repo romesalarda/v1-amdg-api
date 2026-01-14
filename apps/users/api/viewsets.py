@@ -86,9 +86,13 @@ class IsOwnerOrAdmin(permissions.BasePermission):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List all users",
-        description="Retrieve a paginated list of all users. Requires authentication. "
-                    "Staff users can see all users, regular users only see themselves.",
+        summary="List Users",
+        description=(
+            "Retrieve a paginated list of all users with advanced filtering and search capabilities. "
+            "Staff users can view all users with complete information, while regular users can only view their own profile. "
+            "Supports searching by email, username, name, and filtering by active status and OAuth provider."
+        ),
+        tags=['Users'],
         parameters=[
             OpenApiParameter(
                 name='search',
@@ -117,9 +121,13 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         }
     ),
     retrieve=extend_schema(
-        summary="Retrieve user details",
-        description="Get detailed information about a specific user. "
-                    "Regular users can only view their own profile, staff can view any user.",
+        summary="Get User Details",
+        description=(
+            "Retrieve comprehensive information about a specific user including profile data, account status, and timestamps. "
+            "Regular users can only view their own profile, while staff members can view any user. "
+            "Includes HATEOAS links for related resources."
+        ),
+        tags=['Users'],
         responses={
             200: UserDetailSerializer,
             401: OpenApiResponse(description="Unauthorized"),
@@ -128,9 +136,14 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         }
     ),
     create=extend_schema(
-        summary="Register a new user",
-        description="Create a new user account. This endpoint is public and does not require authentication. "
-                    "Returns JWT tokens in HTTP-only cookies and user data in response body.",
+        summary="Register New User",
+        description=(
+            "Create a new user account with email and password authentication. "
+            "This endpoint is public and does not require authentication. "
+            "Automatically creates associated profile and returns JWT tokens in HTTP-only cookies. "
+            "Email verification may be required based on system configuration."
+        ),
+        tags=['Users'],
         request=UserRegistrationSerializer,
         responses={
             201: UserDetailSerializer,
@@ -150,8 +163,13 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         ]
     ),
     update=extend_schema(
-        summary="Update user (full)",
-        description="Fully update a user's profile. Users can only update their own profile.",
+        summary="Update User (Full)",
+        description=(
+            "Fully update a user's account information including personal details and preferences. "
+            "Requires complete payload with all fields. Users can only update their own profile unless they are staff. "
+            "Use PATCH for partial updates."
+        ),
+        tags=['Users'],
         request=UserUpdateSerializer,
         responses={
             200: UserDetailSerializer,
@@ -160,8 +178,13 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         }
     ),
     partial_update=extend_schema(
-        summary="Update user (partial)",
-        description="Partially update a user's profile. Users can only update their own profile.",
+        summary="Update User (Partial)",
+        description=(
+            "Partially update a user's account information without providing complete payload. "
+            "Allows updating individual fields like first name, last name, or other profile attributes. "
+            "Users can only update their own profile unless they are staff."
+        ),
+        tags=['Users'],
         request=UserUpdateSerializer,
         responses={
             200: UserDetailSerializer,
@@ -170,8 +193,14 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         }
     ),
     destroy=extend_schema(
-        summary="Delete user account",
-        description="Delete a user account. Users can delete their own account, staff can delete any account.",
+        summary="Delete User Account",
+        description=(
+            "Soft delete a user account by deactivating it instead of permanent removal. "
+            "Users can delete their own account, and staff members can delete any account. "
+            "Deactivated accounts retain data for compliance but cannot log in. "
+            "This is a soft delete operation - the account is marked inactive rather than removed from the database."
+        ),
+        tags=['Users'],
         responses={
             204: OpenApiResponse(description="User deleted successfully"),
             403: OpenApiResponse(description="Forbidden - Cannot delete other users"),
@@ -180,7 +209,25 @@ class IsOwnerOrAdmin(permissions.BasePermission):
     ),
 )
 class UserViewSet(viewsets.ModelViewSet):
-    """User CRUD with HATEOAS, filtering, search, pagination, and custom actions (me, change-password, verify-email)."""
+    """
+    ViewSet for comprehensive user management with CRUD operations and custom actions.
+    
+    Provides full user lifecycle management including:
+    - User registration and authentication
+    - Profile viewing and editing
+    - Password management
+    - Email verification
+    - Account deactivation (soft delete)
+    - Advanced filtering and search
+    - HATEOAS links for API discoverability
+    
+    Custom Actions:
+        - me: Get current authenticated user's profile
+        - update_profile: Update current user's profile
+        - change_password: Change password with verification
+        - verify_email: Verify email address with token
+        - profile: Get a specific user's profile
+    """
     queryset = User.objects.select_related('profile').prefetch_related('groups').all()
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -286,8 +333,13 @@ class UserViewSet(viewsets.ModelViewSet):
         instance.save()
     
     @extend_schema(
-        summary="Get current user profile",
-        description="Retrieve the authenticated user's complete profile information including profile data.",
+        summary="Get Current User Profile",
+        description=(
+            "Retrieve the authenticated user's complete profile information including all personal details, "
+            "profile data, account status, and timestamps. This is a convenience endpoint equivalent to "
+            "GET /users/{id}/ with the current user's ID."
+        ),
+        tags=['Users'],
         responses={
             200: UserDetailSerializer,
             401: OpenApiResponse(description="Unauthorized - Authentication required"),
@@ -305,8 +357,13 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     @extend_schema(
-        summary="Update current user profile",
-        description="Update the authenticated user's profile information.",
+        summary="Update Current User Profile",
+        description=(
+            "Update the authenticated user's profile information using a partial update. "
+            "Allows modifying personal details like name, contact information, and preferences "
+            "without providing all fields."
+        ),
+        tags=['Users'],
         request=UserUpdateSerializer,
         responses={
             200: UserDetailSerializer,
@@ -339,8 +396,13 @@ class UserViewSet(viewsets.ModelViewSet):
         )
     
     @extend_schema(
-        summary="Change password",
-        description="Change the authenticated user's password. Requires current password for verification.",
+        summary="Change Password",
+        description=(
+            "Change the authenticated user's password with verification. "
+            "Requires the current password for security validation before setting the new password. "
+            "New password must meet security requirements (minimum length, complexity)."
+        ),
+        tags=['Users'],
         request=ChangePasswordSerializer,
         responses={
             200: OpenApiResponse(description="Password changed successfully"),
@@ -374,6 +436,12 @@ class UserViewSet(viewsets.ModelViewSet):
         user = request.user
 
         self.check_permissions(request)
+
+        if user.is_anonymous:
+            return Response(
+                {'detail': 'Authentication credentials were not provided.'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         
         # Verify old password
         if not user.check_password(serializer.validated_data['old_password']):
@@ -392,8 +460,13 @@ class UserViewSet(viewsets.ModelViewSet):
         )
     
     @extend_schema(
-        summary="Verify email address",
-        description="Verify user's email address using verification token sent via email.",
+        summary="Verify Email Address",
+        description=(
+            "Verify a user's email address using the verification token sent via email. "
+            "Email verification ensures that users have access to the email address they registered with. "
+            "May be required for certain features or event registrations."
+        ),
+        tags=['Users'],
         request=EmailVerificationSerializer,
         responses={
             200: OpenApiResponse(description="Email verified successfully"),
@@ -436,8 +509,13 @@ class UserViewSet(viewsets.ModelViewSet):
             )
     
     @extend_schema(
-        summary="Get user's profile",
-        description="Retrieve a user's profile information.",
+        summary="Get User's Profile",
+        description=(
+            "Retrieve a specific user's profile information including extended profile data. "
+            "Access is restricted based on permissions - users can view their own profile, "
+            "staff can view any profile."
+        ),
+        tags=['Users'],
         responses={
             200: ProfileSerializer,
             404: OpenApiResponse(description="Profile not found"),
@@ -468,8 +546,14 @@ class UserViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List profiles",
-        description="Retrieve a paginated list of user profiles with advanced filtering.",
+        summary="List Profiles",
+        description=(
+            "Retrieve a paginated list of user profiles with comprehensive filtering and search capabilities. "
+            "Profiles contain extended user information including preferences, contact details, timezone, and language settings. "
+            "Staff users can view all profiles, while regular users can only view their own. "
+            "Supports filtering by location, language, timezone, and custom search."
+        ),
+        tags=['Profiles'],
         parameters=[
             OpenApiParameter(
                 name='preferred_name',
@@ -520,25 +604,67 @@ class UserViewSet(viewsets.ModelViewSet):
         responses={200: ProfileSerializer(many=True)}
     ),
     retrieve=extend_schema(
-        summary="Get profile details",
-        description="Retrieve detailed information about a specific profile.",
+        summary="Get Profile Details",
+        description=(
+            "Retrieve comprehensive information about a specific user profile including "
+            "personal preferences, contact information, timezone, language settings, profile picture, "
+            "and associated location data."
+        ),
+        tags=['Profiles'],
         responses={200: ProfileSerializer}
     ),
     update=extend_schema(
-        summary="Update profile (full)",
-        description="Fully update a user's profile.",
+        summary="Update Profile (Full)",
+        description=(
+            "Fully update a user's profile with complete payload. "
+            "Updates extended user information including preferences, contact details, timezone, and location. "
+            "Users can only update their own profile unless they are staff."
+        ),
+        tags=['Profiles'],
         request=ProfileSerializer,
         responses={200: ProfileSerializer}
     ),
     partial_update=extend_schema(
-        summary="Update profile (partial)",
-        description="Partially update a user's profile.",
+        summary="Update Profile (Partial)",
+        description=(
+            "Partially update a user's profile without providing complete payload. "
+            "Ideal for updating individual profile attributes like preferred name, contact phone, "
+            "timezone, or language settings. Users can only update their own profile unless they are staff."
+        ),
+        tags=['Profiles'],
         request=ProfileSerializer,
         responses={200: ProfileSerializer}
     ),
+    destroy=extend_schema(
+        summary="Delete Profile",
+        description=(
+            "Delete a user profile. This removes extended profile data but does not delete the user account. "
+            "Use with caution as this operation cannot be easily undone."
+        ),
+        tags=['Profiles'],
+        responses={
+            204: OpenApiResponse(description="Profile deleted successfully"),
+            403: OpenApiResponse(description="Forbidden - Cannot delete other profiles"),
+        }
+    ),
 )
 class ProfileViewSet(viewsets.ModelViewSet):
-    """Profile CRUD with filtering, search, and owner/admin permissions."""
+    """
+    ViewSet for user profile management with CRUD operations.
+    
+    Handles extended user information beyond basic authentication including:
+    - Personal preferences and display settings
+    - Contact information and communication preferences
+    - Timezone and language settings
+    - Profile picture management
+    - Location associations
+    - Custom profile fields
+    
+    Access Control:
+        - Regular users can only view and edit their own profile
+        - Staff users can view and edit all profiles
+        - Supports advanced filtering and search
+    """
     queryset = Profile.objects.select_related('user', 'area_from').all()
     serializer_class = ProfileSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
@@ -566,8 +692,13 @@ class ProfileViewSet(viewsets.ModelViewSet):
         return queryset
     
     @extend_schema(
-        summary="Get current user's profile",
-        description="Retrieve the authenticated user's profile.",
+        summary="Get Current User's Profile",
+        description=(
+            "Retrieve the authenticated user's profile with all extended information. "
+            "This is a convenience endpoint that returns the profile for the currently logged-in user. "
+            "Automatically creates a profile if one doesn't exist."
+        ),
+        tags=['Profiles'],
         responses={200: ProfileSerializer}
     )
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
@@ -585,9 +716,15 @@ class ProfileViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     post=extend_schema(
-        summary="Login with email and password",
-        description="Authenticate user with email and password. Returns JWT tokens in HTTP-only cookies "
-                    "and user data in response body.",
+        summary="Login with Email and Password",
+        description=(
+            "Authenticate a user with email and password credentials. "
+            "Returns JWT access and refresh tokens in secure HTTP-only cookies for enhanced security. "
+            "Access tokens are short-lived (15 minutes) while refresh tokens last longer (7 days). "
+            "User profile data is returned in the response body. "
+            "Tokens are automatically included in cookies for subsequent requests."
+        ),
+        tags=['Authentication'],
         request=CustomTokenObtainPairSerializer,
         responses={
             200: OpenApiResponse(
@@ -681,8 +818,15 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 @extend_schema_view(
     post=extend_schema(
-        summary="Refresh access token",
-        description="Refresh the access token using the refresh token from HTTP-only cookie.",
+        summary="Refresh Access Token",
+        description=(
+            "Refresh the access token using the refresh token stored in HTTP-only cookies. "
+            "Access tokens expire after 15 minutes for security, while refresh tokens last 7 days. "
+            "This endpoint reads the refresh token from cookies automatically and returns a new access token. "
+            "No request body is required - the refresh token is read from cookies. "
+            "Use this endpoint before access token expiration to maintain authenticated sessions."
+        ),
+        tags=['Authentication'],
         responses={
             200: OpenApiResponse(description="Token refreshed successfully"),
             401: OpenApiResponse(description="Invalid or expired refresh token"),
@@ -827,7 +971,12 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
     
     @extend_schema(
         summary="Initiate Google OAuth",
-        description="Get Google OAuth authorization URL for user authentication.",
+        description=(
+            "Generate Google OAuth authorization URL for user authentication. "
+            "Returns a URL that redirects users to Google's authorization page where they can grant permissions. "
+            "After authorization, Google redirects back to the specified redirect_uri with an authorization code."
+        ),
+        tags=['Authentication'],
         request=GoogleOAuthSerializer,
         responses={
             200: OpenApiResponse(
@@ -887,9 +1036,14 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
         })
     
     @extend_schema(
-        summary="Handle Google OAuth callback",
-        description="Exchange authorization code for user information and authenticate user. "
-                    "Creates new user if doesn't exist, or logs in existing user.",
+        summary="Handle Google OAuth Callback",
+        description=(
+            "Exchange Google OAuth authorization code for user information and authenticate the user. "
+            "Creates a new user account if the Google email doesn't exist in the system, or logs in existing user. "
+            "Returns JWT tokens in secure HTTP-only cookies and user profile data in response body. "
+            "Automatically associates the Google account with the user for future OAuth logins."
+        ),
+        tags=['Authentication'],
         request=GoogleOAuthCallbackSerializer,
         responses={
             200: OpenApiResponse(

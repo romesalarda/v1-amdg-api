@@ -643,3 +643,47 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 MAX_LENGTH_LOCATION_ID = 20
 MAX_ID_GENERATION_ATTEMPTS = 5
 FULL_DELETE_BOOKING_INTENTS = 10 # days
+
+JAZZMIN_SETTINGS = {
+    "site_title": "AMDG Admin",
+    "show_ui_builder": True,
+    "user_avatar": "profile_picture_url",
+    "site_header": "AMDG Admin",
+    "site_brand": "AMDG Admin",
+    # "site_logo": "images/yfc.png",
+    # "site_logo_classes": "img-circle",
+    "welcome_sign": "Welcome to the AMDG Admin Portal",
+    "copyright": "AMDG Admin Portal",
+}
+
+JAZZMIN_UI_TWEAKS = {
+    "navbar_small_text": False,
+    "footer_small_text": False,
+    "body_small_text": False,
+    "brand_small_text": False,
+    "brand_colour": "navbar-gray",
+    "accent": "accent-primary",
+    "navbar": "navbar-dark",
+    "no_navbar_border": False,
+    "navbar_fixed": False,
+    "layout_boxed": False,
+    "footer_fixed": False,
+    "sidebar_fixed": False,
+    "sidebar": "sidebar-dark-lightblue",
+    "sidebar_nav_small_text": True,
+    "sidebar_disable_expand": False,
+    "sidebar_nav_child_indent": False,
+    "sidebar_nav_compact_style": False,
+    "sidebar_nav_legacy_style": False,
+    "sidebar_nav_flat_style": False,
+    "theme": "cyborg",
+    "dark_mode_theme": "darkly",
+    "button_classes": {
+        "primary": "btn-primary",
+        "secondary": "btn-secondary",
+        "info": "btn-info",
+        "warning": "btn-warning",
+        "danger": "btn-danger",
+        "success": "btn-success"
+    }
+}

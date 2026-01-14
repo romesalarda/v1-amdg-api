@@ -102,6 +102,14 @@ class StandardPagination(PageNumberPagination):
         description="Partially update payment details. Status transitions are validated.",
         tags=["Payments"],
     ),
+    destroy=extend_schema(
+        summary="Delete payment",
+        description=(
+            "Delete a payment. Can only delete payments in DRAFTING or PENDING status. "
+            "Only administrative staff can delete payments."
+        ),
+        tags=["Payments"],
+    )
 )
 class PaymentViewSet(viewsets.ModelViewSet):
     """
@@ -494,6 +502,30 @@ class PaymentViewSet(viewsets.ModelViewSet):
         description="Create a new payment method for an event. Only admins.",
         tags=["Payment Methods"],
     ),
+    update=extend_schema(
+        summary="Update payment method",
+        description=(
+            "Update a payment method with complete payload. "
+            "Use PATCH for partial updates. Only administrative staff can update payment methods."
+        ),
+        tags=["Payment Methods"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially update payment method",
+        description=(
+            "Partially update a payment method such as changing status or configuration. "
+            "Only administrative staff can update payment methods."
+        ),
+        tags=["Payment Methods"],
+    ),
+    destroy=extend_schema(
+        summary="Delete payment method",
+        description=(
+            "Delete a payment method. Use with caution as this affects payment processing. "
+            "Only administrative staff can delete payment methods."
+        ),
+        tags=["Payment Methods"],
+    )
 )
 class PaymentMethodViewSet(viewsets.ModelViewSet):
     """
@@ -541,6 +573,38 @@ class PaymentMethodViewSet(viewsets.ModelViewSet):
         description="Get detailed discount information including rules.",
         tags=["Discounts"],
     ),
+    create=extend_schema(
+        summary="Create discount",
+        description=(
+            "Create a new discount with specified type, value, and rules. "
+            "Only administrative staff can create discounts."
+        ),
+        tags=["Discounts"],
+    ),
+    update=extend_schema(
+        summary="Update discount",
+        description=(
+            "Update a discount with complete payload including all rules. "
+            "Use PATCH for partial updates. Only administrative staff can update discounts."
+        ),
+        tags=["Discounts"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially update discount",
+        description=(
+            "Partially update a discount such as changing status or rules. "
+            "Only administrative staff can update discounts."
+        ),
+        tags=["Discounts"],
+    ),
+    destroy=extend_schema(
+        summary="Delete discount",
+        description=(
+            "Delete a discount. Use with caution as this affects pricing and promotions. "
+            "Only administrative staff can delete discounts."
+        ),
+        tags=["Discounts"],
+    )
 )
 class DiscountViewSet(viewsets.ModelViewSet):
     """
@@ -579,6 +643,47 @@ class DiscountViewSet(viewsets.ModelViewSet):
         description="Retrieve all discount rules. Only accessible by administrative staff.",
         tags=["Discounts"],
     ),
+    retrieve=extend_schema(
+        summary="Retrieve discount rule",
+        description=(
+            "Get detailed information about a specific discount rule including "
+            "rule type, value, and conditions for discount application."
+        ),
+        tags=["Discounts"],
+    ),
+    create=extend_schema(
+        summary="Create discount rule",
+        description=(
+            "Create a new discount rule for a discount. "
+            "Rules define conditions and criteria for discount application. "
+            "Only administrative staff can create discount rules."
+        ),
+        tags=["Discounts"],
+    ),
+    update=extend_schema(
+        summary="Update discount rule",
+        description=(
+            "Update a discount rule with complete payload. "
+            "Use PATCH for partial updates. Only administrative staff can update discount rules."
+        ),
+        tags=["Discounts"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially update discount rule",
+        description=(
+            "Partially update a discount rule such as changing value or conditions. "
+            "Only administrative staff can update discount rules."
+        ),
+        tags=["Discounts"],
+    ),
+    destroy=extend_schema(
+        summary="Delete discount rule",
+        description=(
+            "Delete a discount rule. Affects how discounts are applied. "
+            "Only administrative staff can delete discount rules."
+        ),
+        tags=["Discounts"],
+    )
 )
 class DiscountRuleViewSet(viewsets.ModelViewSet):
     """
@@ -629,6 +734,31 @@ class DiscountRuleViewSet(viewsets.ModelViewSet):
         description="Request a refund for a completed payment. Must be payment owner or admin.",
         tags=["Refunds"],
     ),
+    update=extend_schema(
+        summary="Update refund request",
+        description=(
+            "Update a refund request with complete payload. "
+            "Only administrative staff can update refund requests. "
+            "Use PATCH for partial updates."
+        ),
+        tags=["Refunds"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially update refund request",
+        description=(
+            "Partially update a refund request such as amount or reason. "
+            "Only administrative staff can update refund requests."
+        ),
+        tags=["Refunds"],
+    ),
+    destroy=extend_schema(
+        summary="Delete refund request",
+        description=(
+            "Delete a refund request. Can only delete pending refund requests. "
+            "Only administrative staff can delete refund requests."
+        ),
+        tags=["Refunds"],
+    )
 )
 class RefundRequestViewSet(viewsets.ModelViewSet):
     """
@@ -786,6 +916,46 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         description="List refund associations. Only accessible by administrative staff.",
         tags=["Refunds"],
     ),
+    retrieve=extend_schema(
+        summary="Retrieve refund association",
+        description=(
+            "Get detailed information about a specific refund association including "
+            "linked refund request and associated refundable items."
+        ),
+        tags=["Refunds"],
+    ),
+    create=extend_schema(
+        summary="Create refund association",
+        description=(
+            "Create a new refund association linking a refund request to refundable items. "
+            "Only administrative staff can create refund associations."
+        ),
+        tags=["Refunds"],
+    ),
+    update=extend_schema(
+        summary="Update refund association",
+        description=(
+            "Update a refund association with complete payload. "
+            "Use PATCH for partial updates. Only administrative staff can update refund associations."
+        ),
+        tags=["Refunds"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially update refund association",
+        description=(
+            "Partially update a refund association. "
+            "Only administrative staff can update refund associations."
+        ),
+        tags=["Refunds"],
+    ),
+    destroy=extend_schema(
+        summary="Delete refund association",
+        description=(
+            "Delete a refund association. Removes link between refund request and refundable item. "
+            "Only administrative staff can delete refund associations."
+        ),
+        tags=["Refunds"],
+    )
 )
 class RefundAssociationViewSet(viewsets.ModelViewSet):
     """
@@ -815,6 +985,46 @@ class RefundAssociationViewSet(viewsets.ModelViewSet):
         description="List refund policies. Only accessible by administrative staff.",
         tags=["Refunds"],
     ),
+    retrieve=extend_schema(
+        summary="Retrieve refund policy",
+        description=(
+            "Get detailed information about a specific refund policy including "
+            "policy type, terms, and associated event."
+        ),
+        tags=["Refunds"],
+    ),
+    create=extend_schema(
+        summary="Create refund policy",
+        description=(
+            "Create a new refund policy for an event. "
+            "Defines refund terms and conditions. Only administrative staff can create refund policies."
+        ),
+        tags=["Refunds"],
+    ),
+    update=extend_schema(
+        summary="Update refund policy",
+        description=(
+            "Update a refund policy with complete payload. "
+            "Use PATCH for partial updates. Only administrative staff can update refund policies."
+        ),
+        tags=["Refunds"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially update refund policy",
+        description=(
+            "Partially update a refund policy such as changing terms or policy type. "
+            "Only administrative staff can update refund policies."
+        ),
+        tags=["Refunds"],
+    ),
+    destroy=extend_schema(
+        summary="Delete refund policy",
+        description=(
+            "Delete a refund policy. Affects refund eligibility for associated event. "
+            "Only administrative staff can delete refund policies."
+        ),
+        tags=["Refunds"],
+    )
 )
 class RefundPolicyViewSet(viewsets.ModelViewSet):
     """
@@ -860,6 +1070,31 @@ class RefundPolicyViewSet(viewsets.ModelViewSet):
         description="Create a donation on a completed payment.",
         tags=["Donations"],
     ),
+    update=extend_schema(
+        summary="Update donation",
+        description=(
+            "Update a donation with complete payload. "
+            "Only administrative staff can update donations for verification purposes. "
+            "Use PATCH for partial updates."
+        ),
+        tags=["Donations"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially update donation",
+        description=(
+            "Partially update a donation such as amount or message. "
+            "Only administrative staff can update donations."
+        ),
+        tags=["Donations"],
+    ),
+    destroy=extend_schema(
+        summary="Delete donation",
+        description=(
+            "Delete a donation. Can only delete pending donations. "
+            "Only administrative staff can delete donations."
+        ),
+        tags=["Donations"],
+    )
 )
 class DonationViewSet(viewsets.ModelViewSet):
     """
@@ -1265,6 +1500,14 @@ class DonationViewSet(viewsets.ModelViewSet):
         description="List payment history. Only accessible by administrative staff.",
         tags=["Payment History"],
     ),
+    retrieve=extend_schema(
+        summary="Retrieve payment history action",
+        description=(
+            "Get detailed information about a specific payment history action including "
+            "action type, timestamp, performer, and associated metadata for audit trails."
+        ),
+        tags=["Payment History"],
+    )
 )
 class PaymentHistoryActionViewSet(viewsets.ReadOnlyModelViewSet):
     """

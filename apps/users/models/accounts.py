@@ -126,3 +126,8 @@ class CommunityUser(AbstractUser):
         if not self.username:
             self.username = self.email.split('@')[0]
         super().save(*args, **kwargs)
+
+    def profile_picture_url(self):
+        """Return the URL of the user's profile picture if available."""
+        # Placeholder for future profile picture URL logic
+        return self.profile.profile_picture.url if hasattr(self, 'profile') and self.profile.profile_picture else None
