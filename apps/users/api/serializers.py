@@ -874,7 +874,7 @@ class GoogleOAuthCallbackSerializer(serializers.Serializer):
             serializers.ValidationError: If user creation/update fails
         """
         email = google_user_info.get('email')
-        google_id = google_user_info.get('sub')  # Google's unique user ID
+        google_id = google_user_info.get('sub') or google_user_info.get('id')  # Google's unique user ID
         
         if not email or not google_id:
             raise serializers.ValidationError(

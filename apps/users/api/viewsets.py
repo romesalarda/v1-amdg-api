@@ -54,6 +54,9 @@ from apps.users.models import Profile
 
 User = get_user_model()
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class UserPagination(PageNumberPagination):
     """Custom pagination with configurable page size."""
@@ -788,6 +791,10 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         response = super().post(request, *args, **kwargs)
         
         if response.status_code == 200:
+            # Get user from serializer for logging
+            user_email = self.user.email if hasattr(self, 'user') and self.user else 'unknown'
+            logger.info(f"Setting auth cookies for user: {user_email}")
+            
             # Set HTTP-only cookies for tokens
             response.set_cookie(
                 key='access',
@@ -795,6 +802,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 httponly=True,
                 secure=not settings.DEBUG,
                 samesite='Lax',
+                domain=None,  # Allow localhost in dev
                 max_age=60 * 15  # 15 minutes
             )
             response.set_cookie(
@@ -803,6 +811,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 httponly=True,
                 secure=not settings.DEBUG,
                 samesite='Lax',
+                domain=None,  # Allow localhost in dev
                 max_age=60 * 60 * 24 * 7  # 7 days
             )
             
@@ -907,12 +916,28 @@ def logout(request):
     Returns:
         Response with success message
     """
+    logger.info(f"Logging out user: {request.user.email if request.user and not request.user.is_anonymous else 'unknown'}")
+    
     response = Response(
         {'message': 'Logout successful.'},
         status=status.HTTP_200_OK
     )
-    response.delete_cookie('access')
-    response.delete_cookie('refresh')
+    
+    # Delete cookies with same parameters as when they were set
+    # This is critical - cookies must be deleted with matching domain, path, and samesite
+    response.delete_cookie(
+        key='access',
+        path='/',
+        domain=None,
+        samesite='Lax'
+    )
+    response.delete_cookie(
+        key='refresh',
+        path='/',
+        domain=None,
+        samesite='Lax'
+    )
+    
     return response
 
 
@@ -1107,6 +1132,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
                 headers={'Authorization': f'Bearer {access_token}'},
                 timeout=10
             )
+            logger.info(f'User info response: {userinfo_response.json()}')
             userinfo_response.raise_for_status()
             google_user_info = userinfo_response.json()
             
@@ -1129,12 +1155,14 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
             
             # Set HTTP-only cookies
+            logger.info(f"Setting auth cookies for Google OAuth user: {user.email}")
             response.set_cookie(
                 key='access',
                 value=str(refresh.access_token),
                 httponly=True,
                 secure=not settings.DEBUG,
                 samesite='Lax',
+                domain=None,  # Allow localhost in dev
                 max_age=60 * 15  # 15 minutes
             )
             response.set_cookie(
@@ -1143,6 +1171,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
                 httponly=True,
                 secure=not settings.DEBUG,
                 samesite='Lax',
+                domain=None,  # Allow localhost in dev
                 max_age=60 * 60 * 24 * 7  # 7 days
             )
             
@@ -1154,6 +1183,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            logger.error(f'Authentication error: {str(e)}')
             return Response(
                 {'detail': f'Authentication error: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

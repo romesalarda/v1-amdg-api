@@ -368,6 +368,7 @@ CSRF_TRUSTED_ORIGINS = get_secret(
 CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript to read CSRF token
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_DOMAIN = None  # Allow cookies on localhost
 
 # =============================================================================
 # SESSION CONFIGURATION
@@ -375,13 +376,14 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_DOMAIN = None  # Allow cookies on localhost
 
 # =============================================================================
 # DJANGO REST FRAMEWORK
 # =============================================================================
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'core.authentication.JWTCookieAuthentication',  # Custom cookie-based JWT auth
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
