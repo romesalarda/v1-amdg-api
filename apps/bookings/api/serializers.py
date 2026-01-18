@@ -552,7 +552,7 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
         model = BookingPackage
         fields = (
             'id', 'name', 'event', 'event_name', 'ticket_type', 'ticket_type_title',
-            'base_amount', 'percentage_modifier', 'modified_amount', 'is_active',
+            'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount', 'is_active',
             'created_by', 'created_by_name', 'created_at', '_links'
         )
         read_only_fields = ('id', 'created_at', 'modified_amount')

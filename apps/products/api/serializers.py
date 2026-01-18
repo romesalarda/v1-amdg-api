@@ -308,7 +308,7 @@ class ProductListSerializer(serializers.ModelSerializer):
         model = Product
         fields = (
             'id', 'product_id', 'display_code', 'title', 'event', 'event_name',
-            'base_amount', 'percentage_modifier', 'final_price', 'verified',
+            'base_amount', 'base_amount_currency', 'percentage_modifier', 'final_price', 'verified',
             'is_active', 'variant_count', 'categories', 'main_image',
             'added_at', '_links'
         )
@@ -490,7 +490,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = (
-            'title', 'description', 'event', 'base_amount', 'percentage_modifier',
+            'title', 'description', 'event', 'base_amount', 'base_amount_currency', 'percentage_modifier',
             'verified', 'is_active', 'category_ids', 'main_image', 'additional_images'
         )
     
@@ -673,7 +673,7 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = (
-            'title', 'description', 'base_amount', 'percentage_modifier',
+            'title', 'description', 'base_amount', 'base_amount_currency', 'percentage_modifier',
             'verified', 'is_active', 'category_ids', 'main_image', 'additional_images'
         )
     
@@ -881,7 +881,7 @@ class ProductVariantDetailSerializer(ProductVariantListSerializer):
     
     class Meta(ProductVariantListSerializer.Meta):
         fields = ProductVariantListSerializer.Meta.fields + (
-            'base_amount', 'percentage_modifier', 'max_stock_quantity',
+            'base_amount', 'base_amount_currency', 'percentage_modifier', 'max_stock_quantity',
             'product_details', 'added_by', 'added_by_name',
             'last_updated_by', 'last_updated_by_name', 'last_updated_at'
         )

@@ -216,7 +216,7 @@ class PaymentDetailSerializer(PaymentListSerializer):
     
     class Meta(PaymentListSerializer.Meta):
         fields = PaymentListSerializer.Meta.fields + (
-            'description', 'base_amount', 'percentage_modifier', 'modified_amount',
+            'description', 'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount',
             'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference',
             'metadata', 'refund_requests', 'donations', 'history_actions', 'updated_at'
         )
@@ -285,7 +285,7 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = (
-            'user', 'event', 'method', 'base_amount', 'description',
+            'user', 'event', 'method', 'base_amount', 'base_amount_currency', 'description',
             'target_type', 'target_id', 'metadata'
         )
     

@@ -870,7 +870,7 @@ class CustomTokenRefreshView(TokenRefreshView):
             )
         
         # Add refresh token to request data
-        request.data._mutable = True  # type: ignore
+        # request.data._mutable = True  # type: ignore
         request.data['refresh'] = refresh_token
         
         response = super().post(request, *args, **kwargs)
