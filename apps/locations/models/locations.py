@@ -86,8 +86,7 @@ class ClusterLocation (models.Model):
     
     description = models.TextField(blank=True, null=True)
     active = models.BooleanField(verbose_name="is-active-cluster", default=True)
-    established_date = models.DateField(verbose_name="established-date", blank=True, null=True
-                                        , auto_now_add=True)
+    established_date = models.DateField(verbose_name="established-date", blank=True, null=True)
     
     date_added = models.DateField(auto_now_add=True)
     date_updated = models.DateField(auto_now=True)
@@ -116,7 +115,7 @@ class ChapterLocation (models.Model):
     
     description = models.TextField(blank=True, null=True, help_text="description of the chapter location", max_length=400)    
     active = models.BooleanField(verbose_name="is-active-chapter", default=True)
-    established_date = models.DateField(verbose_name="established-date", blank=True, null=True, auto_now_add=True)
+    established_date = models.DateField(verbose_name="established-date", blank=True, null=True)
     
     date_added = models.DateField(auto_now_add=True)
     date_updated = models.DateField(auto_now=True)
@@ -148,7 +147,7 @@ class AreaLocation (models.Model):
     chapter = models.ForeignKey(ChapterLocation, on_delete=models.CASCADE, related_name="areas")
     description = models.TextField(blank=True, null=True, help_text="description of the area location", max_length=400)
     active = models.BooleanField(verbose_name="is-active-area", default=True)
-    established_date = models.DateField(verbose_name="established-date", blank=True, null=True, auto_now_add=True)
+    established_date = models.DateField(verbose_name="established-date", blank=True, null=True)
 
     date_added = models.DateField(auto_now_add=True)
     date_updated = models.DateField(auto_now=True)
