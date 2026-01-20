@@ -58,7 +58,9 @@ class OrganisationListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'description', 'external_website',
             'required_acceptance_code', 'requires_manual_verification',
-            'created_by', 'created_by_name', 'added_at', 'updated_at', '_links'
+            'created_by', 'created_by_name', 'added_at', 'updated_at', 
+            'landing_image', 'logo',
+            '_links'
         )
         read_only_fields = ('id', 'added_at', 'updated_at')
         extra_kwargs = {
@@ -380,7 +382,7 @@ class UserOrganisationMembershipCreateUpdateSerializer(serializers.ModelSerializ
     
     class Meta:
         model = UserOrganisationMembership
-        fields = ('organisation', 'user')
+        fields = ('id','organisation', 'user')
     
     def validate(self, attrs):
         """Prevent duplicate membership."""

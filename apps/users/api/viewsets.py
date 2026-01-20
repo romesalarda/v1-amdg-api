@@ -257,8 +257,8 @@ class UserViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         
         # Non-staff users can only see themselves
-        if not self.request.user.is_staff:
-            queryset = queryset.filter(id=self.request.user.id)
+        # if not self.request.user.is_staff:
+        #     queryset = queryset.filter(id=self.request.user.id)
         
         return queryset
     

@@ -200,7 +200,7 @@ class EventViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['status', 'event_type', 'organisation']
+    filterset_fields = ['status', 'event_type', 'organisation', 'event_id']
     search_fields = ['title', 'short_description', 'long_description', 'display_code']
     ordering_fields = ['title', 'start_datetime', 'created_at']
     ordering = ['-start_datetime']
@@ -770,11 +770,7 @@ class EventViewSet(viewsets.ModelViewSet):
         event = self.get_object()
         
         # Check permission
-        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
-            return Response(
-                {"detail": "You don't have permission to add landing images to this event"},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        self.check_object_permissions(request, event)
         
         if 'image' not in request.FILES:
             return Response(
@@ -890,6 +886,12 @@ class EventViewSet(viewsets.ModelViewSet):
         event = self.get_object()
         images = event.landing_images.all()
         serializer = ResourceSerializer(images, many=True, context={'request': request})
+        # paginate
+        page = self.paginate_queryset(images)
+        if page is not None:
+            serializer = ResourceSerializer(page, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
+        
         return Response(serializer.data)
     
     @extend_schema(
@@ -1159,7 +1161,7 @@ class EventSettingsViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Authorizations"],
         parameters=[
-            OpenApiParameter(name='event', type=OpenApiTypes.INT, description='Filter by event ID'),
+            OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event ID'),
             OpenApiParameter(name='status', type=OpenApiTypes.STR, description='Filter by authorization status'),
         ]
     ),
@@ -1217,7 +1219,7 @@ class EventAuthorizationViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event', 'status', 'reviewed_by']
+    filterset_fields = ['event__event_id', 'status', 'reviewed_by']
     ordering_fields = ['reviewed_at']
     ordering = ['-reviewed_at']
     
@@ -1369,7 +1371,7 @@ class EventPermissionAssignmentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user', 'permission']
+    filterset_fields = ['event', 'user', 'permission', 'event__event_id']
     
     def perform_create(self, serializer):
         serializer.save(assigned_by=self.request.user)
@@ -1519,7 +1521,7 @@ class EventRoleAssignmentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user', 'role']
+    filterset_fields = ['event', 'user', 'role', 'event__event_id']
     
     def perform_create(self, serializer):
         serializer.save(assigned_by=self.request.user)
@@ -1595,7 +1597,7 @@ class EventStaffViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user']
+    filterset_fields = ['event', 'user', 'event__event_id']
     
     def perform_create(self, serializer):
         serializer.save(assigned_by=self.request.user)
@@ -1740,7 +1742,7 @@ class EventReviewViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event', 'approved', 'rating']
+    filterset_fields = ['event', 'approved', 'rating', 'event__event_id']
     ordering_fields = ['created_at', 'rating']
     ordering = ['-created_at']
     
@@ -1842,7 +1844,7 @@ class EventQuestionViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event', 'question_type', 'required', 'public']
+    filterset_fields = ['event', 'question_type', 'required', 'public', 'event__event_id']
     ordering_fields = ['order', 'created_at']
     ordering = ['order']
 
@@ -2129,7 +2131,7 @@ class EventVenueViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['event', 'venue']
+    filterset_fields = ['event__event_id', 'venue']
     search_fields = ['event__title', 'event__display_code', 'venue__poi__name', 'venue__poi__city']
     ordering_fields = ['event__start_datetime', 'venue__poi__name']
     ordering = ['-event__start_datetime']

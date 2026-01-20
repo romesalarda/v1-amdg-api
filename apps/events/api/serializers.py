@@ -117,7 +117,7 @@ class EventListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Event
         fields = (
-            'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
+            'id','event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
             'status', 'status_display', 'event_type', 'event_type_name', 'organisation', 
             'organisation_name', 'short_description', 'start_datetime', 'end_datetime',
             'timezone', 'created_at', 'created_by', '_links'
@@ -194,7 +194,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Event
         fields = (
-            'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
+            'id', 'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
             'status', 'status_display', 'event_type', 'event_type_details', 'timezone',
             'short_description', 'long_description', 'what_to_bring', 'important_information',
             'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance',
@@ -400,6 +400,8 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 class EventAuthorizationSerializer(serializers.ModelSerializer):
+
+    event = serializers.UUIDField(source='event.event_id')
     event_title = serializers.CharField(source='event.title', read_only=True)
     reviewed_by_email = serializers.EmailField(source='reviewed_by.email', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
@@ -451,9 +453,11 @@ class EventAuthorizationSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if self.instance is None:
             event = data.get('event')
+            event = Event.objects.get(event_id=event["event_id"])  # Ensure event exists
             user = self.context['request'].user
             if EventAuthorization.objects.filter(event=event, reviewed_by=user).exists():
                 raise serializers.ValidationError("You have already created an authorization for this event.")
+            data['event'] = event
         return data
 
 

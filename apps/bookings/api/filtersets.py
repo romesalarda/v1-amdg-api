@@ -97,7 +97,7 @@ class BookingIntentFilterSet(filters.FilterSet):
         fields = [
             'status', 'event', 'made_by', 'intended_ticket_count',
             'created_after', 'created_before', 'expires_after', 'expires_before',
-            'is_active'
+            'is_active', 'event__event_id'
         ]
     
     def filter_is_active(self, queryset, name, value):
