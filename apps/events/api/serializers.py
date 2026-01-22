@@ -10,7 +10,7 @@ from apps.events.models import (
     EventAuthorization, EventAuthorizationStatusChoices,
     EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices,
     EventRole, EventRoleAssignment, EventRoleCategoryChoices,
-    EventStaff, EventStaffAvailability,
+    EventStaff, EventStaffAvailability, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue
@@ -1157,6 +1157,237 @@ class EventVenueSerializer(serializers.ModelSerializer):
         if obj.venue:
             links['venue'] = request.build_absolute_uri(
                 f"/api/locations/venues/{obj.venue.id}/"
+            )
+        
+        return links
+
+
+class EventStaffInviteSerializer(serializers.ModelSerializer):
+    """Serializer for EventStaffInvite model with HATEOAS support."""
+    
+    event = serializers.UUIDField(source='event.event_id', read_only=True)
+    event_title = serializers.CharField(source='event.title', read_only=True)
+    event_display_code = serializers.CharField(source='event.display_code', read_only=True)
+    target_user_email = serializers.EmailField(source='target_user.email', read_only=True)
+    target_user_name = serializers.SerializerMethodField()
+    invited_by_email = serializers.EmailField(source='invited_by.email', read_only=True)
+    invited_by_name = serializers.SerializerMethodField()
+    is_valid = serializers.BooleanField(read_only=True)
+    _links = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = EventStaffInvite
+        fields = (
+            'id', 'event', 'event_title', 'event_display_code',
+            'target_user', 'target_user_email', 'target_user_name',
+            'invited_by', 'invited_by_email', 'invited_by_name',
+            'accepted', 'accepted_at', 'expires_at', 'added_at',
+            'is_active', 'is_valid', '_links'
+        )
+        read_only_fields = ('id', 'added_at', 'accepted_at', 'is_valid', 'event', 'invited_by')
+    
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_target_user_name(self, obj):
+        """Get full name of the target user."""
+        if obj.target_user:
+            return obj.target_user.get_full_name() or obj.target_user.email
+        return None
+    
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_invited_by_name(self, obj):
+        """Get full name of the user who sent the invite."""
+        if obj.invited_by:
+            return obj.invited_by.get_full_name() or obj.invited_by.email
+        return None
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this invite'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'target_user': {'type': 'string', 'format': 'uri', 'description': 'Link to the target user'},
+            'invited_by': {'type': 'string', 'format': 'uri', 'description': 'Link to the user who sent the invite'},
+            'accept': {'type': 'string', 'format': 'uri', 'description': 'Link to accept this invite'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        event_id = self.context.get('event_id') or (obj.event.event_id if obj.event else None)
+        if not request or not event_id:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/list/{event_id}/staff-invites/{obj.id}"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        if obj.target_user:
+            links['target_user'] = request.build_absolute_uri(
+                f"/api/users/{obj.target_user.id}/"
+            )
+        
+        if obj.invited_by:
+            links['invited_by'] = request.build_absolute_uri(
+                f"/api/users/{obj.invited_by.id}/"
+            )
+        
+        # Add accept action link if invite is valid
+        if obj.is_valid:
+            links['accept'] = request.build_absolute_uri(
+                f"/api/event/list/{event_id}/staff-invites/{obj.id}/accept"
+            )
+        
+        return links
+    
+    def validate_target_user(self, value):
+        """Validate that the target user exists."""
+        if not value:
+            raise serializers.ValidationError("Target user is required.")
+        return value
+    
+    def validate_expires_at(self, value):
+        """Validate that expiry date is in the future."""
+        if value and value < timezone.now():
+            raise serializers.ValidationError("Expiry date must be in the future.")
+        return value
+    
+    def validate(self, data):
+        """Validate the entire invite creation/update."""
+        # Get event from context (set by viewset)
+        event_id = self.context.get('event_id')
+        if not event_id and self.instance:
+            event_id = self.instance.event.event_id
+        
+        if not event_id:
+            raise serializers.ValidationError("Event context is required.")
+        
+        try:
+            event = Event.objects.get(event_id=event_id)
+        except Event.DoesNotExist:
+            raise serializers.ValidationError("Event with this ID does not exist.")
+        
+        # Check if user already has an active invite for this event (only on create)
+        if self.instance is None:
+            target_user = data.get('target_user')
+            
+            if target_user:
+                existing_invite = EventStaffInvite.objects.filter(
+                    event=event,
+                    target_user=target_user,
+                    is_active=True
+                ).first()
+                
+                if existing_invite:
+                    raise serializers.ValidationError(
+                        "An active invite already exists for this user and event."
+                    )
+                
+                # Check if user is already event staff
+                existing_staff = EventStaff.objects.filter(
+                    event=event,
+                    user=target_user
+                ).first()
+                
+                if existing_staff:
+                    raise serializers.ValidationError(
+                        "This user is already a staff member for this event."
+                    )
+        
+        # Store event for create method
+        data['_event'] = event
+        
+        return data
+    
+    def create(self, validated_data):
+        """Create a new staff invite with the authenticated user as invited_by."""
+        # Get event from validated data
+        event = validated_data.pop('_event')
+        
+        # Set invited_by to the current user
+        request = self.context.get('request')
+        if request and request.user:
+            validated_data['invited_by'] = request.user
+        
+        validated_data['event'] = event
+        
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update a staff invite."""
+        # Remove _event if present
+        validated_data.pop('_event', None)
+        
+        # Don't allow changing event or invited_by
+        validated_data.pop('event', None)
+        validated_data.pop('invited_by', None)
+        
+        return super().update(instance, validated_data)
+
+
+class EventStaffInviteListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing staff invites."""
+    
+    event_title = serializers.CharField(source='event.title', read_only=True)
+    event_display_code = serializers.CharField(source='event.display_code', read_only=True)
+    target_user_email = serializers.EmailField(source='target_user.email', read_only=True)
+    target_user_name = serializers.SerializerMethodField()
+    invited_by_email = serializers.EmailField(source='invited_by.email', read_only=True)
+    is_valid = serializers.BooleanField(read_only=True)
+    _links = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = EventStaffInvite
+        fields = (
+            'id', 'event_title', 'event_display_code',
+            'target_user_email', 'target_user_name',
+            'invited_by_email', 'accepted', 'added_at', 'expires_at',
+            'is_active', 'is_valid', '_links'
+        )
+        read_only_fields = fields
+    
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_target_user_name(self, obj):
+        """Get full name of the target user."""
+        if obj.target_user:
+            return obj.target_user.get_full_name() or obj.target_user.email
+        return None
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this invite'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'accept': {'type': 'string', 'format': 'uri', 'description': 'Link to accept this invite'}
+        },
+        'required': ['self']
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        event_id = self.context.get('event_id') or (obj.event.event_id if obj.event else None)
+        if not request or not event_id:
+            return {}
+        
+        links = {
+            'self': request.build_absolute_uri(
+                f"/api/event/list/{event_id}/staff-invites/{obj.id}"
+            )
+        }
+        
+        if obj.event:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.event_id}/"
+            )
+        
+        if obj.is_valid:
+            links['accept'] = request.build_absolute_uri(
+                f"/api/event/list/{event_id}/staff-invites/{obj.id}/accept"
             )
         
         return links

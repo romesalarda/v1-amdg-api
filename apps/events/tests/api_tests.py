@@ -14,7 +14,7 @@ from apps.events.models import (
     EventAuthorization, EventAuthorizationStatusChoices,
     EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices,
     EventRole, EventRoleAssignment, EventRoleCategoryChoices,
-    EventStaff, EventStaffAvailability,
+    EventStaff, EventStaffAvailability, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue
@@ -1439,4 +1439,325 @@ class EventVenueAPITest(BaseEventAPITestCase):
         response = self.client.post('/api/event/venues/', data)
         # This should succeed as there's no unique constraint on event-venue pairs
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+
+class EventStaffInviteAPITest(BaseEventAPITestCase):
+    """Test cases for EventStaffInvite API endpoints"""
+    
+    def setUp(self):
+        """Set up test data for staff invite tests"""
+        super().setUp()
+        
+        self.target_user = User.objects.create_user(
+            username='targetuser',
+            email='targetuser@example.com',
+            password='testpass123'
+        )
+        
+        self.other_user = User.objects.create_user(
+            username='otheruser',
+            email='otheruser@example.com',
+            password='testpass123'
+        )
+        
+        # Make the main user an event staff member so they can create invites
+        self.staff_member = EventStaff.objects.create(
+            event=self.event,
+            user=self.user,
+            assigned_by=self.user
+        )
+        
+        self.invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.user,
+            expires_at=timezone.now() + timedelta(days=7)
+        )
+    
+    def test_list_staff_invites_authenticated(self):
+        """Test listing staff invites as authenticated user"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+    
+    def test_list_staff_invites_unauthenticated(self):
+        """Test that unauthenticated users cannot list invites"""
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+    
+    def test_retrieve_staff_invite(self):
+        """Test retrieving a specific staff invite"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['target_user_email'], 'targetuser@example.com')
+        self.assertEqual(response.data['event_title'], self.event.title)
+        self.assertTrue(response.data['is_valid'])
+    
+    def test_retrieve_staff_invite_has_hateoas_links(self):
+        """Test that staff invite includes HATEOAS links"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('_links', response.data)
+        self.assertIn('self', response.data['_links'])
+        self.assertIn('event', response.data['_links'])
+        self.assertIn('accept', response.data['_links'])
+    
+    def test_create_staff_invite_as_event_creator(self):
+        """Test that event creator can create invites"""
+        self.client.force_authenticate(user=self.user)
+        data = {
+            'target_user': self.other_user.id,
+            'expires_at': (timezone.now() + timedelta(days=14)).isoformat()
+        }
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['target_user'], self.other_user.id)
+    
+    def test_create_staff_invite_as_event_staff(self):
+        """Test that event staff can create invites"""
+        # Create another staff member
+        staff_user = User.objects.create_user(
+            username='staffuser2',
+            email='staff2@example.com',
+            password='testpass123'
+        )
+        EventStaff.objects.create(
+            event=self.event,
+            user=staff_user,
+            assigned_by=self.user
+        )
+        
+        self.client.force_authenticate(user=staff_user)
+        data = {
+            'target_user': self.other_user.id,
+            'expires_at': (timezone.now() + timedelta(days=14)).isoformat()
+        }
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+    
+    def test_create_staff_invite_unauthorized(self):
+        """Test that non-staff users cannot create invites"""
+        self.client.force_authenticate(user=self.other_user)
+        data = {
+            'target_user': self.target_user.id,
+            'expires_at': (timezone.now() + timedelta(days=14)).isoformat()
+        }
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+    
+    def test_create_duplicate_staff_invite_fails(self):
+        """Test that creating duplicate invite fails"""
+        self.client.force_authenticate(user=self.user)
+        data = {
+            'target_user': self.target_user.id
+        }
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    
+    def test_create_staff_invite_for_existing_staff_fails(self):
+        """Test that creating invite for existing staff member fails"""
+        # Make target_user a staff member
+        EventStaff.objects.create(
+            event=self.event,
+            user=self.other_user,
+            assigned_by=self.user
+        )
+        
+        self.client.force_authenticate(user=self.user)
+        data = {
+            'target_user': self.other_user.id
+        }
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    
+    def test_update_staff_invite(self):
+        """Test updating a staff invite"""
+        self.client.force_authenticate(user=self.user)
+        new_expires = (timezone.now() + timedelta(days=30)).isoformat()
+        data = {
+            'target_user': self.target_user.id,
+            'expires_at': new_expires
+        }
+        response = self.client.put(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    
+    def test_partial_update_staff_invite(self):
+        """Test partially updating a staff invite"""
+        self.client.force_authenticate(user=self.user)
+        data = {
+            'expires_at': (timezone.now() + timedelta(days=30)).isoformat()
+        }
+        response = self.client.patch(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    
+    def test_delete_staff_invite_soft_deletes(self):
+        """Test that deleting an invite marks it as inactive (soft delete)"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Verify invite is still in database but inactive
+        self.invite.refresh_from_db()
+        self.assertFalse(self.invite.is_active)
+        self.assertFalse(self.invite.is_valid)
+    
+    def test_accept_invite_as_target_user(self):
+        """Test that target user can accept their invite"""
+        self.client.force_authenticate(user=self.target_user)
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('staff', response.data)
+        
+        # Verify invite is accepted
+        self.invite.refresh_from_db()
+        self.assertTrue(self.invite.accepted)
+        self.assertIsNotNone(self.invite.accepted_at)
+        self.assertFalse(self.invite.is_active)
+        
+        # Verify EventStaff was created
+        staff = EventStaff.objects.filter(
+            event=self.event,
+            user=self.target_user
+        ).first()
+        self.assertIsNotNone(staff)
+    
+    def test_accept_invite_as_non_target_user_fails(self):
+        """Test that non-target user cannot accept invite"""
+        self.client.force_authenticate(user=self.other_user)
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+    
+    def test_accept_invalid_invite_fails(self):
+        """Test that accepting invalid invite fails"""
+        # Make invite inactive
+        self.invite.is_active = False
+        self.invite.save()
+        
+        self.client.force_authenticate(user=self.target_user)
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.data)
+
+    
+    def test_accept_expired_invite_fails(self):
+        """Test that accepting expired invite fails"""
+        self.invite.expires_at = timezone.now() - timedelta(days=1)
+        self.invite.save()
+        
+        self.client.force_authenticate(user=self.target_user)
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    
+    def test_my_invites_action(self):
+        """Test getting all invites sent to authenticated user"""
+        # Create another invite for target_user
+        other_event = Event.objects.create(
+            title='Another Event',
+            display_code='AE2025',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=40),
+            end_datetime=timezone.now() + timedelta(days=42),
+            organisation=self.organisation
+        )
+        EventStaffInvite.objects.create(
+            event=other_event,
+            target_user=self.target_user,
+            invited_by=self.user
+        )
+        
+        self.client.force_authenticate(user=self.target_user)
+        # Get all invites for the specific event
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Should see only invites for this event where they are target user
+        self.assertEqual(len(response.data['results']), 1)
+    
+    def test_filter_invites_by_event(self):
+        """Test that invites are automatically filtered by event from URL"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # All invites should be for this event
+        for invite in response.data['results']:
+            self.assertEqual(invite['event_title'], self.event.title)
+    
+    def test_filter_invites_by_target_user(self):
+        """Test filtering invites by target user"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/?target_user={self.target_user.id}')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        for invite in response.data['results']:
+            self.assertEqual(invite['target_user_email'], self.target_user.email)
+    
+    def test_filter_invites_by_accepted_status(self):
+        """Test filtering invites by accepted status"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/?accepted=false')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        for invite in response.data['results']:
+            self.assertFalse(invite['accepted'])
+    
+    def test_filter_invites_by_validity(self):
+        """Test filtering invites by is_valid parameter"""
+        # Create an expired invite
+        expired_invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.other_user,
+            invited_by=self.user,
+            expires_at=timezone.now() - timedelta(days=1)
+        )
+        
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/?is_valid=true')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # All returned invites should be valid
+        for invite in response.data['results']:
+            self.assertTrue(invite['is_valid'])
+    
+    def test_search_invites_by_email(self):
+        """Test searching invites by user email"""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/?search=targetuser')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+    
+    
+    def test_target_user_can_view_own_invite(self):
+        """Test that target user can view their own invite"""
+        self.client.force_authenticate(user=self.target_user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    
+    def test_unrelated_user_cannot_view_invite(self):
+        """Test that unrelated user cannot view invite"""
+        self.client.force_authenticate(user=self.other_user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+    
+    def test_invite_ordering(self):
+        """Test that invites are ordered by added_at descending"""
+        # Create another invite
+        newer_invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.other_user,
+            invited_by=self.user
+        )
+        
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # First result should be the newer invite
+        if len(response.data['results']) >= 2:
+            first_invite_id = response.data['results'][0]['id']
+            self.assertEqual(str(first_invite_id), str(newer_invite.id))
 

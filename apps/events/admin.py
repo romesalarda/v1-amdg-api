@@ -3,7 +3,7 @@ from django.utils.html import format_html
 from .models import (
     Event, EventType, EventAuthorization, EventPermission, 
     EventPermissionAssignment, EventReview, EventRole, 
-    EventRoleAssignment, EventStaff, EventStaffAvailability,
+    EventRoleAssignment, EventStaff, EventStaffAvailability, EventStaffInvite,
     EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice,
     EventSettings, EventVenue
 )
@@ -408,6 +408,55 @@ class EventSettingsAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # EventSettings should not be deleted independently from Event
         return False
+
+
+@admin.register(EventStaffInvite)
+class EventStaffInviteAdmin(admin.ModelAdmin):
+    list_display = ('id', 'event', 'target_user', 'invited_by', 'accepted', 'is_active', 'is_valid_status', 'added_at', 'expires_at')
+    list_filter = ('accepted', 'is_active', 'added_at', 'expires_at', 'event__status')
+    search_fields = ('event__title', 'target_user__email', 'target_user__first_name', 'target_user__last_name', 'invited_by__email')
+    readonly_fields = ('id', 'added_at', 'accepted_at', 'is_valid_status')
+    autocomplete_fields = ('event', 'target_user', 'invited_by')
+    date_hierarchy = 'added_at'
+    list_select_related = ('event', 'target_user', 'invited_by')
+    
+    fieldsets = (
+        ('Invite Information', {
+            'fields': ('id', 'event', 'target_user', 'invited_by')
+        }),
+        ('Status', {
+            'fields': ('accepted', 'accepted_at', 'is_active', 'is_valid_status')
+        }),
+        ('Timing', {
+            'fields': ('added_at', 'expires_at')
+        }),
+    )
+    
+    actions = ['accept_invites', 'deactivate_invites']
+    
+    def is_valid_status(self, obj):
+        return obj.is_valid
+    is_valid_status.short_description = 'Valid'
+    is_valid_status.boolean = True
+    
+    def accept_invites(self, request, queryset):
+        """Accept selected invites"""
+        count = 0
+        for invite in queryset:
+            if invite.is_valid:
+                try:
+                    invite.accept_invite()
+                    count += 1
+                except Exception:
+                    pass
+        self.message_user(request, f'{count} invite(s) accepted successfully.')
+    accept_invites.short_description = "Accept selected invites"
+    
+    def deactivate_invites(self, request, queryset):
+        """Deactivate selected invites"""
+        count = queryset.update(is_active=False)
+        self.message_user(request, f'{count} invite(s) deactivated.')
+    deactivate_invites.short_description = "Deactivate selected invites"
 
 
 @admin.register(EventVenue)

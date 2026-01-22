@@ -18,9 +18,13 @@ class Leader(models.Model):
     added_at = models.DateTimeField(auto_now_add=True)
     added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='leaders_added')
     updated_at = models.DateTimeField(auto_now=True)
+
+    organisation = models.ForeignKey('organisations.Organisation', on_delete=models.CASCADE, related_name='organisation_leaders', null=True, blank=True)
     
     class Meta:
         unique_together = ('user', 'target_type', 'target_id')
     
     def __str__(self):
+        if self.organisation:
+            return f"{self.user.username} leads {self.organisation.title}"
         return f"{self.user.username} leads {self.authority_object}"

@@ -11,7 +11,7 @@ from apps.events.models import (
     EventAuthorization, EventAuthorizationStatusChoices,
     EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices,
     EventRole, EventRoleAssignment, EventRoleCategoryChoices,
-    EventStaff, EventStaffAvailability,
+    EventStaff, EventStaffAvailability, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice
@@ -1614,3 +1614,224 @@ class EventQuestionAnswerChoiceModelTest(TestCase):
                 option=other_option
             )
             choice.clean()
+
+
+class EventStaffInviteModelTest(TestCase):
+    """Test cases for the EventStaffInvite model"""
+    
+    def setUp(self):
+        """Set up test data"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            email='testuser@example.com',
+            password='testpass123'
+        )
+        
+        self.target_user = User.objects.create_user(
+            username='targetuser',
+            email='targetuser@example.com',
+            password='testpass123'
+        )
+        
+        self.inviter = User.objects.create_user(
+            username='inviter',
+            email='inviter@example.com',
+            password='testpass123'
+        )
+        
+        self.event_type = EventType.objects.create(
+            title='Conference',
+            code='CONF',
+            created_by=self.user
+        )
+        
+        self.organisation = Organisation.objects.create(
+            title='Test Organisation',
+            description='Test organisation description',
+            created_by=self.user
+        )
+        
+        self.event = Event.objects.create(
+            title='Test Event',
+            display_code='TE2025',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation
+        )
+    
+    def test_staff_invite_creation(self):
+        """Test basic staff invite creation"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter,
+            expires_at=timezone.now() + timedelta(days=7)
+        )
+        
+        self.assertIsNotNone(invite.id)
+        self.assertEqual(invite.event, self.event)
+        self.assertEqual(invite.target_user, self.target_user)
+        self.assertEqual(invite.invited_by, self.inviter)
+        self.assertFalse(invite.accepted)
+        self.assertTrue(invite.is_active)
+        self.assertIsNotNone(invite.added_at)
+        self.assertIsNone(invite.accepted_at)
+    
+    def test_staff_invite_unique_constraint(self):
+        """Test that event and target_user must be unique together"""
+        EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter
+        )
+        
+        with self.assertRaises(IntegrityError):
+            EventStaffInvite.objects.create(
+                event=self.event,
+                target_user=self.target_user,
+                invited_by=self.inviter
+            )
+    
+    def test_staff_invite_is_valid_active(self):
+        """Test is_valid property returns True for active, unexpired, unaccepted invite"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter,
+            expires_at=timezone.now() + timedelta(days=7)
+        )
+        
+        self.assertTrue(invite.is_valid)
+    
+    def test_staff_invite_is_valid_inactive(self):
+        """Test is_valid property returns False for inactive invite"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter,
+            is_active=False
+        )
+        
+        self.assertFalse(invite.is_valid)
+    
+    def test_staff_invite_is_valid_accepted(self):
+        """Test is_valid property returns False for accepted invite"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter
+        )
+        invite.accepted = True
+        invite.save()
+        
+        self.assertFalse(invite.is_valid)
+    
+    def test_staff_invite_is_valid_expired(self):
+        """Test is_valid property returns False for expired invite"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter,
+            expires_at=timezone.now() - timedelta(days=1)
+        )
+        
+        self.assertFalse(invite.is_valid)
+    
+    def test_staff_invite_accept_invite_success(self):
+        """Test accepting a valid invite"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter
+        )
+        
+        invite.accept_invite()
+        
+        self.assertTrue(invite.accepted)
+        self.assertIsNotNone(invite.accepted_at)
+        self.assertFalse(invite.is_active)
+    
+    def test_staff_invite_accept_invalid_invite_fails(self):
+        """Test accepting an invalid invite raises error"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter,
+            is_active=False
+        )
+        
+        with self.assertRaises(ValidationError):
+            invite.accept_invite()
+    
+    def test_staff_invite_clean_past_expiry_fails(self):
+        """Test that clean() validates expiry date is not in the past"""
+        invite = EventStaffInvite(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter,
+            expires_at=timezone.now() - timedelta(days=1)
+        )
+        
+        with self.assertRaises(ValidationError):
+            invite.clean()
+    
+    def test_staff_invite_str_representation(self):
+        """Test the string representation"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter
+        )
+        
+        self.assertIn(str(self.target_user), str(invite))
+        self.assertIn(self.event.title, str(invite))
+    
+    def test_staff_invite_repr_representation(self):
+        """Test the repr representation"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter
+        )
+        
+        repr_str = repr(invite)
+        self.assertIn('EventStaffInvite', repr_str)
+        self.assertIn(str(invite.id), repr_str)
+        self.assertIn('accepted=False', repr_str)
+    
+    def test_staff_invite_no_expiry(self):
+        """Test invite without expiry date is valid"""
+        invite = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter,
+            expires_at=None
+        )
+        
+        self.assertTrue(invite.is_valid)
+    
+    def test_staff_invite_ordering(self):
+        """Test that invites are ordered by added_at descending"""
+        invite1 = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=self.target_user,
+            invited_by=self.inviter
+        )
+        
+        other_user = User.objects.create_user(
+            username='otheruser',
+            email='other@example.com',
+            password='testpass123'
+        )
+        
+        invite2 = EventStaffInvite.objects.create(
+            event=self.event,
+            target_user=other_user,
+            invited_by=self.inviter
+        )
+        
+        invites = list(EventStaffInvite.objects.all())
+        self.assertEqual(invites[0], invite2)
+        self.assertEqual(invites[1], invite1)

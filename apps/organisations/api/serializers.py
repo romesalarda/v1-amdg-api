@@ -893,24 +893,27 @@ class EventSponsorPackageCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 # ============================================================================
-# LEADER SERIALIZERS (Generic FK handling for Organisation only)
+# LEADER SERIALIZERS (Generic FK handling for locations and organisations)
 # ============================================================================
 
 class LeaderListSerializer(serializers.ModelSerializer):
-    """List serializer for Leader (Organisation authority only)."""
+    """List serializer for Leader with organisation grouping."""
     
     _links = serializers.SerializerMethodField()
     user_name = serializers.CharField(source='user.username', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
+    organisation_name = serializers.CharField(source='organisation.title', read_only=True)
     added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
-    authority_object_name = serializers.SerializerMethodField(help_text="Name of the authority object")
-    authority_type = serializers.SerializerMethodField(help_text="Type of authority (organisation)")
+    authority_object_name = serializers.SerializerMethodField(help_text="Name of the authority object (country, cluster, chapter, area, or organisation)")
+    authority_type = serializers.SerializerMethodField(help_text="Type of authority")
     
     class Meta:
         model = Leader
         fields = (
-            'id', 'user', 'user_name', 'user_email', 'authority_type',
-            'authority_object_name', 'notes', 'added_by', 'added_by_name',
+            'id', 'user', 'user_name', 'user_email', 
+            'organisation', 'organisation_name',
+            'authority_type', 'authority_object_name', 
+            'notes', 'added_by', 'added_by_name',
             'added_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'added_at', 'updated_at')
@@ -928,7 +931,7 @@ class LeaderListSerializer(serializers.ModelSerializer):
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_authority_type(self, obj) -> str:
-        """Return the type of authority."""
+        """Return the type of authority (country, cluster, chapter, area, organisation)."""
         if obj.target_type:
             return obj.target_type.model
         return "unknown"
@@ -938,6 +941,7 @@ class LeaderListSerializer(serializers.ModelSerializer):
         'properties': {
             'self': {'type': 'string', 'format': 'uri'},
             'user': {'type': 'string', 'format': 'uri'},
+            'organisation': {'type': 'string', 'format': 'uri'},
             'authority_object': {'type': 'string', 'format': 'uri'},
         }
     })
@@ -951,11 +955,35 @@ class LeaderListSerializer(serializers.ModelSerializer):
             'user': request.build_absolute_uri(f"/api/users/{obj.user.id}/"),
         }
         
-        # Add link to authority object (organisation only in this app)
-        if obj.authority_object and obj.target_type.model == 'organisation':
-            links['authority_object'] = request.build_absolute_uri(
-                f"/api/organisations/list/{obj.target_id}/"
+        # Add link to organisation
+        if obj.organisation:
+            links['organisation'] = request.build_absolute_uri(
+                f"/api/organisations/list/{obj.organisation.id}/"
             )
+        
+        # Add link to authority object based on type
+        if obj.authority_object and obj.target_type:
+            model_name = obj.target_type.model
+            if model_name == 'organisation':
+                links['authority_object'] = request.build_absolute_uri(
+                    f"/api/organisations/list/{obj.target_id}/"
+                )
+            elif model_name == 'countrylocation':
+                links['authority_object'] = request.build_absolute_uri(
+                    f"/api/locations/countries/{obj.target_id}/"
+                )
+            elif model_name == 'clusterlocation':
+                links['authority_object'] = request.build_absolute_uri(
+                    f"/api/locations/clusters/{obj.target_id}/"
+                )
+            elif model_name == 'chapterlocation':
+                links['authority_object'] = request.build_absolute_uri(
+                    f"/api/locations/chapters/{obj.target_id}/"
+                )
+            elif model_name == 'arealocation':
+                links['authority_object'] = request.build_absolute_uri(
+                    f"/api/locations/areas/{obj.target_id}/"
+                )
         
         return links
 
@@ -968,47 +996,50 @@ class LeaderDetailSerializer(LeaderListSerializer):
 
 
 class LeaderCreateUpdateSerializer(serializers.ModelSerializer):
-    """Create/Update serializer for Leader with organisation-only support."""
+    """Create/Update serializer for Leader with organisation required."""
     
     organisation = serializers.PrimaryKeyRelatedField(
         queryset=Organisation.objects.all(),
-        write_only=True,
-        help_text="The organisation this user will lead"
+        required=True,
+        help_text="The organisation this leader belongs to (required for grouping)"
     )
+    target_type = serializers.CharField(write_only=True, required=False, help_text="Internal use only - do not set manually")
+    target_id = serializers.IntegerField(write_only=True, required=False, help_text="Internal use only - do not set manually")
     
     class Meta:
         model = Leader
-        fields = ('user', 'organisation', 'notes')
+        fields = ('user', 'organisation', 'target_type', 'target_id', 'notes')
     
     def validate(self, attrs):
-        """Prevent duplicate leadership assignments."""
+        """Validate leader assignment and require organisation."""
         user = attrs.get('user')
         organisation = attrs.get('organisation')
-        if not organisation:
-            raise serializers.ValidationError("Organisation must be provided.")
-        # Get content type for Organisation
-        org_content_type = ContentType.objects.get_for_model(Organisation)
         
-        # Check for existing leadership
-        if Leader.objects.filter(
-            user=user,
-            target_type=org_content_type,
-            target_id=organisation.id
-        ).exists():
-            raise serializers.ValidationError(
-                "This user is already a leader of this organisation."
-            )
+        if not organisation:
+            raise serializers.ValidationError({
+                "organisation": "Organisation is required for all leaders."
+            })
+        
+        # If target_type and target_id are provided, validate the generic FK
+        target_type = attrs.get('target_type')
+        target_id = attrs.get('target_id')
+        
+        if target_type and target_id:
+            # Check for existing leadership
+            if Leader.objects.filter(
+                user=user,
+                target_type=target_type,
+                target_id=target_id
+            ).exclude(pk=self.instance.pk if self.instance else None).exists():
+                raise serializers.ValidationError({
+                    "user": "This user is already a leader of this location/organisation."
+                })
         
         return attrs
     
     def create(self, validated_data):
-        """Create leader with generic foreign key to organisation."""
-        organisation = validated_data.pop('organisation')
+        """Create leader with organisation."""
         request = self.context.get('request')
-        
-        # Set generic foreign key fields
-        validated_data['target_type'] = ContentType.objects.get_for_model(Organisation)
-        validated_data['target_id'] = organisation.id
         
         if request and request.user.is_authenticated:
             validated_data['added_by'] = request.user
@@ -1016,6 +1047,9 @@ class LeaderCreateUpdateSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
     
     def update(self, instance, validated_data):
-        """Update leader (organisation cannot be changed after creation)."""
-        validated_data.pop('organisation', None)  # Remove organisation if present
+        """Update leader (target cannot be changed after creation)."""
+        # Remove target fields to prevent changes
+        validated_data.pop('target_type', None)
+        validated_data.pop('target_id', None)
+        
         return super().update(instance, validated_data)

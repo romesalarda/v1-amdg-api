@@ -6,6 +6,8 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Prefetch
 from django.contrib.contenttypes.models import ContentType
+from django.utils import timezone
+from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -19,7 +21,7 @@ from apps.events.models import (
     EventAuthorization, EventAuthorizationStatusChoices,
     EventPermission, EventPermissionAssignment,
     EventRole, EventRoleAssignment,
-    EventStaff, EventStaffAvailability,
+    EventStaff, EventStaffAvailability, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue
@@ -38,10 +40,14 @@ from .serializers import (
     EventStaffAvailabilitySerializer, EventReviewSerializer,
     EventQuestionSerializer, EventQuestionOptionSerializer,
     EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer,
-    EventVenueSerializer
+    EventVenueSerializer, EventStaffInviteSerializer, EventStaffInviteListSerializer
 )
 
 from apps.events.api.pagination import StandardPagination
+
+from apps.events.api.permissions import (
+    IsEventOwnerOrStaffMember,
+)
 
 @extend_schema_view(
     list=extend_schema(
@@ -211,7 +217,7 @@ class EventViewSet(viewsets.ModelViewSet):
             'event_type', 'organisation', 'created_by'
         ).prefetch_related('settings')
         
-        if not self.request.user.is_staff:
+        if not self.request.user.is_staff: # TODO misleading
             queryset = queryset.filter(status__in=[
                 EventStatusChoices.PUBLISHED,
                 EventStatusChoices.OPEN,
@@ -342,7 +348,6 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='add-staff', permission_classes=[permissions.IsAuthenticated])
     def add_staff(self, request, event_id=None):
         from django.contrib.auth import get_user_model
-        from .permissions import IsEventOwnerOrStaffMember
         
         event = self.get_object()
         
@@ -1075,6 +1080,574 @@ class EventViewSet(viewsets.ModelViewSet):
             'is_staff_member': is_staff_member,
             'permissions': permissions_data
         })
+    
+    # ====== Staff Invites Actions ======
+    
+    @extend_schema(
+        summary="List or Create Event Staff Invites",
+        description=(
+            "**HTTP Methods:**\n\n"
+            "**GET** - List Event Staff Invites:\n"
+            "Retrieve a paginated list of all staff invites for this specific event with comprehensive filtering capabilities. "
+            "Permission-based visibility ensures users only see relevant invites:\n"
+            "- Event creators and existing staff members can view ALL invites for their event\n"
+            "- Regular authenticated users can only see invites where they are the target user\n"
+            "- Django staff and superusers have full visibility\n\n"
+            "**Filtering Options:**\n"
+            "- `accepted`: Filter by whether invite has been accepted (true/false)\n"
+            "- `is_valid`: Filter by validity status - valid invites are active, not expired, and not accepted\n"
+            "- `target_user`: Filter by target user ID to see all invites for a specific user\n"
+            "- `search`: Search by target user email address for quick lookup\n\n"
+            "Results are automatically ordered by creation date (newest first) and include:\n"
+            "- Invite status (active, accepted, expired)\n"
+            "- Target user information (email, name)\n"
+            "- Inviter information (who sent the invite)\n"
+            "- Validity status (is_valid property)\n"
+            "- HATEOAS links for invite management and acceptance\n\n"
+            "---\n\n"
+            "**POST** - Create Event Staff Invite:\n"
+            "Create a new staff invite to invite a user to join the event staff team. "
+            "The invite is sent to a target user who can then accept it to become an event staff member.\n\n"
+            "**Required Fields:**\n"
+            "- `target_user` (integer): ID of the user being invited\n\n"
+            "**Optional Fields:**\n"
+            "- `expires_at` (datetime): When the invite expires (ISO 8601 format). If omitted, invite never expires\n\n"
+            "**Permissions:**\n"
+            "Only event creators and existing event staff members can create invites. "
+            "Django staff and superusers also have permission.\n\n"
+            "**Validations:**\n"
+            "- Target user must exist in the system\n"
+            "- Target user cannot already have an active invite for this event\n"
+            "- Target user cannot already be an event staff member\n"
+            "- Expiry date (if provided) must be in the future\n"
+            "- The authenticated user is automatically recorded as the inviter\n\n"
+            "**Workflow:**\n"
+            "1. Event creator/staff creates invite\n"
+            "2. Target user receives notification (outside API scope)\n"
+            "3. Target user can view invite via GET request or my-invites action\n"
+            "4. Target user accepts invite via accept action\n"
+            "5. EventStaff record is automatically created\n"
+            "6. Invite is marked as accepted and inactive"
+        ),
+        tags=["Events", "Event Staff Invites"],
+        parameters=[
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+                description='UUID of the event to list/create invites for',
+                required=True
+            ),
+            OpenApiParameter(
+                name='accepted',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description='Filter invites by acceptance status. true=accepted, false=not accepted',
+                required=False
+            ),
+            OpenApiParameter(
+                name='is_valid',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    'Filter invites by validity status. Valid invites are: active, not expired, and not yet accepted. '
+                    'Use true to get only valid (pending) invites, false to get invalid invites'
+                ),
+                required=False
+            ),
+            OpenApiParameter(
+                name='target_user',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter invites by target user ID. Returns all invites sent to the specified user for this event',
+                required=False
+            ),
+            OpenApiParameter(
+                name='search',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Search invites by target user email address. Case-insensitive partial match',
+                required=False
+            ),
+            OpenApiParameter(
+                name='page',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Page number for pagination',
+                required=False
+            ),
+            OpenApiParameter(
+                name='page_size',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Number of results per page (default: 20)',
+                required=False
+            ),
+        ],
+        request=EventStaffInviteSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=EventStaffInviteListSerializer(many=True),
+                description=(
+                    'Successfully retrieved list of invites. Returns paginated results with invite summaries including: '
+                    'invite ID, event details, target user info, inviter info, acceptance status, validity status, '
+                    'timestamps, and HATEOAS links for related actions'
+                )
+            ),
+            201: OpenApiResponse(
+                response=EventStaffInviteSerializer,
+                description=(
+                    'Successfully created new staff invite. Returns complete invite details including: '
+                    'invite ID, event information, target user details, inviter details, expiry date, '
+                    'validity status, and HATEOAS links for management and acceptance actions'
+                )
+            ),
+            400: OpenApiResponse(
+                description=(
+                    'Bad request - validation errors occurred. Common causes:\n'
+                    '- Target user already has an active invite for this event\n'
+                    '- Target user is already an event staff member\n'
+                    '- Expiry date is in the past\n'
+                    '- Required fields missing (target_user)\n'
+                    '- Invalid field values or formats'
+                )
+            ),
+            401: OpenApiResponse(
+                description='Authentication required. User must be logged in to list or create invites'
+            ),
+            403: OpenApiResponse(
+                description=(
+                    'Permission denied. Common causes:\n'
+                    '- For GET: User is not event creator, staff, or target user\n'
+                    '- For POST: User is not event creator or existing staff member\n'
+                    '- User lacks necessary permissions to perform the action'
+                )
+            ),
+            404: OpenApiResponse(
+                description='Event not found with the specified event_id'
+            )
+        }
+    )
+    @action(detail=True, methods=['get', 'post'], url_path='staff-invites',
+            permission_classes=[permissions.IsAuthenticated])
+    def staff_invites(self, request, event_id=None):
+        """List all staff invites or create a new invite for this event."""
+
+        event = get_object_or_404(Event, event_id=event_id)
+        # GET - List invites
+        if request.method == 'GET':
+            queryset = EventStaffInvite.objects.filter(event=event).select_related(
+                'target_user', 'invited_by'
+            ).order_by('-added_at')
+            
+            # Non-staff/non-owner can only see their own invites
+            if not (request.user == event.created_by or 
+                    event.staff_members.filter(user=request.user).exists() or
+                    request.user.is_staff or request.user.is_superuser):
+                queryset = queryset.filter(target_user=request.user)
+            
+            # Apply filters
+            accepted = request.query_params.get('accepted')
+            if accepted is not None:
+                queryset = queryset.filter(accepted=accepted.lower() in ['true', '1', 'yes'])
+            
+            is_valid_param = request.query_params.get('is_valid')
+            if is_valid_param is not None:
+                if is_valid_param.lower() in ['true', '1', 'yes']:
+                    queryset = queryset.filter(
+                        is_active=True,
+                        accepted=False
+                    ).filter(
+                        Q(expires_at__isnull=True) | Q(expires_at__gte=timezone.now())
+                    )
+            
+            target_user = request.query_params.get('target_user')
+            if target_user:
+                queryset = queryset.filter(target_user_id=target_user)
+            
+            search = request.query_params.get('search')
+            if search:
+                queryset = queryset.filter(
+                    Q(target_user__email__icontains=search) |
+                    Q(target_user__first_name__icontains=search) |
+                    Q(target_user__last_name__icontains=search)
+                )
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = EventStaffInviteListSerializer(page, many=True, context={'request': request, 'event_id': event.event_id})
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = EventStaffInviteListSerializer(queryset, many=True, context={'request': request, 'event_id': event.event_id})
+            return Response(serializer.data)
+        
+        # POST - Create invite
+        elif request.method == 'POST':
+            # Check if user can manage invites for this event
+            if not (request.user == event.created_by or 
+                    event.staff_members.filter(user=request.user).exists() or
+                    request.user.is_staff or request.user.is_superuser):
+                return Response(
+                    {'detail': 'You do not have permission to create invites for this event.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Don't pass event in data, it comes from context
+            serializer = EventStaffInviteSerializer(data=request.data, context={'request': request, 'event_id': event.event_id})
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    @extend_schema(
+        summary="Retrieve, Update, or Delete a Specific Event Staff Invite",
+        description=(
+            "**HTTP Methods:**\n\n"
+            "**GET** - Retrieve Staff Invite Details:\n"
+            "Fetch complete details for a specific event staff invite including:\n"
+            "- Full invite metadata (ID, status, created/updated timestamps)\n"
+            "- Complete event information (ID, name, description, dates)\n"
+            "- Target user details (ID, email, name, profile)\n"
+            "- Inviter information (who sent the invite)\n"
+            "- Validity and acceptance status\n"
+            "- Expiry information (if applicable)\n"
+            "- HATEOAS links for invite management and acceptance\n\n"
+            "**Permissions:** Users can retrieve invites if they are:\n"
+            "- The event creator or existing staff member (can see all invites)\n"
+            "- The target user of the invite (can see their own invite)\n"
+            "- Django staff or superuser (full visibility)\n\n"
+            "---\n\n"
+            "**PUT** - Full Update (Replace) Staff Invite:\n"
+            "Completely replace an existing staff invite with new data. All fields must be provided.\n\n"
+            "**Required Fields:**\n"
+            "- `target_user` (integer): New target user ID\n"
+            "- `expires_at` (datetime or null): New expiry date (ISO 8601) or null for no expiry\n\n"
+            "**Behavior:**\n"
+            "- Replaces ALL editable fields with provided values\n"
+            "- Read-only fields (event, created_at, updated_at) are preserved\n"
+            "- Can change target user if new user doesn't have existing invite\n"
+            "- Can modify expiry date or remove it (set to null)\n"
+            "- Cannot modify already accepted invites\n\n"
+            "---\n\n"
+            "**PATCH** - Partial Update Staff Invite:\n"
+            "Update specific fields of an existing staff invite without replacing the entire object.\n\n"
+            "**Optional Fields** (provide only what you want to change):\n"
+            "- `target_user` (integer): Change the target user\n"
+            "- `expires_at` (datetime or null): Modify expiry date or remove expiry\n\n"
+            "**Behavior:**\n"
+            "- Only provided fields are updated\n"
+            "- Unprovided fields remain unchanged\n"
+            "- Useful for extending expiry without changing target user\n"
+            "- Cannot modify already accepted invites\n\n"
+            "---\n\n"
+            "**DELETE** - Remove Staff Invite:\n"
+            "Permanently delete a staff invite from the system. This action is irreversible.\n\n"
+            "**Use Cases:**\n"
+            "- Rescind an invite before it's accepted\n"
+            "- Clean up expired or invalid invites\n"
+            "- Remove duplicate or erroneous invites\n\n"
+            "**Behavior:**\n"
+            "- Completely removes invite record from database\n"
+            "- Cannot be undone\n"
+            "- Safe to delete accepted invites (doesn't affect EventStaff membership)\n"
+            "- No response body on success (204 status)\n\n"
+            "---\n\n"
+            "**Common Permissions (All Methods):**\n"
+            "Only event creators and existing event staff members can modify or delete invites. "
+            "Django staff and superusers also have full access. "
+            "Regular users (including target users) cannot modify or delete invites."
+        ),
+        tags=["Events", "Event Staff Invites"],
+        parameters=[
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+                description='UUID of the event containing the invite',
+                required=True
+            ),
+            OpenApiParameter(
+                name='invite_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='Integer ID of the specific staff invite to retrieve, update, or delete',
+                required=True
+            ),
+        ],
+        request=EventStaffInviteSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=EventStaffInviteSerializer,
+                description=(
+                    'Successfully retrieved or updated invite. Returns complete invite details with all fields including: '
+                    'invite ID, event information, target user details, inviter details, acceptance status, '
+                    'validity status, timestamps, expiry date, and HATEOAS links'
+                )
+            ),
+            204: OpenApiResponse(
+                description=(
+                    'Successfully deleted invite. No response body. The invite has been permanently removed from the system'
+                )
+            ),
+            400: OpenApiResponse(
+                description=(
+                    'Bad request - validation errors occurred during update. Common causes:\n'
+                    '- Attempting to modify an already-accepted invite\n'
+                    '- New target user already has an active invite for this event\n'
+                    '- New target user is already an event staff member\n'
+                    '- New expiry date is in the past\n'
+                    '- Invalid field values or formats\n'
+                    '- Required fields missing (for PUT only)'
+                )
+            ),
+            401: OpenApiResponse(
+                description='Authentication required. User must be logged in to access, modify, or delete invites'
+            ),
+            403: OpenApiResponse(
+                description=(
+                    'Permission denied. Common causes:\n'
+                    '- For GET: User is not event creator, staff, or the target user\n'
+                    '- For PUT/PATCH/DELETE: User is not event creator or existing staff member\n'
+                    '- Insufficient permissions to perform the requested action'
+                )
+            ),
+            404: OpenApiResponse(
+                description=(
+                    'Not found. Either the event does not exist with the specified event_id, '
+                    'or the invite does not exist with the specified invite_id for this event'
+                )
+            )
+        }
+    )
+    @action(detail=True, methods=['get', 'put', 'patch', 'delete'], 
+            url_path='staff-invites/(?P<invite_id>[^/.]+)',
+            permission_classes=[permissions.IsAuthenticated])
+    def manage_staff_invite(self, request, event_id=None, invite_id=None):
+        """Retrieve, update, or delete a specific staff invite for this event."""
+        event = self.get_object()
+        
+        try:
+            invite = EventStaffInvite.objects.select_related(
+                'target_user', 'invited_by'
+            ).get(id=invite_id, event=event)
+        except EventStaffInvite.DoesNotExist:
+            return Response(
+                {'detail': 'Staff invite not found for this event.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # GET - Retrieve
+        if request.method == 'GET':
+            # Check permissions - creator, staff, or target user can view
+            if not (request.user == event.created_by or
+                    event.staff_members.filter(user=request.user).exists() or
+                    invite.target_user == request.user or
+                    request.user.is_staff or request.user.is_superuser):
+                return Response(
+                    {'detail': 'You do not have permission to view this invite.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            serializer = EventStaffInviteSerializer(invite, context={'request': request, 'event_id': event.event_id})
+            return Response(serializer.data)
+        
+        # PUT/PATCH - Update
+        elif request.method in ['PUT', 'PATCH']:
+            # Check permissions - only creator or staff can update
+            if not (request.user == event.created_by or
+                    event.staff_members.filter(user=request.user).exists() or
+                    request.user.is_staff or request.user.is_superuser):
+                return Response(
+                    {'detail': 'You do not have permission to update this invite.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            partial = request.method == 'PATCH'
+            serializer = EventStaffInviteSerializer(
+                invite, data=request.data, partial=partial,
+                context={'request': request, 'event_id': event.event_id}
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+        
+        # DELETE
+        elif request.method == 'DELETE':
+            # Check permissions - only creator or staff can delete
+            if not (request.user == event.created_by or
+                    event.staff_members.filter(user=request.user).exists() or
+                    request.user.is_staff or request.user.is_superuser):
+                return Response(
+                    {'detail': 'You do not have permission to delete this invite.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Soft delete
+            invite.is_active = False
+            invite.save()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @extend_schema(
+        summary="Accept Event Staff Invite",
+        description=(
+            "**Accept Staff Invitation and Join Event Team**\n\n"
+            "This endpoint allows a user to accept a staff invitation they received for an event. "
+            "Accepting the invite automatically adds the user to the event's staff team and marks the invite as processed.\n\n"
+            "**Workflow:**\n"
+            "1. User receives a staff invite (created via POST /staff-invites/)\n"
+            "2. User can view their pending invites via GET /staff-invites/ or my-invites action\n"
+            "3. User accepts invite by calling this endpoint\n"
+            "4. System validates the invite is still valid\n"
+            "5. System creates EventStaff record for the user\n"
+            "6. Invite is marked as accepted and deactivated\n"
+            "7. User now has staff permissions for the event\n\n"
+            "**Permissions:**\n"
+            "Only the target user specified in the invite can accept it. The system validates:\n"
+            "- The authenticated user matches the invite's target_user\n"
+            "- The invite is still active and not deactivated\n"
+            "- The invite has not already been accepted\n"
+            "- The invite has not expired (if expiry date was set)\n"
+            "- The user is not already a staff member for this event\n\n"
+            "**Validation Checks:**\n"
+            "- **Active Status**: Invite must be active (is_active=True)\n"
+            "- **Acceptance Status**: Invite must not be already accepted\n"
+            "- **Expiry Date**: If set, expires_at must be in the future\n"
+            "- **Target User**: Authenticated user must be the invite target\n"
+            "- **Duplicate Staff**: User cannot already be an event staff member\n\n"
+            "**Success Response:**\n"
+            "Returns a success message and the newly created EventStaff object with:\n"
+            "- Staff member ID and role information\n"
+            "- Event details\n"
+            "- User information\n"
+            "- Timestamps (joined date)\n"
+            "- HATEOAS links for staff management\n\n"
+            "**Atomic Operation:**\n"
+            "The acceptance process is atomic - either both the EventStaff record is created AND the invite is marked "
+            "as accepted, or neither happens. This prevents data inconsistencies."
+        ),
+        tags=["Events", "Event Staff Invites"],
+        parameters=[
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+                description='UUID of the event for which the invite was sent',
+                required=True
+            ),
+            OpenApiParameter(
+                name='invite_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='Integer ID of the specific staff invite to accept',
+                required=True
+            ),
+        ],
+        request=None,  # POST with no body
+        responses={
+            200: OpenApiResponse(
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'message': {
+                            'type': 'string',
+                            'example': 'Invite accepted successfully. You are now an event staff member.',
+                            'description': 'Success confirmation message'
+                        },
+                        'staff': {
+                            'type': 'object',
+                            'description': 'The newly created EventStaff object with complete details'
+                        }
+                    }
+                },
+                description=(
+                    'Invite successfully accepted. User has been added to the event staff team. '
+                    'Returns a success message and the EventStaff object containing: '
+                    'staff ID, event details, user information, role, join date, and management links'
+                )
+            ),
+            400: OpenApiResponse(
+                description=(
+                    'Bad request - invite is not valid for acceptance. Common causes:\n'
+                    '- Invite has already been accepted (accepted=True)\n'
+                    '- Invite has been deactivated (is_active=False)\n'
+                    '- Invite has expired (expires_at in the past)\n'
+                    '- User is already an event staff member\n'
+                    '- Invite is in an invalid state\n\n'
+                    'Error response includes a specific message explaining why the invite cannot be accepted'
+                )
+            ),
+            401: OpenApiResponse(
+                description='Authentication required. User must be logged in to accept invites'
+            ),
+            403: OpenApiResponse(
+                description=(
+                    'Permission denied. The authenticated user is not the target user of this invite. '
+                    'Users can only accept invites that were sent to them specifically'
+                )
+            ),
+            404: OpenApiResponse(
+                description=(
+                    'Not found. Either:\n'
+                    '- The event does not exist with the specified event_id\n'
+                    '- The invite does not exist with the specified invite_id\n'
+                    '- The invite exists but is not associated with this event'
+                )
+            )
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='staff-invites/(?P<invite_id>[^/.]+)/accept',
+            permission_classes=[permissions.IsAuthenticated])
+    def accept_invite(self, request, event_id=None, invite_id=None):
+        """Accept a staff invite for this event."""
+        event = self.get_object()
+        
+        try:
+            invite = EventStaffInvite.objects.get(id=invite_id, event=event)
+        except EventStaffInvite.DoesNotExist:
+            return Response(
+                {'detail': 'Staff invite not found for this event.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Only the target user can accept their invite
+        if invite.target_user != request.user:
+            return Response(
+                {'detail': 'You can only accept invites sent to you.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if invite is valid
+        if not invite.is_valid:
+            error_msg = 'This invite is no longer valid.'
+            if not invite.is_active:
+                error_msg = 'This invite has been deactivated.'
+            elif invite.accepted:
+                error_msg = 'This invite has already been accepted.'
+            elif invite.expires_at and invite.expires_at < timezone.now():
+                error_msg = 'This invite has expired.'
+            
+            return Response(
+                {'error': error_msg},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Accept the invite (creates EventStaff record)
+            staff = invite.accept_invite()
+            
+            serializer = EventStaffSerializer(staff, context={'request': request})
+            return Response(
+                {
+                    'message': 'Invite accepted successfully. You are now an event staff member.',
+                    'staff': serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to accept invite: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 @extend_schema_view(
@@ -2136,3 +2709,4 @@ class EventVenueViewSet(viewsets.ModelViewSet):
     ordering_fields = ['event__start_datetime', 'venue__poi__name']
     ordering = ['-event__start_datetime']
     lookup_field = 'event_venue_id'
+

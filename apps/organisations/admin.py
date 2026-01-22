@@ -97,15 +97,16 @@ class OrganisationControlAdmin(admin.ModelAdmin):
 
 @admin.register(Leader)
 class LeaderAdmin(admin.ModelAdmin):
-    list_display = ('user', 'get_authority_object', 'target_type', 'added_by', 'added_at')
-    list_filter = ('target_type', 'added_at')
-    search_fields = ('user__email', 'notes')
+    list_display = ('user', 'organisation', 'get_authority_object', 'target_type', 'added_by', 'added_at')
+    list_filter = ('target_type', 'organisation', 'added_at')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name', 'organisation__title', 'notes')
     readonly_fields = ('added_at', 'updated_at')
-    autocomplete_fields = ('user',)
+    autocomplete_fields = ('user', 'organisation', 'added_by')
+    list_select_related = ('user', 'organisation', 'added_by', 'target_type')
     
     fieldsets = (
         ('Leadership Information', {
-            'fields': ('user', 'target_type', 'target_id', 'notes')
+            'fields': ('user', 'organisation', 'target_type', 'target_id', 'notes')
         }),
         ('Metadata', {
             'fields': ('added_by', 'added_at', 'updated_at'),

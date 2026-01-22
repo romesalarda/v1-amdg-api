@@ -119,3 +119,38 @@ class IsEventOwnerOrStaffMember(permissions.BasePermission):
         is_event_staff = event.staff_members.filter(user=request.user).exists()
         
         return is_owner or is_event_staff
+
+
+class CanManageEventInvites(permissions.BasePermission):
+    """
+    Permission: Event owners and existing event staff can manage invites.
+    Target users can view their own invites.
+    
+    Note: This permission is now deprecated as we handle permissions inline
+    in the EventViewSet nested actions. Kept for backward compatibility.
+    """
+    def has_permission(self, request, view):
+        # Anyone authenticated can view invites (filtered by viewset)
+        if request.method in permissions.SAFE_METHODS:
+            return request.user and request.user.is_authenticated
+        
+        # Only authenticated users can create/update/delete invites
+        return request.user and request.user.is_authenticated
+    
+    def has_object_permission(self, request, view, obj):
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+        
+        # Target user can view their own invite
+        if request.method in permissions.SAFE_METHODS:
+            if obj.target_user == request.user:
+                return True
+        
+        # Event owner can manage invites
+        if obj.event.created_by == request.user:
+            return True
+        
+        # Existing event staff can manage invites
+        is_event_staff = obj.event.staff_members.filter(user=request.user).exists()
+        
+        return is_event_staff

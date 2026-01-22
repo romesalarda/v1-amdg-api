@@ -733,52 +733,88 @@ class EventSponsorPackageViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List organisation leaders",
-        description="Retrieve a list of organisation leaders.",
+        summary="List leaders",
+        description=(
+            "Retrieve a list of leaders across organisations and locations. "
+            "Leaders can be assigned to organisations, countries, clusters, chapters, or areas. "
+            "All leaders must belong to an organisation for grouping purposes. "
+            "Supports filtering by organisation, authority type, and user."
+        ),
         tags=["Organisation Leaders"],
+        parameters=[
+            OpenApiParameter(name='user', type=OpenApiTypes.INT, description='Filter by user ID'),
+            OpenApiParameter(name='organisation', type=OpenApiTypes.INT, description='Filter by organisation ID'),
+            OpenApiParameter(name='authority_type', type=OpenApiTypes.STR, description='Filter by authority type (country, cluster, chapter, area, organisation)'),
+            OpenApiParameter(name='authority_id', type=OpenApiTypes.INT, description='Filter by authority object ID'),
+        ]
     ),
     retrieve=extend_schema(
         summary="Retrieve leader details",
-        description="Get detailed information about a leader.",
+        description=(
+            "Get detailed information about a specific leader assignment including "
+            "user details, organisation membership, authority object, and assignment metadata."
+        ),
         tags=["Organisation Leaders"],
     ),
     create=extend_schema(
         summary="Create leader",
-        description="Assign a user as a leader of an organisation.",
+        description=(
+            "Assign a user as a leader of an organisation. "
+            "Leaders must belong to an organisation for grouping. "
+            "Use location-specific endpoints to assign leaders to countries, clusters, chapters, or areas. "
+            "Requires organisation controller permissions."
+        ),
         tags=["Organisation Leaders"],
     ),
     update=extend_schema(
         summary="Update leader",
-        description="Update leader notes.",
+        description=(
+            "Update leader details such as notes. "
+            "Authority assignment (target_type and target_id) cannot be changed after creation. "
+            "Requires organisation controller permissions."
+        ),
         tags=["Organisation Leaders"],
     ),
     partial_update=extend_schema(
         summary="Partially update leader",
-        description="Partially update leader notes.",
+        description=(
+            "Partially update leader details such as notes. "
+            "Authority assignment cannot be changed after creation. "
+            "Requires organisation controller permissions."
+        ),
         tags=["Organisation Leaders"],
     ),
     destroy=extend_schema(
         summary="Remove leader",
-        description="Remove a user's leadership of an organisation.",
+        description=(
+            "Remove a user's leadership assignment. "
+            "This permanently removes the leadership relationship. "
+            "Requires organisation controller permissions."
+        ),
         tags=["Organisation Leaders"],
     ),
 )
 class LeaderViewSet(viewsets.ModelViewSet):
-    """ViewSet for Leader CRUD operations (Organisation authority only)."""
+    """
+    ViewSet for Leader CRUD operations supporting multiple authority types.
     
-    queryset = Leader.objects.select_related('user', 'added_by', 'target_type')
+    Leaders can be assigned to:
+    - Organisations (via this endpoint)
+    - Countries, Clusters, Chapters, Areas (via location-specific endpoints)
+    
+    All leaders must belong to an organisation for grouping and permission purposes.
+    """
+    
+    queryset = Leader.objects.select_related(
+        'user', 'organisation', 'added_by', 'target_type'
+    ).all()
     permission_classes = [permissions.IsAuthenticated, IsOrganisationController]
     pagination_class = StandardPagination
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = LeaderFilterSet
+    search_fields = ['user__email', 'user__first_name', 'user__last_name', 'organisation__title']
     ordering_fields = ['added_at', 'updated_at']
     ordering = ['-added_at']
-    
-    def get_queryset(self):
-        """Filter to only show organisation leaders."""
-        from django.contrib.contenttypes.models import ContentType
-        org_ct = ContentType.objects.get_for_model(Organisation)
-        return super().get_queryset().filter(target_type=org_ct)
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""

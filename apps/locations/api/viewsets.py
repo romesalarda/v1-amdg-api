@@ -135,6 +135,201 @@ class CountryLocationViewSet(viewsets.ModelViewSet):
             clusters, many=True, context={'request': request}
         )
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Add leader to country",
+        description=(
+            "Assign a user as a leader of this country location. "
+            "Requires organisation controller permissions for the specified organisation. "
+            "Leaders must belong to an organisation for grouping purposes."
+        ),
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'user_id': {'type': 'integer', 'description': 'ID of the user to assign as leader'},
+                    'organisation_id': {'type': 'integer', 'description': 'ID of the organisation the leader belongs to'},
+                    'notes': {'type': 'string', 'description': 'Optional notes about this leadership assignment'}
+                },
+                'required': ['user_id', 'organisation_id']
+            }
+        },
+        responses={
+            201: OpenApiResponse(description="Leader added successfully"),
+            400: OpenApiResponse(description="Invalid data or duplicate assignment"),
+            403: OpenApiResponse(description="Not authorized - requires organisation controller permissions"),
+            404: OpenApiResponse(description="User or organisation not found")
+        },
+        tags=["Locations"],
+    )
+    @action(detail=True, methods=['post'], url_path='add-leader')
+    def add_leader(self, request, pk=None):
+        """Add a leader to this country location."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.contenttypes.models import ContentType
+        from apps.organisations.models import Leader, Organisation, OrganisationControl
+        
+        country = self.get_object()
+        user_id = request.data.get('user_id')
+        organisation_id = request.data.get('organisation_id')
+        notes = request.data.get('notes', '')
+        
+        if not user_id or not organisation_id:
+            return Response(
+                {'error': 'Both user_id and organisation_id are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        User = get_user_model()
+        
+        try:
+            user = User.objects.get(id=user_id)
+            organisation = Organisation.objects.get(id=organisation_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Organisation.DoesNotExist:
+            return Response(
+                {'error': 'Organisation not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if request user has OrganisationControl for this organisation
+        if not request.user.is_superuser and not request.user.is_staff:
+            has_control = OrganisationControl.objects.filter(
+                organisation=organisation,
+                user=request.user
+            ).exists()
+            
+            if not has_control:
+                return Response(
+                    {'error': 'You must be a controller of the specified organisation to add leaders.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        # Check for existing leadership
+        country_ct = ContentType.objects.get_for_model(CountryLocation)
+        if Leader.objects.filter(
+            user=user,
+            target_type=country_ct,
+            target_id=country.id
+        ).exists():
+            return Response(
+                {'error': 'This user is already a leader of this country.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create the leader
+        leader = Leader.objects.create(
+            user=user,
+            organisation=organisation,
+            target_type=country_ct,
+            target_id=country.id,
+            notes=notes,
+            added_by=request.user
+        )
+        
+        return Response(
+            {
+                'message': 'Leader added successfully.',
+                'leader_id': leader.id,
+                'user': user.email,
+                'country': str(country),
+                'organisation': organisation.title
+            },
+            status=status.HTTP_201_CREATED
+        )
+    
+    @extend_schema(
+        summary="Remove leader from country",
+        description=(
+            "Remove a user's leadership assignment from this country location. "
+            "Requires organisation controller permissions for the leader's organisation."
+        ),
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'user_id': {'type': 'integer', 'description': 'ID of the user to remove as leader'}
+                },
+                'required': ['user_id']
+            }
+        },
+        responses={
+            200: OpenApiResponse(description="Leader removed successfully"),
+            400: OpenApiResponse(description="Invalid data"),
+            403: OpenApiResponse(description="Not authorized"),
+            404: OpenApiResponse(description="User or leadership assignment not found")
+        },
+        tags=["Locations"],
+    )
+    @action(detail=True, methods=['post'], url_path='remove-leader')
+    def remove_leader(self, request, pk=None):
+        """Remove a leader from this country location."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.contenttypes.models import ContentType
+        from apps.organisations.models import Leader, OrganisationControl
+        
+        country = self.get_object()
+        user_id = request.data.get('user_id')
+        
+        if not user_id:
+            return Response(
+                {'error': 'user_id is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        User = get_user_model()
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Find the leader
+        country_ct = ContentType.objects.get_for_model(CountryLocation)
+        try:
+            leader = Leader.objects.get(
+                user=user,
+                target_type=country_ct,
+                target_id=country.id
+            )
+        except Leader.DoesNotExist:
+            return Response(
+                {'error': 'This user is not a leader of this country.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if request user has OrganisationControl for the leader's organisation
+        if not request.user.is_superuser and not request.user.is_staff:
+            if not leader.organisation:
+                return Response(
+                    {'error': 'Cannot determine organisation for permission check.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            has_control = OrganisationControl.objects.filter(
+                organisation=leader.organisation,
+                user=request.user
+            ).exists()
+            
+            if not has_control:
+                return Response(
+                    {'error': 'You must be a controller of the leader\'s organisation to remove them.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        leader.delete()
+        
+        return Response(
+            {'message': 'Leader removed successfully.'},
+            status=status.HTTP_200_OK
+        )
 
 
 # ============================================================================
@@ -208,6 +403,85 @@ class ClusterLocationViewSet(viewsets.ModelViewSet):
             chapters, many=True, context={'request': request}
         )
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Add leader to cluster",
+        description="Assign a user as a leader of this cluster location. Requires organisation controller permissions.",
+        request={'application/json': {'type': 'object', 'properties': {'user_id': {'type': 'integer'}, 'organisation_id': {'type': 'integer'}, 'notes': {'type': 'string'}}, 'required': ['user_id', 'organisation_id']}},
+        responses={201: OpenApiResponse(description="Leader added successfully"), 400: OpenApiResponse(description="Invalid data"), 403: OpenApiResponse(description="Not authorized"), 404: OpenApiResponse(description="User or organisation not found")},
+        tags=["Locations"],
+    )
+    @action(detail=True, methods=['post'], url_path='add-leader')
+    def add_leader(self, request, pk=None):
+        """Add a leader to this cluster location."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.contenttypes.models import ContentType
+        from apps.organisations.models import Leader, Organisation, OrganisationControl
+        
+        cluster = self.get_object()
+        user_id = request.data.get('user_id')
+        organisation_id = request.data.get('organisation_id')
+        notes = request.data.get('notes', '')
+        
+        if not user_id or not organisation_id:
+            return Response({'error': 'Both user_id and organisation_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=user_id)
+            organisation = Organisation.objects.get(id=organisation_id)
+        except (User.DoesNotExist, Organisation.DoesNotExist) as e:
+            return Response({'error': 'User or organisation not found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not request.user.is_superuser and not request.user.is_staff:
+            if not OrganisationControl.objects.filter(organisation=organisation, user=request.user).exists():
+                return Response({'error': 'You must be a controller of the specified organisation to add leaders.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        cluster_ct = ContentType.objects.get_for_model(ClusterLocation)
+        if Leader.objects.filter(user=user, target_type=cluster_ct, target_id=cluster.id).exists():
+            return Response({'error': 'This user is already a leader of this cluster.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        leader = Leader.objects.create(user=user, organisation=organisation, target_type=cluster_ct, target_id=cluster.id, notes=notes, added_by=request.user)
+        return Response({'message': 'Leader added successfully.', 'leader_id': leader.id, 'user': user.email, 'cluster': str(cluster), 'organisation': organisation.title}, status=status.HTTP_201_CREATED)
+    
+    @extend_schema(
+        summary="Remove leader from cluster",
+        description="Remove a user's leadership assignment from this cluster location. Requires organisation controller permissions.",
+        request={'application/json': {'type': 'object', 'properties': {'user_id': {'type': 'integer'}}, 'required': ['user_id']}},
+        responses={200: OpenApiResponse(description="Leader removed successfully"), 400: OpenApiResponse(description="Invalid data"), 403: OpenApiResponse(description="Not authorized"), 404: OpenApiResponse(description="User or leadership not found")},
+        tags=["Locations"],
+    )
+    @action(detail=True, methods=['post'], url_path='remove-leader')
+    def remove_leader(self, request, pk=None):
+        """Remove a leader from this cluster location."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.contenttypes.models import ContentType
+        from apps.organisations.models import Leader, OrganisationControl
+        
+        cluster = self.get_object()
+        user_id = request.data.get('user_id')
+        
+        if not user_id:
+            return Response({'error': 'user_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        cluster_ct = ContentType.objects.get_for_model(ClusterLocation)
+        try:
+            leader = Leader.objects.get(user=user, target_type=cluster_ct, target_id=cluster.id)
+        except Leader.DoesNotExist:
+            return Response({'error': 'This user is not a leader of this cluster.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not request.user.is_superuser and not request.user.is_staff:
+            if not leader.organisation or not OrganisationControl.objects.filter(organisation=leader.organisation, user=request.user).exists():
+                return Response({'error': 'You must be a controller of the leader\'s organisation to remove them.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        leader.delete()
+        return Response({'message': 'Leader removed successfully.'}, status=status.HTTP_200_OK)
 
 
 # ============================================================================
@@ -281,6 +555,85 @@ class ChapterLocationViewSet(viewsets.ModelViewSet):
             areas, many=True, context={'request': request}
         )
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Add leader to chapter",
+        description="Assign a user as a leader of this chapter location. Requires organisation controller permissions.",
+        request={'application/json': {'type': 'object', 'properties': {'user_id': {'type': 'integer'}, 'organisation_id': {'type': 'integer'}, 'notes': {'type': 'string'}}, 'required': ['user_id', 'organisation_id']}},
+        responses={201: OpenApiResponse(description="Leader added successfully"), 400: OpenApiResponse(description="Invalid data"), 403: OpenApiResponse(description="Not authorized"), 404: OpenApiResponse(description="User or organisation not found")},
+        tags=["Locations"],
+    )
+    @action(detail=True, methods=['post'], url_path='add-leader')
+    def add_leader(self, request, pk=None):
+        """Add a leader to this chapter location."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.contenttypes.models import ContentType
+        from apps.organisations.models import Leader, Organisation, OrganisationControl
+        
+        chapter = self.get_object()
+        user_id = request.data.get('user_id')
+        organisation_id = request.data.get('organisation_id')
+        notes = request.data.get('notes', '')
+        
+        if not user_id or not organisation_id:
+            return Response({'error': 'Both user_id and organisation_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=user_id)
+            organisation = Organisation.objects.get(id=organisation_id)
+        except (User.DoesNotExist, Organisation.DoesNotExist):
+            return Response({'error': 'User or organisation not found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not request.user.is_superuser and not request.user.is_staff:
+            if not OrganisationControl.objects.filter(organisation=organisation, user=request.user).exists():
+                return Response({'error': 'You must be a controller of the specified organisation to add leaders.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        chapter_ct = ContentType.objects.get_for_model(ChapterLocation)
+        if Leader.objects.filter(user=user, target_type=chapter_ct, target_id=chapter.id).exists():
+            return Response({'error': 'This user is already a leader of this chapter.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        leader = Leader.objects.create(user=user, organisation=organisation, target_type=chapter_ct, target_id=chapter.id, notes=notes, added_by=request.user)
+        return Response({'message': 'Leader added successfully.', 'leader_id': leader.id, 'user': user.email, 'chapter': str(chapter), 'organisation': organisation.title}, status=status.HTTP_201_CREATED)
+    
+    @extend_schema(
+        summary="Remove leader from chapter",
+        description="Remove a user's leadership assignment from this chapter location. Requires organisation controller permissions.",
+        request={'application/json': {'type': 'object', 'properties': {'user_id': {'type': 'integer'}}, 'required': ['user_id']}},
+        responses={200: OpenApiResponse(description="Leader removed successfully"), 400: OpenApiResponse(description="Invalid data"), 403: OpenApiResponse(description="Not authorized"), 404: OpenApiResponse(description="User or leadership not found")},
+        tags=["Locations"],
+    )
+    @action(detail=True, methods=['post'], url_path='remove-leader')
+    def remove_leader(self, request, pk=None):
+        """Remove a leader from this chapter location."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.contenttypes.models import ContentType
+        from apps.organisations.models import Leader, OrganisationControl
+        
+        chapter = self.get_object()
+        user_id = request.data.get('user_id')
+        
+        if not user_id:
+            return Response({'error': 'user_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        chapter_ct = ContentType.objects.get_for_model(ChapterLocation)
+        try:
+            leader = Leader.objects.get(user=user, target_type=chapter_ct, target_id=chapter.id)
+        except Leader.DoesNotExist:
+            return Response({'error': 'This user is not a leader of this chapter.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not request.user.is_superuser and not request.user.is_staff:
+            if not leader.organisation or not OrganisationControl.objects.filter(organisation=leader.organisation, user=request.user).exists():
+                return Response({'error': 'You must be a controller of the leader\'s organisation to remove them.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        leader.delete()
+        return Response({'message': 'Leader removed successfully.'}, status=status.HTTP_200_OK)
 
 
 # ============================================================================
@@ -356,6 +709,85 @@ class AreaLocationViewSet(viewsets.ModelViewSet):
             relatives, many=True, context={'request': request}
         )
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Add leader to area",
+        description="Assign a user as a leader of this area location. Requires organisation controller permissions.",
+        request={'application/json': {'type': 'object', 'properties': {'user_id': {'type': 'integer'}, 'organisation_id': {'type': 'integer'}, 'notes': {'type': 'string'}}, 'required': ['user_id', 'organisation_id']}},
+        responses={201: OpenApiResponse(description="Leader added successfully"), 400: OpenApiResponse(description="Invalid data"), 403: OpenApiResponse(description="Not authorized"), 404: OpenApiResponse(description="User or organisation not found")},
+        tags=["Locations"],
+    )
+    @action(detail=True, methods=['post'], url_path='add-leader')
+    def add_leader(self, request, pk=None):
+        """Add a leader to this area location."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.contenttypes.models import ContentType
+        from apps.organisations.models import Leader, Organisation, OrganisationControl
+        
+        area = self.get_object()
+        user_id = request.data.get('user_id')
+        organisation_id = request.data.get('organisation_id')
+        notes = request.data.get('notes', '')
+        
+        if not user_id or not organisation_id:
+            return Response({'error': 'Both user_id and organisation_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=user_id)
+            organisation = Organisation.objects.get(id=organisation_id)
+        except (User.DoesNotExist, Organisation.DoesNotExist):
+            return Response({'error': 'User or organisation not found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not request.user.is_superuser and not request.user.is_staff:
+            if not OrganisationControl.objects.filter(organisation=organisation, user=request.user).exists():
+                return Response({'error': 'You must be a controller of the specified organisation to add leaders.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        area_ct = ContentType.objects.get_for_model(AreaLocation)
+        if Leader.objects.filter(user=user, target_type=area_ct, target_id=area.area_id).exists():
+            return Response({'error': 'This user is already a leader of this area.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        leader = Leader.objects.create(user=user, organisation=organisation, target_type=area_ct, target_id=area.id, notes=notes, added_by=request.user)
+        return Response({'message': 'Leader added successfully.', 'leader_id': leader.id, 'user': user.email, 'area': str(area), 'organisation': organisation.title}, status=status.HTTP_201_CREATED)
+    
+    @extend_schema(
+        summary="Remove leader from area",
+        description="Remove a user's leadership assignment from this area location. Requires organisation controller permissions.",
+        request={'application/json': {'type': 'object', 'properties': {'user_id': {'type': 'integer'}}, 'required': ['user_id']}},
+        responses={200: OpenApiResponse(description="Leader removed successfully"), 400: OpenApiResponse(description="Invalid data"), 403: OpenApiResponse(description="Not authorized"), 404: OpenApiResponse(description="User or leadership not found")},
+        tags=["Locations"],
+    )
+    @action(detail=True, methods=['post'], url_path='remove-leader')
+    def remove_leader(self, request, pk=None):
+        """Remove a leader from this area location."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.contenttypes.models import ContentType
+        from apps.organisations.models import Leader, OrganisationControl
+        
+        area = self.get_object()
+        user_id = request.data.get('user_id')
+        
+        if not user_id:
+            return Response({'error': 'user_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        area_ct = ContentType.objects.get_for_model(AreaLocation)
+        try:
+            leader = Leader.objects.get(user=user, target_type=area_ct, target_id=area.id)
+        except Leader.DoesNotExist:
+            return Response({'error': 'This user is not a leader of this area.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not request.user.is_superuser and not request.user.is_staff:
+            if not leader.organisation or not OrganisationControl.objects.filter(organisation=leader.organisation, user=request.user).exists():
+                return Response({'error': 'You must be a controller of the leader\'s organisation to remove them.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        leader.delete()
+        return Response({'message': 'Leader removed successfully.'}, status=status.HTTP_200_OK)
 
 
 # ============================================================================

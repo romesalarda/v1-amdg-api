@@ -1,6 +1,7 @@
 from .events import Event, EventType, EventStatusChoices, EventSettings
 from .permissions import EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices
 from .staff import EventStaff, EventStaffAvailability
+from .staff_invite import EventStaffInvite
 from .roles import EventRole, EventRoleAssignment, EventRoleCategoryChoices
 from .authorization import EventAuthorization, EventAuthorizationStatusChoices
 from .review import EventReview
@@ -16,6 +17,8 @@ __all__ = [
     'EventPermissionAssignment',
     'EventPermissionCategoryChoices',
     'EventStaff',
+    'EventStaffAvailability',
+    'EventStaffInvite',
     'EventRole',
     'EventRoleAssignment',
     'EventPermissionCategoryChoices',
@@ -23,7 +26,6 @@ __all__ = [
     'EventAuthorization',
     'EventAuthorizationStatusChoices',
     'EventReview',
-    'EventStaffAvailability',
     'EventQuestion',
     'EventQuestionTypeChoices',
     'EventQuestionOption',

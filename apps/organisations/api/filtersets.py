@@ -633,11 +633,13 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
 
 class LeaderFilterSet(filters.FilterSet):
     """
-    Filterset for Leader model (Organisation authority only).
+    Filterset for Leader model supporting multiple authority types.
     
     Supports filtering by:
     - User
-    - Organisation (via target_id)
+    - Organisation (via organisation field)
+    - Authority type (country, cluster, chapter, area, organisation)
+    - Authority ID (the specific location/organisation being led)
     """
     
     user = filters.NumberFilter(
@@ -646,8 +648,18 @@ class LeaderFilterSet(filters.FilterSet):
     )
     
     organisation = filters.NumberFilter(
-        method='filter_organisation',
-        help_text="Filter by organisation ID"
+        field_name='organisation',
+        help_text="Filter by organisation ID (leaders belong to)"
+    )
+    
+    authority_type = filters.CharFilter(
+        method='filter_authority_type',
+        help_text="Filter by authority type (countrylocation, clusterlocation, chapterlocation, arealocation, organisation)"
+    )
+    
+    authority_id = filters.NumberFilter(
+        method='filter_authority_id',
+        help_text="Filter by authority object ID (use with authority_type)"
     )
     
     added_by = filters.NumberFilter(
@@ -668,17 +680,35 @@ class LeaderFilterSet(filters.FilterSet):
     
     class Meta:
         model = Leader
-        fields = ['user', 'added_by']
+        fields = ['user', 'organisation', 'added_by']
     
-    def filter_organisation(self, queryset, name, value):
-        """Filter leaders by organisation."""
+    def filter_authority_type(self, queryset, name, value):
+        """Filter leaders by authority type."""
         from django.contrib.contenttypes.models import ContentType
         
         if not value:
             return queryset
         
-        org_ct = ContentType.objects.get_for_model(Organisation)
-        return queryset.filter(
-            target_type=org_ct,
-            target_id=value
-        )
+        # Map friendly names to model names
+        type_map = {
+            'country': 'countrylocation',
+            'cluster': 'clusterlocation',
+            'chapter': 'chapterlocation',
+            'area': 'arealocation',
+            'organisation': 'organisation',
+        }
+        
+        model_name = type_map.get(value.lower(), value.lower())
+        
+        try:
+            ct = ContentType.objects.get(model=model_name)
+            return queryset.filter(target_type=ct)
+        except ContentType.DoesNotExist:
+            return queryset.none()
+    
+    def filter_authority_id(self, queryset, name, value):
+        """Filter leaders by authority object ID."""
+        if not value:
+            return queryset
+        
+        return queryset.filter(target_id=value)
