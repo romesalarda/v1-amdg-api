@@ -12,6 +12,7 @@ from apps.events.api.viewsets import (
     EventRoleAssignmentViewSet,
     EventStaffViewSet,
     EventStaffAvailabilityViewSet,
+    EventStaffInviteViewSet,
     EventReviewViewSet,
     EventQuestionViewSet,
     EventQuestionOptionViewSet,
@@ -33,6 +34,7 @@ router.register(r'roles', EventRoleViewSet, basename='eventrole')
 router.register(r'role-assignments', EventRoleAssignmentViewSet, basename='eventroleassignment')
 router.register(r'staff', EventStaffViewSet, basename='eventstaff')
 router.register(r'staff-availability', EventStaffAvailabilityViewSet, basename='eventstaffavailability')
+router.register(r'staff-invites', EventStaffInviteViewSet, basename='eventstaffinvite')
 router.register(r'reviews', EventReviewViewSet, basename='eventreview')
 router.register(r'questions', EventQuestionViewSet, basename='eventquestion')
 router.register(r'question-options', EventQuestionOptionViewSet, basename='eventquestionoption')

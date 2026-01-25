@@ -111,13 +111,17 @@ class EventListSerializer(serializers.ModelSerializer):
     event_type_name = serializers.CharField(source='event_type.title', read_only=True)
     organisation_name = serializers.CharField(source='organisation.title', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    landing_images = ResourceSerializer(many=True, read_only=True)
+    main_landing_image = ResourceSerializer(read_only=True)
+
     timezone = serializers.CharField()
     _links = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
         fields = (
-            'id','event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
+            'id','event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title', 
+            'landing_images', 'main_landing_image',
             'status', 'status_display', 'event_type', 'event_type_name', 'organisation', 
             'organisation_name', 'short_description', 'start_datetime', 'end_datetime',
             'timezone', 'created_at', 'created_by', '_links'
@@ -1507,6 +1511,8 @@ class EventStaffInviteListSerializer(serializers.ModelSerializer):
     
     event_title = serializers.CharField(source='event.title', read_only=True)
     event_display_code = serializers.CharField(source='event.display_code', read_only=True)
+    event = serializers.UUIDField(source='event.event_id', read_only=True)
+
     target_user_email = serializers.EmailField(source='target_user.email', read_only=True)
     target_user_name = serializers.SerializerMethodField()
     invited_by_email = serializers.EmailField(source='invited_by.email', read_only=True)
@@ -1516,8 +1522,8 @@ class EventStaffInviteListSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventStaffInvite
         fields = (
-            'id', 'event_title', 'event_display_code',
-            'target_user_email', 'target_user_name',
+            'id', 'event_title', 'event_display_code', 'event',
+            'target_user_email', 'target_user_name', 
             'invited_by_email', 'accepted', 'added_at', 'expires_at',
             'is_active', 'is_valid', '_links'
         )
