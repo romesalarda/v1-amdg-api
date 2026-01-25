@@ -903,7 +903,8 @@ class EventViewSet(viewsets.ModelViewSet):
         summary="Assign Permission to User",
         description=(
             "Assign a specific permission to a user for this event, granting them access to perform specific actions. "
-            "Creates an EventPermissionAssignment linking user, event, and permission. "
+            "Creates an EventPermissionAssignment linking user, event, and permission with CRUD flags. "
+            "CRUD flags control granular access: read_only (if True, only read access), allow_create, allow_update, allow_delete. "
             "Prevents duplicate assignments to the same user for the same permission. "
             "Only event creators, staff, and superusers can assign permissions."
         ),
@@ -913,7 +914,11 @@ class EventViewSet(viewsets.ModelViewSet):
                 'type': 'object',
                 'properties': {
                     'user_id': {'type': 'integer', 'description': 'User ID'},
-                    'permission_id': {'type': 'integer', 'description': 'Permission ID'}
+                    'permission_id': {'type': 'integer', 'description': 'Permission ID'},
+                    'read_only': {'type': 'boolean', 'description': 'If True, user can only READ (other flags ignored)', 'default': False},
+                    'allow_create': {'type': 'boolean', 'description': 'Allow CREATE operations', 'default': False},
+                    'allow_update': {'type': 'boolean', 'description': 'Allow UPDATE operations', 'default': False},
+                    'allow_delete': {'type': 'boolean', 'description': 'Allow DELETE operations', 'default': False}
                 },
                 'required': ['user_id', 'permission_id']
             }
@@ -939,6 +944,10 @@ class EventViewSet(viewsets.ModelViewSet):
         
         user_id = request.data.get('user_id')
         permission_id = request.data.get('permission_id')
+        read_only = request.data.get('read_only', False)
+        allow_create = request.data.get('allow_create', False)
+        allow_update = request.data.get('allow_update', False)
+        allow_delete = request.data.get('allow_delete', False)
         
         if not user_id or not permission_id:
             return Response(
@@ -960,16 +969,27 @@ class EventViewSet(viewsets.ModelViewSet):
             event=event,
             user=user,
             permission=permission,
-            defaults={'assigned_by': request.user}
+            defaults={
+                'assigned_by': request.user,
+                'read_only': read_only,
+                'allow_create': allow_create,
+                'allow_update': allow_update,
+                'allow_delete': allow_delete
+            }
         )
         
         if not created:
-            return Response(
-                {"detail": "This permission is already assigned to the user for this event"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            # Update existing assignment with new CRUD flags
+            assignment.read_only = read_only
+            assignment.allow_create = allow_create
+            assignment.allow_update = allow_update
+            assignment.allow_delete = allow_delete
+            assignment.save()
+            
+            serializer = EventPermissionAssignmentSerializer(assignment, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
         
-        serializer = EventPermissionAssignmentSerializer(assignment)
+        serializer = EventPermissionAssignmentSerializer(assignment, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     
     @extend_schema(
@@ -1022,72 +1042,270 @@ class EventViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
     
     @extend_schema(
-        summary="Check User Permissions",
+        summary="Check User Permissions for Event",
         description=(
-            "Check what permissions a user has for this event including ownership status, staff membership, and assigned permissions. "
-            "Returns a comprehensive overview of user's access rights for the event. "
-            "If no user_id is provided, checks permissions for the currently authenticated user."
+            "Get comprehensive permission information for a user on this event. "
+            "Returns detailed access rights including:\n\n"
+            "**User Relationships:**\n"
+            "- Whether the user is the event creator\n"
+            "- Whether the user is an event staff member\n"
+            "- Whether the user is a Django admin/staff\n\n"
+            "**Computed Permissions:**\n"
+            "- `can_manage_event`: Edit event details, settings, and configuration\n"
+            "- `can_manage_staff`: Add/remove staff members and manage team\n"
+            "- `can_manage_invites`: Create and manage staff invitations\n"
+            "- `can_manage_resources`: Add/remove event resources (documents, images, links)\n"
+            "- `can_delete_event`: Soft delete or restore the event\n\n"
+            "**Explicit Assignments:**\n"
+            "- List of specific permissions explicitly assigned to the user\n"
+            "- List of roles assigned to the user (which grant bundles of permissions)\n\n"
+            "**Usage:**\n"
+            "- If `user_id` query param is provided, checks permissions for that user (requires admin/owner access)\n"
+            "- If no `user_id` provided, checks permissions for the currently authenticated user\n"
+            "- Useful for UI to show/hide management buttons based on user access\n"
+            "- Helps frontend determine what actions are available to the user"
         ),
-        tags=["Events"],
+        tags=["Events", "Permissions"],
         parameters=[
-            OpenApiParameter(name='user_id', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY,
-                           description='User ID to check permissions for. If not provided, checks current user.')
+            OpenApiParameter(
+                name='user_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Optional: Check permissions for a specific user ID. If omitted, checks current authenticated user.',
+                required=False
+            )
         ],
         responses={
-            200: {
-                'type': 'object',
-                'properties': {
-                    'user_id': {'type': 'integer'},
-                    'is_owner': {'type': 'boolean'},
-                    'is_staff_member': {'type': 'boolean'},
-                    'permissions': {
-                        'type': 'array',
-                        'items': {'type': 'object'}
-                    }
-                }
-            }
+            200: OpenApiResponse(
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'user_id': {
+                            'type': 'integer',
+                            'description': 'ID of the user whose permissions were checked'
+                        },
+                        'user_email': {
+                            'type': 'string',
+                            'description': 'Email address of the user'
+                        },
+                        'user_name': {
+                            'type': 'string',
+                            'description': 'Full name of the user'
+                        },
+                        'is_creator': {
+                            'type': 'boolean',
+                            'description': 'Whether the user created this event'
+                        },
+                        'is_staff_member': {
+                            'type': 'boolean',
+                            'description': 'Whether the user is an event staff member'
+                        },
+                        'is_admin': {
+                            'type': 'boolean',
+                            'description': 'Whether the user is a Django staff/superuser'
+                        },
+                        'can_manage_event': {
+                            'type': 'boolean',
+                            'description': 'Can edit event details and settings'
+                        },
+                        'can_manage_staff': {
+                            'type': 'boolean',
+                            'description': 'Can add/remove staff members'
+                        },
+                        'can_manage_invites': {
+                            'type': 'boolean',
+                            'description': 'Can create/manage staff invitations'
+                        },
+                        'can_manage_resources': {
+                            'type': 'boolean',
+                            'description': 'Can add/remove resources (images, documents, links)'
+                        },
+                        'can_delete_event': {
+                            'type': 'boolean',
+                            'description': 'Can soft delete or restore the event'
+                        },
+                        'assigned_permissions': {
+                            'type': 'array',
+                            'items': {
+                                'type': 'object',
+                                'properties': {
+                                    'id': {'type': 'integer'},
+                                    'permission_name': {'type': 'string'},
+                                    'permission_code': {'type': 'string'},
+                                    'permission_category': {'type': 'string'},
+                                    'assigned_at': {'type': 'string', 'format': 'date-time'},
+                                    'assigned_by_email': {'type': 'string'}
+                                }
+                            },
+                            'description': 'List of explicitly assigned permissions with details'
+                        },
+                        'assigned_roles': {
+                            'type': 'array',
+                            'items': {
+                                'type': 'object',
+                                'properties': {
+                                    'id': {'type': 'integer'},
+                                    'role_name': {'type': 'string'},
+                                    'role_code': {'type': 'string'},
+                                    'role_category': {'type': 'string'},
+                                    'assigned_at': {'type': 'string', 'format': 'date-time'},
+                                    'assigned_by_email': {'type': 'string'}
+                                }
+                            },
+                            'description': 'List of assigned roles with details'
+                        }
+                    },
+                    'required': [
+                        'user_id', 'user_email', 'is_creator', 'is_staff_member', 'is_admin',
+                        'can_manage_event', 'can_manage_staff', 'can_manage_invites',
+                        'can_manage_resources', 'can_delete_event', 'assigned_permissions', 'assigned_roles'
+                    ]
+                },
+                description='Comprehensive permission information for the user'
+            ),
+            401: OpenApiResponse(
+                description='Authentication required. User must be logged in to check permissions'
+            ),
+            403: OpenApiResponse(
+                description='Permission denied. Only admins and event creators can check permissions for other users'
+            ),
+            404: OpenApiResponse(
+                description='User not found with the specified user_id'
+            )
         }
     )
     @action(detail=True, methods=['get'], url_path='check-permissions')
     def check_user_permissions(self, request, event_id=None):
+        """
+        Check comprehensive permissions for a user on this event.
+        
+        Returns detailed information about user's access rights including:
+        - Basic relationships (creator, staff, admin)
+        - Computed permissions (can manage various aspects)
+        - Explicitly assigned permissions and roles
+        """
         from django.contrib.auth import get_user_model
         
         event = self.get_object()
         
+        # Determine which user to check
         user_id = request.query_params.get('user_id')
         if user_id:
+            # Only admins and event creators can check other users' permissions
+            if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+                return Response(
+                    {"detail": "You don't have permission to check other users' permissions"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
             User = get_user_model()
             try:
                 user = User.objects.get(id=user_id)
             except User.DoesNotExist:
-                return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+                return Response(
+                    {"detail": "User not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
         else:
+            if not request.user.is_authenticated:
+                return Response(
+                    {"detail": "Authentication required"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
             user = request.user
         
-        is_owner = event.created_by == user
-        is_staff_member = event.staff_members.filter(user=user).exists()
+        # Check basic relationships
+        is_creator = user == event.created_by
+        is_admin = user.is_staff or user.is_superuser
+        is_staff_member = event.staff_members.filter(user=user).exists() if not is_creator else True
         
+        # Compute derived permissions
+        can_manage = is_creator or is_staff_member or is_admin
+        
+        # Get explicitly assigned permissions with details
         permission_assignments = EventPermissionAssignment.objects.filter(
-            event=event, user=user
-        ).select_related('permission')
+            event=event,
+            user=user
+        ).select_related('permission', 'assigned_by')
         
-        permissions_data = EventPermissionAssignmentSerializer(permission_assignments, many=True).data
+        assigned_permissions = []
+        for assignment in permission_assignments:
+            # Determine effective permissions based on read_only flag
+            if assignment.read_only:
+                effective_access = {
+                    'can_read': True,
+                    'can_create': False,
+                    'can_update': False,
+                    'can_delete': False
+                }
+            else:
+                effective_access = {
+                    'can_read': assignment.allow_update or assignment.allow_delete or assignment.allow_create,
+                    'can_create': assignment.allow_create,
+                    'can_update': assignment.allow_update,
+                    'can_delete': assignment.allow_delete
+                }
+            
+            assigned_permissions.append({
+                'id': assignment.id,
+                'permission_name': assignment.permission.name,
+                'permission_code': assignment.permission.code,
+                'permission_category': assignment.permission.category,
+                'permission_description': assignment.permission.description,
+                'read_only': assignment.read_only,
+                'allow_create': assignment.allow_create,
+                'allow_update': assignment.allow_update,
+                'allow_delete': assignment.allow_delete,
+                'has_full_access': assignment.has_full_access,
+                'effective_access': effective_access,
+                'assigned_at': assignment.assigned_at,
+                'assigned_by_email': assignment.assigned_by.email if assignment.assigned_by else None,
+                'assigned_by_name': assignment.assigned_by.get_full_name() if assignment.assigned_by else None
+            })
+        
+        # Get assigned roles with details
+        role_assignments = EventRoleAssignment.objects.filter(
+            event=event,
+            user=user
+        ).select_related('role', 'assigned_by')
+        
+        assigned_roles = [
+            {
+                'id': assignment.id,
+                'role_name': assignment.role.name,
+                'role_code': assignment.role.code,
+                'role_category': assignment.role.category,
+                'role_description': assignment.role.description,
+                'assigned_at': assignment.assigned_at,
+                'assigned_by_email': assignment.assigned_by.email if assignment.assigned_by else None,
+                'assigned_by_name': assignment.assigned_by.get_full_name() if assignment.assigned_by else None
+            }
+            for assignment in role_assignments
+        ]
         
         return Response({
             'user_id': user.id,
             'user_email': user.email,
-            'is_owner': is_owner,
+            'user_name': user.get_full_name(),
+            'is_creator': is_creator,
             'is_staff_member': is_staff_member,
-            'permissions': permissions_data
+            'is_admin': is_admin,
+            'can_manage_event': can_manage,
+            'can_manage_staff': can_manage,
+            'can_manage_invites': can_manage,
+            'can_manage_resources': can_manage,
+            'can_delete_event': can_manage,
+            'assigned_permissions': assigned_permissions,
+            'assigned_roles': assigned_roles
         })
     
     # ====== Staff Invites Actions ======
     
     @extend_schema(
-        summary="List or Create Event Staff Invites",
+        methods=['GET'],
+        operation_id='event_staff_invites_list',
+        summary="List Event Staff Invites",
         description=(
-            "**HTTP Methods:**\n\n"
-            "**GET** - List Event Staff Invites:\n"
             "Retrieve a paginated list of all staff invites for this specific event with comprehensive filtering capabilities. "
             "Permission-based visibility ensures users only see relevant invites:\n"
             "- Event creators and existing staff members can view ALL invites for their event\n"
@@ -1103,31 +1321,7 @@ class EventViewSet(viewsets.ModelViewSet):
             "- Target user information (email, name)\n"
             "- Inviter information (who sent the invite)\n"
             "- Validity status (is_valid property)\n"
-            "- HATEOAS links for invite management and acceptance\n\n"
-            "---\n\n"
-            "**POST** - Create Event Staff Invite:\n"
-            "Create a new staff invite to invite a user to join the event staff team. "
-            "The invite is sent to a target user who can then accept it to become an event staff member.\n\n"
-            "**Required Fields:**\n"
-            "- `target_user` (integer): ID of the user being invited\n\n"
-            "**Optional Fields:**\n"
-            "- `expires_at` (datetime): When the invite expires (ISO 8601 format). If omitted, invite never expires\n\n"
-            "**Permissions:**\n"
-            "Only event creators and existing event staff members can create invites. "
-            "Django staff and superusers also have permission.\n\n"
-            "**Validations:**\n"
-            "- Target user must exist in the system\n"
-            "- Target user cannot already have an active invite for this event\n"
-            "- Target user cannot already be an event staff member\n"
-            "- Expiry date (if provided) must be in the future\n"
-            "- The authenticated user is automatically recorded as the inviter\n\n"
-            "**Workflow:**\n"
-            "1. Event creator/staff creates invite\n"
-            "2. Target user receives notification (outside API scope)\n"
-            "3. Target user can view invite via GET request or my-invites action\n"
-            "4. Target user accepts invite via accept action\n"
-            "5. EventStaff record is automatically created\n"
-            "6. Invite is marked as accepted and inactive"
+            "- HATEOAS links for invite management and acceptance"
         ),
         tags=["Events", "Event Staff Invites"],
         parameters=[
@@ -1135,7 +1329,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 name='event_id',
                 type=OpenApiTypes.UUID,
                 location=OpenApiParameter.PATH,
-                description='UUID of the event to list/create invites for',
+                description='UUID of the event to list invites for',
                 required=True
             ),
             OpenApiParameter(
@@ -1184,7 +1378,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 required=False
             ),
         ],
-        request=EventStaffInviteSerializer,
         responses={
             200: OpenApiResponse(
                 response=EventStaffInviteListSerializer(many=True),
@@ -1194,6 +1387,57 @@ class EventViewSet(viewsets.ModelViewSet):
                     'timestamps, and HATEOAS links for related actions'
                 )
             ),
+            401: OpenApiResponse(
+                description='Authentication required. User must be logged in to list invites'
+            ),
+            403: OpenApiResponse(
+                description='Permission denied. User is not event creator, staff, or target user'
+            ),
+            404: OpenApiResponse(
+                description='Event not found with the specified event_id'
+            )
+        }
+    )
+    @extend_schema(
+        methods=['POST'],
+        operation_id='event_staff_invites_create',
+        summary="Create Event Staff Invite",
+        description=(
+            "Create a new staff invite to invite a user to join the event staff team. "
+            "The invite is sent to a target user who can then accept it to become an event staff member.\n\n"
+            "**Required Fields:**\n"
+            "- `target_user` (integer): ID of the user being invited\n\n"
+            "**Optional Fields:**\n"
+            "- `expires_at` (datetime): When the invite expires (ISO 8601 format). If omitted, invite never expires\n\n"
+            "**Permissions:**\n"
+            "Only event creators and existing event staff members can create invites. "
+            "Django staff and superusers also have permission.\n\n"
+            "**Validations:**\n"
+            "- Target user must exist in the system\n"
+            "- Target user cannot already have an active invite for this event\n"
+            "- Target user cannot already be an event staff member\n"
+            "- Expiry date (if provided) must be in the future\n"
+            "- The authenticated user is automatically recorded as the inviter\n\n"
+            "**Workflow:**\n"
+            "1. Event creator/staff creates invite\n"
+            "2. Target user receives notification (outside API scope)\n"
+            "3. Target user can view invite via GET request or my-invites action\n"
+            "4. Target user accepts invite via accept action\n"
+            "5. EventStaff record is automatically created\n"
+            "6. Invite is marked as accepted and inactive"
+        ),
+        tags=["Events", "Event Staff Invites"],
+        parameters=[
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+                description='UUID of the event to create invite for',
+                required=True
+            ),
+        ],
+        request=EventStaffInviteSerializer,
+        responses={
             201: OpenApiResponse(
                 response=EventStaffInviteSerializer,
                 description=(
@@ -1213,15 +1457,10 @@ class EventViewSet(viewsets.ModelViewSet):
                 )
             ),
             401: OpenApiResponse(
-                description='Authentication required. User must be logged in to list or create invites'
+                description='Authentication required. User must be logged in to create invites'
             ),
             403: OpenApiResponse(
-                description=(
-                    'Permission denied. Common causes:\n'
-                    '- For GET: User is not event creator, staff, or target user\n'
-                    '- For POST: User is not event creator or existing staff member\n'
-                    '- User lacks necessary permissions to perform the action'
-                )
+                description='Permission denied. User is not event creator or existing staff member'
             ),
             404: OpenApiResponse(
                 description='Event not found with the specified event_id'
@@ -1299,10 +1538,10 @@ class EventViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
     
     @extend_schema(
-        summary="Retrieve, Update, or Delete a Specific Event Staff Invite",
+        methods=['GET'],
+        operation_id='event_staff_invite_retrieve',
+        summary="Retrieve Staff Invite Details",
         description=(
-            "**HTTP Methods:**\n\n"
-            "**GET** - Retrieve Staff Invite Details:\n"
             "Fetch complete details for a specific event staff invite including:\n"
             "- Full invite metadata (ID, status, created/updated timestamps)\n"
             "- Complete event information (ID, name, description, dates)\n"
@@ -1314,47 +1553,7 @@ class EventViewSet(viewsets.ModelViewSet):
             "**Permissions:** Users can retrieve invites if they are:\n"
             "- The event creator or existing staff member (can see all invites)\n"
             "- The target user of the invite (can see their own invite)\n"
-            "- Django staff or superuser (full visibility)\n\n"
-            "---\n\n"
-            "**PUT** - Full Update (Replace) Staff Invite:\n"
-            "Completely replace an existing staff invite with new data. All fields must be provided.\n\n"
-            "**Required Fields:**\n"
-            "- `target_user` (integer): New target user ID\n"
-            "- `expires_at` (datetime or null): New expiry date (ISO 8601) or null for no expiry\n\n"
-            "**Behavior:**\n"
-            "- Replaces ALL editable fields with provided values\n"
-            "- Read-only fields (event, created_at, updated_at) are preserved\n"
-            "- Can change target user if new user doesn't have existing invite\n"
-            "- Can modify expiry date or remove it (set to null)\n"
-            "- Cannot modify already accepted invites\n\n"
-            "---\n\n"
-            "**PATCH** - Partial Update Staff Invite:\n"
-            "Update specific fields of an existing staff invite without replacing the entire object.\n\n"
-            "**Optional Fields** (provide only what you want to change):\n"
-            "- `target_user` (integer): Change the target user\n"
-            "- `expires_at` (datetime or null): Modify expiry date or remove expiry\n\n"
-            "**Behavior:**\n"
-            "- Only provided fields are updated\n"
-            "- Unprovided fields remain unchanged\n"
-            "- Useful for extending expiry without changing target user\n"
-            "- Cannot modify already accepted invites\n\n"
-            "---\n\n"
-            "**DELETE** - Remove Staff Invite:\n"
-            "Permanently delete a staff invite from the system. This action is irreversible.\n\n"
-            "**Use Cases:**\n"
-            "- Rescind an invite before it's accepted\n"
-            "- Clean up expired or invalid invites\n"
-            "- Remove duplicate or erroneous invites\n\n"
-            "**Behavior:**\n"
-            "- Completely removes invite record from database\n"
-            "- Cannot be undone\n"
-            "- Safe to delete accepted invites (doesn't affect EventStaff membership)\n"
-            "- No response body on success (204 status)\n\n"
-            "---\n\n"
-            "**Common Permissions (All Methods):**\n"
-            "Only event creators and existing event staff members can modify or delete invites. "
-            "Django staff and superusers also have full access. "
-            "Regular users (including target users) cannot modify or delete invites."
+            "- Django staff or superuser (full visibility)"
         ),
         tags=["Events", "Event Staff Invites"],
         parameters=[
@@ -1369,7 +1568,66 @@ class EventViewSet(viewsets.ModelViewSet):
                 name='invite_id',
                 type=OpenApiTypes.INT,
                 location=OpenApiParameter.PATH,
-                description='Integer ID of the specific staff invite to retrieve, update, or delete',
+                description='Integer ID of the specific staff invite to retrieve',
+                required=True
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                response=EventStaffInviteSerializer,
+                description=(
+                    'Successfully retrieved invite. Returns complete invite details with all fields including: '
+                    'invite ID, event information, target user details, inviter details, acceptance status, '
+                    'validity status, timestamps, expiry date, and HATEOAS links'
+                )
+            ),
+            401: OpenApiResponse(
+                description='Authentication required. User must be logged in to access invites'
+            ),
+            403: OpenApiResponse(
+                description='Permission denied. User is not event creator, staff, or the target user'
+            ),
+            404: OpenApiResponse(
+                description=(
+                    'Not found. Either the event does not exist with the specified event_id, '
+                    'or the invite does not exist with the specified invite_id for this event'
+                )
+            )
+        }
+    )
+    @extend_schema(
+        methods=['PUT'],
+        operation_id='event_staff_invite_update',
+        summary="Full Update Staff Invite",
+        description=(
+            "Completely replace an existing staff invite with new data. All fields must be provided.\n\n"
+            "**Required Fields:**\n"
+            "- `target_user` (integer): New target user ID\n"
+            "- `expires_at` (datetime or null): New expiry date (ISO 8601) or null for no expiry\n\n"
+            "**Behavior:**\n"
+            "- Replaces ALL editable fields with provided values\n"
+            "- Read-only fields (event, created_at, updated_at) are preserved\n"
+            "- Can change target user if new user doesn't have existing invite\n"
+            "- Can modify expiry date or remove it (set to null)\n"
+            "- Cannot modify already accepted invites\n\n"
+            "**Permissions:**\n"
+            "Only event creators and existing event staff members can update invites. "
+            "Django staff and superusers also have full access."
+        ),
+        tags=["Events", "Event Staff Invites"],
+        parameters=[
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+                description='UUID of the event containing the invite',
+                required=True
+            ),
+            OpenApiParameter(
+                name='invite_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='Integer ID of the specific staff invite to update',
                 required=True
             ),
         ],
@@ -1377,44 +1635,137 @@ class EventViewSet(viewsets.ModelViewSet):
         responses={
             200: OpenApiResponse(
                 response=EventStaffInviteSerializer,
-                description=(
-                    'Successfully retrieved or updated invite. Returns complete invite details with all fields including: '
-                    'invite ID, event information, target user details, inviter details, acceptance status, '
-                    'validity status, timestamps, expiry date, and HATEOAS links'
-                )
-            ),
-            204: OpenApiResponse(
-                description=(
-                    'Successfully deleted invite. No response body. The invite has been permanently removed from the system'
-                )
+                description='Successfully updated invite. Returns complete updated invite details'
             ),
             400: OpenApiResponse(
                 description=(
-                    'Bad request - validation errors occurred during update. Common causes:\n'
+                    'Bad request - validation errors occurred. Common causes:\n'
                     '- Attempting to modify an already-accepted invite\n'
                     '- New target user already has an active invite for this event\n'
                     '- New target user is already an event staff member\n'
                     '- New expiry date is in the past\n'
-                    '- Invalid field values or formats\n'
-                    '- Required fields missing (for PUT only)'
+                    '- Required fields missing'
                 )
             ),
             401: OpenApiResponse(
-                description='Authentication required. User must be logged in to access, modify, or delete invites'
+                description='Authentication required. User must be logged in'
             ),
             403: OpenApiResponse(
-                description=(
-                    'Permission denied. Common causes:\n'
-                    '- For GET: User is not event creator, staff, or the target user\n'
-                    '- For PUT/PATCH/DELETE: User is not event creator or existing staff member\n'
-                    '- Insufficient permissions to perform the requested action'
-                )
+                description='Permission denied. User is not event creator or existing staff member'
             ),
             404: OpenApiResponse(
+                description='Invite not found'
+            )
+        }
+    )
+    @extend_schema(
+        methods=['PATCH'],
+        operation_id='event_staff_invite_partial_update',
+        summary="Partial Update Staff Invite",
+        description=(
+            "Update specific fields of an existing staff invite without replacing the entire object.\n\n"
+            "**Optional Fields** (provide only what you want to change):\n"
+            "- `target_user` (integer): Change the target user\n"
+            "- `expires_at` (datetime or null): Modify expiry date or remove expiry\n\n"
+            "**Behavior:**\n"
+            "- Only provided fields are updated\n"
+            "- Unprovided fields remain unchanged\n"
+            "- Useful for extending expiry without changing target user\n"
+            "- Cannot modify already accepted invites\n\n"
+            "**Permissions:**\n"
+            "Only event creators and existing event staff members can update invites. "
+            "Django staff and superusers also have full access."
+        ),
+        tags=["Events", "Event Staff Invites"],
+        parameters=[
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+                description='UUID of the event containing the invite',
+                required=True
+            ),
+            OpenApiParameter(
+                name='invite_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='Integer ID of the specific staff invite to update',
+                required=True
+            ),
+        ],
+        request=EventStaffInviteSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=EventStaffInviteSerializer,
+                description='Successfully updated invite. Returns complete updated invite details'
+            ),
+            400: OpenApiResponse(
                 description=(
-                    'Not found. Either the event does not exist with the specified event_id, '
-                    'or the invite does not exist with the specified invite_id for this event'
+                    'Bad request - validation errors occurred. Common causes:\n'
+                    '- Attempting to modify an already-accepted invite\n'
+                    '- New target user already has an active invite for this event\n'
+                    '- New expiry date is in the past'
                 )
+            ),
+            401: OpenApiResponse(
+                description='Authentication required. User must be logged in'
+            ),
+            403: OpenApiResponse(
+                description='Permission denied. User is not event creator or existing staff member'
+            ),
+            404: OpenApiResponse(
+                description='Invite not found'
+            )
+        }
+    )
+    @extend_schema(
+        methods=['DELETE'],
+        operation_id='event_staff_invite_delete',
+        summary="Delete Staff Invite",
+        description=(
+            "Permanently delete a staff invite from the system. This action is irreversible.\n\n"
+            "**Use Cases:**\n"
+            "- Rescind an invite before it's accepted\n"
+            "- Clean up expired or invalid invites\n"
+            "- Remove duplicate or erroneous invites\n\n"
+            "**Behavior:**\n"
+            "- Completely removes invite record from database\n"
+            "- Cannot be undone\n"
+            "- Safe to delete accepted invites (doesn't affect EventStaff membership)\n"
+            "- No response body on success (204 status)\n\n"
+            "**Permissions:**\n"
+            "Only event creators and existing event staff members can delete invites. "
+            "Django staff and superusers also have full access."
+        ),
+        tags=["Events", "Event Staff Invites"],
+        parameters=[
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+                description='UUID of the event containing the invite',
+                required=True
+            ),
+            OpenApiParameter(
+                name='invite_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='Integer ID of the specific staff invite to delete',
+                required=True
+            ),
+        ],
+        responses={
+            204: OpenApiResponse(
+                description='Successfully deleted invite. The invite has been permanently removed from the system'
+            ),
+            401: OpenApiResponse(
+                description='Authentication required. User must be logged in'
+            ),
+            403: OpenApiResponse(
+                description='Permission denied. User is not event creator or existing staff member'
+            ),
+            404: OpenApiResponse(
+                description='Invite not found'
             )
         }
     )

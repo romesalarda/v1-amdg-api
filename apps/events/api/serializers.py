@@ -189,6 +189,9 @@ class EventDetailSerializer(serializers.ModelSerializer):
     main_landing_image = ResourceSerializer(read_only=True)
     is_deleted = serializers.SerializerMethodField()
     
+    # User permissions context
+    user_permissions = serializers.SerializerMethodField()
+    
     _links = serializers.SerializerMethodField()
     
     class Meta:
@@ -203,7 +206,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'settings', 'duration_days', 'is_ongoing', 'is_approved', 
             'can_participants_register', 'number_of_attendees',
             'availability_windows', 'resources', 'landing_images', 'main_landing_image',
-            'deleted_at', 'deleted_by', 'is_deleted',
+            'deleted_at', 'deleted_by', 'is_deleted', 'user_permissions',
             '_links'
         )
         read_only_fields = (
@@ -224,6 +227,151 @@ class EventDetailSerializer(serializers.ModelSerializer):
     def get_is_deleted(self, obj):
         """Check if the event is soft-deleted."""
         return obj.deleted_at is not None
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'is_creator': {
+                'type': 'boolean',
+                'description': 'Whether the current user is the event creator'
+            },
+            'is_staff_member': {
+                'type': 'boolean',
+                'description': 'Whether the current user is an event staff member'
+            },
+            'is_admin': {
+                'type': 'boolean',
+                'description': 'Whether the current user is a Django staff/superuser'
+            },
+            'can_manage_event': {
+                'type': 'boolean',
+                'description': 'Whether the user can edit event details (creator, staff, or admin)'
+            },
+            'can_manage_staff': {
+                'type': 'boolean',
+                'description': 'Whether the user can add/remove staff members'
+            },
+            'can_manage_invites': {
+                'type': 'boolean',
+                'description': 'Whether the user can create/manage staff invites'
+            },
+            'can_manage_resources': {
+                'type': 'boolean',
+                'description': 'Whether the user can add/remove resources'
+            },
+            'can_delete_event': {
+                'type': 'boolean',
+                'description': 'Whether the user can soft delete the event'
+            },
+            'assigned_permissions': {
+                'type': 'array',
+                'items': {'type': 'string'},
+                'description': 'List of permission codes explicitly assigned to the user for this event'
+            },
+            'assigned_roles': {
+                'type': 'array',
+                'items': {'type': 'string'},
+                'description': 'List of role names assigned to the user for this event'
+            }
+        },
+        'required': [
+            'is_creator', 'is_staff_member', 'is_admin', 'can_manage_event',
+            'can_manage_staff', 'can_manage_invites', 'can_manage_resources',
+            'can_delete_event', 'assigned_permissions', 'assigned_roles'
+        ]
+    })
+    def get_user_permissions(self, obj):
+        """
+        Return comprehensive permission information for the current user.
+        
+        This includes:
+        - User's relationship to the event (creator, staff, admin)
+        - Computed permissions based on those relationships
+        - Explicitly assigned permissions and roles with CRUD details
+        """
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return {
+                'is_creator': False,
+                'is_staff_member': False,
+                'is_admin': False,
+                'can_manage_event': False,
+                'can_manage_staff': False,
+                'can_manage_invites': False,
+                'can_manage_resources': False,
+                'can_delete_event': False,
+                'assigned_permissions': [],
+                'assigned_roles': []
+            }
+        
+        user = request.user
+        
+        # Check basic relationships
+        is_creator = user == obj.created_by
+        is_admin = user.is_staff or user.is_superuser
+        is_staff_member = obj.staff_members.filter(user=user).exists() if not is_creator else True
+        
+        # Compute derived permissions
+        can_manage = is_creator or is_staff_member or is_admin
+        
+        # Get explicitly assigned permissions with CRUD details
+        permission_assignments = EventPermissionAssignment.objects.filter(
+            event=obj,
+            user=user
+        ).select_related('permission')
+        
+        assigned_permissions = []
+        for assignment in permission_assignments:
+            # Determine effective permissions based on read_only flag
+            if assignment.read_only:
+                # read_only takes precedence - only read access
+                effective_access = {
+                    'can_read': True,
+                    'can_create': False,
+                    'can_update': False,
+                    'can_delete': False
+                }
+            else:
+                # Use individual CRUD flags
+                effective_access = {
+                    'can_read': assignment.allow_update or assignment.allow_delete or assignment.allow_create,  # Implicit read if any write
+                    'can_create': assignment.allow_create,
+                    'can_update': assignment.allow_update,
+                    'can_delete': assignment.allow_delete
+                }
+            
+            assigned_permissions.append({
+                'permission_code': assignment.permission.code,
+                'permission_name': assignment.permission.name,
+                'permission_category': assignment.permission.category,
+                'read_only': assignment.read_only,
+                'allow_update': assignment.allow_update,
+                'allow_delete': assignment.allow_delete,
+                'allow_create': assignment.allow_create,
+                'effective_access': effective_access,
+                'has_full_access': assignment.has_full_access
+            })
+        
+        # Get assigned roles
+        assigned_roles = list(
+            EventRoleAssignment.objects.filter(
+                event=obj,
+                user=user
+            ).values_list('role__name', flat=True)
+        )
+        
+        return {
+            'is_creator': is_creator,
+            'is_staff_member': is_staff_member,
+            'is_admin': is_admin,
+            'can_manage_event': can_manage,
+            'can_manage_staff': can_manage,
+            'can_manage_invites': can_manage,
+            'can_manage_resources': can_manage,
+            'can_delete_event': can_manage,
+            'assigned_permissions': assigned_permissions,
+            'assigned_roles': assigned_roles
+        }
     
     @extend_schema_field({
         'type': 'object',
@@ -500,18 +648,27 @@ class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
     event_title = serializers.CharField(source='event.title', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     permission_name = serializers.CharField(source='permission.name', read_only=True)
+    permission_code = serializers.CharField(source='permission.code', read_only=True)
+    permission_category = serializers.CharField(source='permission.category', read_only=True)
     assigned_by_email = serializers.EmailField(source='assigned_by.email', read_only=True)
+    has_full_access = serializers.BooleanField(read_only=True)
     _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventPermissionAssignment
         fields = (
             'id', 'event', 'event_title', 'user', 'user_email', 'permission',
-            'permission_name', 'assigned_at', 'assigned_by', 'assigned_by_email', '_links'
+            'permission_name', 'permission_code', 'permission_category',
+            'read_only', 'allow_update', 'allow_delete', 'allow_create', 'has_full_access',
+            'assigned_at', 'assigned_by', 'assigned_by_email', '_links'
         )
-        read_only_fields = ('id', 'assigned_at', 'assigned_by')
+        read_only_fields = ('id', 'assigned_at', 'assigned_by', 'has_full_access')
         extra_kwargs = {
             'assigned_at': {'default': None},
+            'read_only': {'default': False},
+            'allow_update': {'default': False},
+            'allow_delete': {'default': False},
+            'allow_create': {'default': False},
         }
     
     @extend_schema_field({
@@ -559,6 +716,7 @@ class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
         return links
     
     def validate(self, data):
+        # Check for duplicate permission assignment
         if self.instance is None:
             if EventPermissionAssignment.objects.filter(
                 event=data.get('event'),
@@ -566,6 +724,19 @@ class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
                 permission=data.get('permission')
             ).exists():
                 raise serializers.ValidationError("This permission is already assigned to this user for this event.")
+        
+        # Validate CRUD flags logic: if read_only is True, warn about other flags
+        if data.get('read_only', False):
+            if data.get('allow_update') or data.get('allow_delete') or data.get('allow_create'):
+                # We'll allow it but the read_only will take precedence
+                pass
+        else:
+            # If not read_only and all other flags are False, user has no access
+            if not any([data.get('allow_update'), data.get('allow_delete'), data.get('allow_create')]):
+                # This is valid - it means the permission is assigned but grants no access
+                # Useful for explicitly denying access
+                pass
+        
         return data
 
 

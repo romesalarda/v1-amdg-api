@@ -7,6 +7,7 @@ from HTTP-only cookies instead of the Authorization header.
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed
 from django.conf import settings
+from drf_spectacular.extensions import OpenApiAuthenticationExtension
 
 
 class JWTCookieAuthentication(JWTAuthentication):
@@ -54,3 +55,33 @@ class JWTCookieAuthentication(JWTAuthentication):
             return self.get_user(validated_token), validated_token
         except InvalidToken as e:
             raise InvalidToken(f"Token from cookie is invalid: {e}")
+
+
+class JWTCookieAuthenticationScheme(OpenApiAuthenticationExtension):
+    """
+    OpenAPI schema extension for JWTCookieAuthentication.
+    
+    This registers the JWTCookieAuthentication class with drf-spectacular
+    to properly document the authentication mechanism in the OpenAPI schema.
+    """
+    target_class = 'core.authentication.JWTCookieAuthentication'
+    name = 'jwtCookieAuth'
+    
+    def get_security_definition(self, auto_schema):
+        """
+        Define the security scheme for OpenAPI documentation.
+        
+        Documents both cookie-based and header-based JWT authentication methods.
+        """
+        return {
+            'type': 'http',
+            'scheme': 'bearer',
+            'bearerFormat': 'JWT',
+            'description': (
+                'JWT authentication using HTTP-only cookies or Authorization header. '
+                'The access token can be provided in two ways:\n\n'
+                '1. **Cookie (Recommended)**: HTTP-only cookie named "access" (automatically handled by browser)\n'
+                '2. **Header**: Authorization header with format: `Bearer <token>`\n\n'
+                'Cookie-based authentication is more secure as it cannot be accessed by JavaScript.'
+            )
+        }

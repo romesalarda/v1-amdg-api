@@ -105,8 +105,8 @@ class EventPermissionAdmin(admin.ModelAdmin):
 
 @admin.register(EventPermissionAssignment)
 class EventPermissionAssignmentAdmin(admin.ModelAdmin):
-    list_display = ('event', 'user', 'permission', 'assigned_by', 'assigned_at')
-    list_filter = ('assigned_at', 'permission__category')
+    list_display = ('event', 'user', 'permission', 'read_only', 'allow_update', 'allow_delete', 'allow_create', 'assigned_by', 'assigned_at')
+    list_filter = ('assigned_at', 'permission__category', 'read_only', 'allow_update', 'allow_delete', 'allow_create')
     search_fields = ('event__title', 'user__email', 'permission__name')
     readonly_fields = ('assigned_at',)
     autocomplete_fields = ('event', 'user', 'permission')
@@ -114,6 +114,10 @@ class EventPermissionAssignmentAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Assignment', {
             'fields': ('event', 'user', 'permission', 'assigned_by')
+        }),
+        ('CRUD Permissions', {
+            'fields': ('read_only', 'allow_update', 'allow_delete', 'allow_create'),
+            'description': 'If read_only is True, other permissions are ignored and user can only READ. Otherwise, specific CRUD flags control access.'
         }),
         ('Metadata', {
             'fields': ('assigned_at',),

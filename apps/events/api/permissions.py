@@ -154,3 +154,182 @@ class CanManageEventInvites(permissions.BasePermission):
         is_event_staff = obj.event.staff_members.filter(user=request.user).exists()
         
         return is_event_staff
+
+
+# ============================================================================
+# Granular CRUD-based Permission Classes
+# ============================================================================
+
+
+class HasEventPermission(permissions.BasePermission):
+    """
+    Base permission class for checking EventPermissionAssignment with CRUD flags.
+    
+    This checks:
+    1. Django staff/superuser always have access
+    2. Event creator always has access
+    3. Users with ADMINISTRATIVE role have full access
+    4. Users with specific EventPermissionAssignment for the given category with proper CRUD flags
+    
+    Logic:
+    - If read_only=True, user can only perform SAFE_METHODS (GET, HEAD, OPTIONS)
+    - Otherwise, check specific allow_create, allow_update, allow_delete flags
+    - Most permissive wins: if role OR permission grants access, allow it
+    """
+    
+    # Subclasses should override this with the permission category to check
+    permission_category = None
+    
+    def has_permission(self, request, view):
+        """Check if user has basic permission to access the view."""
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Django staff/superuser always have access
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+        
+        # For list views, allow through - object permission will filter
+        return True
+    
+    def has_object_permission(self, request, view, obj):
+        """Check if user has permission for specific object with CRUD flags."""
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Django staff/superuser always have access
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+        
+        # Get the event from the object
+        event = self._get_event_from_object(obj)
+        if not event:
+            return False
+        
+        # Event creator always has full access
+        if event.created_by == request.user:
+            return True
+        
+        # Check if user has ADMINISTRATIVE role (full access)
+        if self._has_administrative_role(request.user, event):
+            return True
+        
+        # Check EventPermissionAssignment with CRUD flags
+        return self._check_permission_assignment(request, event)
+    
+    def _get_event_from_object(self, obj):
+        """Extract event from various object types."""
+        if hasattr(obj, 'event'):
+            return obj.event
+        if obj.__class__.__name__ == 'Event':
+            return obj
+        # Add more extraction logic as needed
+        return None
+    
+    def _has_administrative_role(self, user, event):
+        """Check if user has ADMINISTRATIVE role for the event."""
+        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+        
+        return EventRoleAssignment.objects.filter(
+            user=user,
+            event=event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+        ).exists()
+    
+    def _check_permission_assignment(self, request, event):
+        """
+        Check EventPermissionAssignment with CRUD flags.
+        
+        Logic:
+        - If read_only=True, only allow SAFE_METHODS
+        - Otherwise check specific CRUD flags based on request method
+        """
+        from apps.events.models import EventPermissionAssignment
+        
+        if not self.permission_category:
+            return False
+        
+        # Get all permission assignments for this user, event, and category
+        assignments = EventPermissionAssignment.objects.filter(
+            user=request.user,
+            event=event,
+            permission__category=self.permission_category
+        ).select_related('permission')
+        
+        if not assignments.exists():
+            return False
+        
+        # Check each assignment - if ANY grants access, allow (most permissive wins)
+        for assignment in assignments:
+            if self._assignment_grants_access(assignment, request.method):
+                return True
+        
+        return False
+    
+    def _assignment_grants_access(self, assignment, method):
+        """Check if a specific assignment grants access for the given method."""
+        # If read_only is True, only allow safe methods
+        if assignment.read_only:
+            return method in permissions.SAFE_METHODS
+        
+        # Check specific CRUD flags based on method
+        if method in permissions.SAFE_METHODS:
+            # For read operations, user needs at least one write permission or implicit read
+            return (assignment.allow_create or assignment.allow_update or 
+                   assignment.allow_delete)
+        elif method == 'POST':
+            return assignment.allow_create
+        elif method in ['PUT', 'PATCH']:
+            return assignment.allow_update
+        elif method == 'DELETE':
+            return assignment.allow_delete
+        
+        return False
+
+
+class HasRegistrationPermission(HasEventPermission):
+    """
+    Permission for registration/attendee management endpoints.
+    Checks for REGISTRATION category permissions.
+    """
+    permission_category = 'REGISTRATION'
+
+
+class HasProductManagementPermission(HasEventPermission):
+    """
+    Permission for product management endpoints.
+    Checks for PRODUCT_MANAGEMENT category permissions.
+    """
+    permission_category = 'PRODUCT_MANAGEMENT'
+
+
+class HasStaffManagementPermission(HasEventPermission):
+    """
+    Permission for staff management endpoints.
+    Checks for STAFF_MANAGEMENT category permissions.
+    """
+    permission_category = 'STAFF_MANAGEMENT'
+
+
+class HasContentManagementPermission(HasEventPermission):
+    """
+    Permission for content management endpoints (resources, images, etc).
+    Checks for CONTENT_MANAGEMENT category permissions.
+    """
+    permission_category = 'CONTENT_MANAGEMENT'
+
+
+class HasReportingPermission(HasEventPermission):
+    """
+    Permission for reporting and analytics endpoints.
+    Checks for REPORTING category permissions.
+    """
+    permission_category = 'REPORTING'
+
+
+class HasGeneralPermission(HasEventPermission):
+    """
+    Permission for general event operations.
+    Checks for GENERAL category permissions.
+    """
+    permission_category = 'GENERAL'

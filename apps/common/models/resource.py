@@ -56,6 +56,7 @@ class Resource(models.Model):
             models.Index(fields=['resource_type']),
             models.Index(fields=['tag'])
         ]
+        ordering = ['name']
     
     def __str__(self):
         return self.name
