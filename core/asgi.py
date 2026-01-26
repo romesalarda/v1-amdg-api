@@ -18,22 +18,21 @@ django_asgi_app = get_asgi_application()
 
 # Import channels after Django setup
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.auth import AuthMiddlewareStack
 from channels.security.websocket import AllowedHostsOriginValidator
+from core.websocket_auth import JWTWebSocketMiddleware
 
-# Import your websocket routing (create this file for your specific WS routes)
-# from apps.events.routing import websocket_urlpatterns
+# Import WebSocket routing
+from apps.events.routing import websocket_urlpatterns
 
 application = ProtocolTypeRouter({
     # Django's ASGI application to handle traditional HTTP requests
     "http": django_asgi_app,
     
-    # WebSocket chat handler
+    # WebSocket handler with JWT authentication
     "websocket": AllowedHostsOriginValidator(
-        AuthMiddlewareStack(
+        JWTWebSocketMiddleware(
             URLRouter(
-                # websocket_urlpatterns  # Uncomment when you create routing.py
-                []  # Empty for now - add your WebSocket routes here
+                websocket_urlpatterns
             )
         )
     ),

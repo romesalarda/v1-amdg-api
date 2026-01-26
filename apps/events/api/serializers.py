@@ -1073,7 +1073,7 @@ class EventQuestionOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventQuestionOption
         fields = ('id', 'question', 'option_text', 'order', 'created_at', 'updated_at', '_links')
-        read_only_fields = ('id', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'question', 'created_at', 'updated_at')  # question is read-only for nested writes
         extra_kwargs = {
             'created_at': {'default': None},
             'updated_at': {'default': None},
@@ -1114,9 +1114,20 @@ class EventQuestionOptionSerializer(serializers.ModelSerializer):
 
 
 class EventQuestionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for EventQuestion with nested writable options.
+    
+    Supports creating and updating questions with nested options in a single request.
+    Options can be provided as an array of objects with option_text and order.
+    
+    For updates:
+    - Options with 'id' field: update existing
+    - Options without 'id': create new
+    - Existing options not in payload: deleted
+    """
     question_type_display = serializers.CharField(source='get_question_type_display', read_only=True)
     event_title = serializers.CharField(source='event.title', read_only=True)
-    options = EventQuestionOptionSerializer(many=True, read_only=True)
+    options = EventQuestionOptionSerializer(many=True, read_only=False, required=False)
     _links = serializers.SerializerMethodField()
     
     class Meta:
@@ -1169,6 +1180,7 @@ class EventQuestionSerializer(serializers.ModelSerializer):
         question_type = data.get('question_type', self.instance.question_type if self.instance else None)
         min_value = data.get('min_value')
         max_value = data.get('max_value')
+        options = data.get('options', [])
         
         # Validate slider questions
         if question_type == EventQuestionTypeChoices.SLIDER:
@@ -1189,7 +1201,137 @@ class EventQuestionSerializer(serializers.ModelSerializer):
                     "This question type does not support min_value or max_value"
                 )
         
+        # Validate choice questions have at least one option
+        if question_type in [EventQuestionTypeChoices.MULTIPLE_CHOICE, EventQuestionTypeChoices.SINGLE_CHOICE]:
+            # For create: check options in data
+            if not self.instance and len(options) < 1:
+                raise serializers.ValidationError({
+                    "options": "Choice questions must have at least one option"
+                })
+        else:
+            # Non-choice questions should not have options
+            if len(options) > 0:
+                raise serializers.ValidationError({
+                    "options": "This question type does not support options"
+                })
+        
+        # Validate option_text uniqueness within this question
+        option_texts = [opt.get('option_text', '').strip() for opt in options]
+        if len(option_texts) != len(set(option_texts)):
+            raise serializers.ValidationError({
+                "options": "Option texts must be unique within a question"
+            })
+        
         return data
+    
+    def create(self, validated_data):
+        """
+        Create question with nested options atomically.
+        
+        Args:
+            validated_data: Validated serializer data including options
+            
+        Returns:
+            Created EventQuestion instance with nested options
+        """
+        from django.db import transaction
+        
+        options_data = validated_data.pop('options', [])
+        
+        with transaction.atomic():
+            # Create the question
+            question = EventQuestion(**validated_data)
+            question.save()
+            
+            # Bulk create options if provided
+            if options_data:
+                options_to_create = [
+                    EventQuestionOption(
+                        question=question,
+                        option_text=opt_data['option_text'],
+                        order=opt_data.get('order', idx)
+                    )
+                    for idx, opt_data in enumerate(options_data)
+                ]
+                EventQuestionOption.objects.bulk_create(options_to_create)
+        
+        return question
+    
+    def update(self, instance, validated_data):
+        """
+        Update question with smart option merging.
+        
+        Strategy:
+        - Options with 'id': update existing
+        - Options without 'id': create new
+        - Existing options not in payload: delete
+        
+        Args:
+            instance: Existing EventQuestion instance
+            validated_data: Validated serializer data
+            
+        Returns:
+            Updated EventQuestion instance
+        """
+        from django.db import transaction
+        
+        options_data = validated_data.pop('options', None)
+        
+        with transaction.atomic():
+            # Update question fields
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+            instance.save()
+            
+            # Handle options if provided
+            if options_data is not None:
+                # Get existing option IDs
+                existing_option_ids = set(instance.options.values_list('id', flat=True))
+                provided_option_ids = set()
+                options_to_update = []
+                options_to_create = []
+                
+                for opt_data in options_data:
+                    opt_id = opt_data.get('id')
+                    
+                    if opt_id:
+                        # Update existing option
+                        provided_option_ids.add(opt_id)
+                        try:
+                            option = EventQuestionOption.objects.get(id=opt_id, question=instance)
+                            option.option_text = opt_data.get('option_text', option.option_text)
+                            option.order = opt_data.get('order', option.order)
+                            options_to_update.append(option)
+                        except EventQuestionOption.DoesNotExist:
+                            # Option doesn't belong to this question - ignore
+                            pass
+                    else:
+                        # Create new option
+                        options_to_create.append(
+                            EventQuestionOption(
+                                question=instance,
+                                option_text=opt_data['option_text'],
+                                order=opt_data.get('order', 0)
+                            )
+                        )
+                
+                # Delete options not in payload FIRST to avoid constraint violations
+                options_to_delete = existing_option_ids - provided_option_ids
+                if options_to_delete:
+                    EventQuestionOption.objects.filter(id__in=options_to_delete).delete()
+                
+                # Bulk update existing options
+                if options_to_update:
+                    EventQuestionOption.objects.bulk_update(
+                        options_to_update,
+                        ['option_text', 'order']
+                    )
+                
+                # Bulk create new options
+                if options_to_create:
+                    EventQuestionOption.objects.bulk_create(options_to_create)
+        
+        return instance
 
 
 class EventQuestionAnswerChoiceSerializer(serializers.ModelSerializer):
@@ -1238,16 +1380,29 @@ class EventQuestionAnswerChoiceSerializer(serializers.ModelSerializer):
 
 
 class EventQuestionAnswerSerializer(serializers.ModelSerializer):
+    """
+    Serializer for EventQuestionAnswer with nested writable selected options.
+    
+    Supports creating and updating answers with option selections.
+    Validates option selections against question constraints.
+    """
     question_title = serializers.CharField(source='question.question_title', read_only=True)
     attendee_name = serializers.SerializerMethodField()
     selected_options = EventQuestionAnswerChoiceSerializer(many=True, read_only=True)
+    selected_option_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False,
+        help_text="List of option IDs to select for choice questions"
+    )
     _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventQuestionAnswer
         fields = (
             'id', 'question', 'question_title', 'attendee', 'attendee_name',
-            'answer_text', 'selected_options', 'submitted_at', 'updated_at', '_links'
+            'answer_text', 'selected_options', 'selected_option_ids',
+            'submitted_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'submitted_at', 'updated_at')
         extra_kwargs = {
@@ -1284,6 +1439,117 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
             )
         
         return links
+    
+    def validate(self, data):
+        """
+        Validate answer data including option selections.
+        
+        Validates:
+        - Options belong to the question
+        - Single choice questions have exactly 1 selection
+        - Multiple choice questions have at least 1 selection
+        """
+        question = data.get('question', self.instance.question if self.instance else None)
+        selected_option_ids = data.get('selected_option_ids', [])
+        
+        if not question:
+            raise serializers.ValidationError("Question is required")
+        
+        # Validate option selections for choice questions
+        if question.question_type in [EventQuestionTypeChoices.SINGLE_CHOICE, EventQuestionTypeChoices.MULTIPLE_CHOICE]:
+            if not selected_option_ids and not data.get('answer_text'):
+                raise serializers.ValidationError({
+                    "selected_option_ids": "At least one option must be selected for choice questions"
+                })
+            
+            if selected_option_ids:
+                # Verify all options belong to this question
+                valid_option_ids = set(question.options.values_list('id', flat=True))
+                invalid_options = set(selected_option_ids) - valid_option_ids
+                
+                if invalid_options:
+                    raise serializers.ValidationError({
+                        "selected_option_ids": f"Options {invalid_options} do not belong to this question"
+                    })
+                
+                # Single choice can only have 1 selection
+                if question.question_type == EventQuestionTypeChoices.SINGLE_CHOICE:
+                    if len(selected_option_ids) > 1:
+                        raise serializers.ValidationError({
+                            "selected_option_ids": "Single choice questions can only have one selected option"
+                        })
+        
+        return data
+    
+    def create(self, validated_data):
+        """
+        Create answer with selected options atomically.
+        
+        Args:
+            validated_data: Validated data including selected_option_ids
+            
+        Returns:
+            Created EventQuestionAnswer with nested selections
+        """
+        from django.db import transaction
+        
+        selected_option_ids = validated_data.pop('selected_option_ids', [])
+        
+        with transaction.atomic():
+            # Create the answer
+            answer = EventQuestionAnswer.objects.create(**validated_data)
+            
+            # Bulk create answer choices
+            if selected_option_ids:
+                choices_to_create = [
+                    EventQuestionAnswerChoice(
+                        answer=answer,
+                        option_id=option_id
+                    )
+                    for option_id in selected_option_ids
+                ]
+                EventQuestionAnswerChoice.objects.bulk_create(choices_to_create)
+        
+        return answer
+    
+    def update(self, instance, validated_data):
+        """
+        Update answer and replace all selected options atomically.
+        
+        Args:
+            instance: Existing EventQuestionAnswer
+            validated_data: Validated data
+            
+        Returns:
+            Updated EventQuestionAnswer
+        """
+        from django.db import transaction
+        
+        selected_option_ids = validated_data.pop('selected_option_ids', None)
+        
+        with transaction.atomic():
+            # Update answer fields
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+            instance.save()
+            
+            # Replace all selected options if provided
+            if selected_option_ids is not None:
+                # Delete existing selections
+                instance.selected_options.all().delete()
+                
+                # Create new selections
+                if selected_option_ids:
+                    choices_to_create = [
+                        EventQuestionAnswerChoice(
+                            answer=instance,
+                            option_id=option_id
+                        )
+                        for option_id in selected_option_ids
+                    ]
+                    EventQuestionAnswerChoice.objects.bulk_create(choices_to_create)
+        
+        return instance
 
 
 class EventVenueSerializer(serializers.ModelSerializer):

@@ -1,7 +1,11 @@
 from django.db.models.signals import post_save, pre_save, pre_delete, post_delete
 from django.dispatch import receiver
+import logging
 
 from apps.events.models.events import Event
+from apps.events.models.questions import EventQuestion, EventQuestionOption
+
+logger = logging.getLogger(__name__)
 
 @receiver(post_save, sender=Event)
 def create_default_event_settings(sender, instance: Event, created: bool, **kwargs):

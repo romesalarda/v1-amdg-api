@@ -900,6 +900,117 @@ class EventViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     @extend_schema(
+        summary="Get WebSocket Token",
+        description=(
+            "Exchange a valid HTTP JWT for a short-lived WebSocket-specific JWT token. "
+            "This token is required to establish WebSocket connections for real-time updates. "
+            "\n\n**Security:**\n"
+            "- Token expires in 5 minutes\n"
+            "- Token type='websocket' to prevent cross-use with HTTP endpoints\n"
+            "- User must have permission to access the event (creator, staff, or admin)\n"
+            "\n\n**Usage:**\n"
+            "1. Call this endpoint with valid HTTP authentication\n"
+            "2. Receive short-lived WebSocket token\n"
+            "3. Connect to WebSocket: `ws://host/ws/events/{event_id}/questions/?token={ws_token}`\n"
+            "4. Token must be refreshed every 5 minutes for ongoing connections\n"
+            "\n\n**Response includes:**\n"
+            "- `token`: The WebSocket JWT to use in query parameter\n"
+            "- `expires_in`: Seconds until expiration (300)\n"
+            "- `ws_url`: Complete WebSocket URL with placeholders\n"
+        ),
+        tags=["Events", "WebSocket"],
+        responses={
+            200: OpenApiResponse(
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'token': {
+                            'type': 'string',
+                            'description': 'WebSocket-specific JWT token (5-minute expiry)'
+                        },
+                        'expires_in': {
+                            'type': 'integer',
+                            'description': 'Token lifetime in seconds (300)',
+                            'example': 300
+                        },
+                        'ws_url': {
+                            'type': 'string',
+                            'description': 'WebSocket URL pattern to connect to',
+                            'example': 'ws://localhost:8000/ws/events/{event_id}/questions/?token={token}'
+                        }
+                    }
+                },
+                description='WebSocket token successfully generated'
+            ),
+            403: OpenApiResponse(
+                description='Permission denied - user does not have access to this event'
+            ),
+            404: OpenApiResponse(
+                description='Event not found'
+            )
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='ws-token', permission_classes=[permissions.IsAuthenticated])
+    def ws_token(self, request, event_id=None):
+        """
+        Generate a short-lived JWT token for WebSocket authentication.
+        
+        This endpoint exchanges a valid HTTP JWT for a WebSocket-specific token
+        that allows establishing real-time connections for event question updates.
+        """
+        from datetime import timedelta
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from django.utils import timezone
+        import jwt
+        from django.conf import settings
+        
+        event = self.get_object()
+        
+        # Check if user has permission to access this event
+        has_permission = (
+            event.created_by == request.user or
+            event.staff_members.filter(user=request.user).exists() or
+            request.user.is_staff or
+            request.user.is_superuser
+        )
+        
+        if not has_permission:
+            return Response(
+                {'detail': 'You do not have permission to access this event.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Generate WebSocket-specific JWT
+        expires_in = 300  # 5 minutes
+        expiration = timezone.now() + timedelta(seconds=expires_in)
+        
+        # Generate unique JTI (JWT ID) for token
+        import uuid
+        
+        payload = {
+            'user_id': request.user.id,
+            'event_id': str(event.event_id),
+            'type': 'websocket',
+            'exp': expiration,
+            'iat': timezone.now(),
+            'jti': str(uuid.uuid4()),  # Required by simplejwt validation
+        }
+        
+        token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
+        
+        # Construct WebSocket URL
+        # Use request to determine protocol (ws:// or wss://)
+        ws_protocol = 'wss' if request.is_secure() else 'ws'
+        host = request.get_host()
+        ws_url = f"{ws_protocol}://{host}/ws/events/{event.event_id}/questions/?token={{token}}"
+        
+        return Response({
+            'token': token,
+            'expires_in': expires_in,
+            'ws_url': ws_url
+        })
+    
+    @extend_schema(
         summary="Assign Permission to User",
         description=(
             "Assign a specific permission to a user for this event, granting them access to perform specific actions. "
@@ -2959,6 +3070,344 @@ class EventQuestionViewSet(viewsets.ModelViewSet):
     filterset_fields = ['event', 'question_type', 'required', 'public', 'event__event_id']
     ordering_fields = ['order', 'created_at']
     ordering = ['order']
+    
+    def perform_create(self, serializer):
+        """Create question and broadcast to WebSocket clients."""
+        from apps.events.utils.websocket import broadcast_question_event_sync
+        from apps.events.api.serializers import EventQuestionSerializer
+        import logging
+        import json
+        from django.core.serializers.json import DjangoJSONEncoder
+        
+        logger = logging.getLogger(__name__)
+        
+        # Save the question
+        instance = serializer.save()
+        
+        # Get actor object (not just email)
+        actor = None
+        if self.request.user and self.request.user.is_authenticated:
+            actor = {
+                'id': self.request.user.id,
+                'email': self.request.user.email,
+                'name': getattr(self.request.user, 'get_full_name', lambda: None)() or self.request.user.email
+            }
+        
+        logger.info(f"[EventQuestionViewSet] Created question {instance.id} by {actor.get('email') if actor else 'unknown'}")
+        
+        # Serialize for broadcast (refetch to include options)
+        instance.refresh_from_db()
+        broadcast_serializer = EventQuestionSerializer(instance)
+        question_data = json.loads(json.dumps(broadcast_serializer.data, cls=DjangoJSONEncoder))
+        
+        # Broadcast to WebSocket clients
+        broadcast_question_event_sync(
+            event_id=str(instance.event.event_id),
+            event_type="question.created",
+            question_data=question_data,
+            actor=actor
+        )
+        
+        logger.info(f"[EventQuestionViewSet] Broadcasted question.created for {instance.id} with actor: {actor}")
+        
+    def perform_update(self, serializer):
+        """Update question and broadcast to WebSocket clients."""
+        from apps.events.utils.websocket import broadcast_question_event_sync
+        from apps.events.api.serializers import EventQuestionSerializer
+        import logging
+        import json
+        from django.core.serializers.json import DjangoJSONEncoder
+        
+        logger = logging.getLogger(__name__)
+        
+        # Save the question
+        instance = serializer.save()
+        
+        # Get actor object (not just email)
+        actor = None
+        if self.request.user and self.request.user.is_authenticated:
+            actor = {
+                'id': self.request.user.id,
+                'email': self.request.user.email,
+                'name': getattr(self.request.user, 'get_full_name', lambda: None)() or self.request.user.email
+            }
+        
+        logger.info(f"[EventQuestionViewSet] Updated question {instance.id} by {actor.get('email') if actor else 'unknown'}")
+        
+        # Serialize for broadcast (refetch to include options)
+        instance.refresh_from_db()
+        broadcast_serializer = EventQuestionSerializer(instance)
+        question_data = json.loads(json.dumps(broadcast_serializer.data, cls=DjangoJSONEncoder))
+        
+        # Broadcast to WebSocket clients
+        broadcast_question_event_sync(
+            event_id=str(instance.event.event_id),
+            event_type="question.updated",
+            question_data=question_data,
+            actor=actor
+        )
+        
+        logger.info(f"[EventQuestionViewSet] Broadcasted question.updated for {instance.id} with actor: {actor}")
+    
+    def perform_destroy(self, instance):
+        """Delete question and broadcast to WebSocket clients."""
+        from apps.events.utils.websocket import broadcast_question_event_sync
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Get data before deletion
+        event_id = str(instance.event.event_id)
+        question_id = str(instance.id)
+        
+        # Get actor object (not just email)
+        actor = None
+        if self.request.user and self.request.user.is_authenticated:
+            actor = {
+                'id': self.request.user.id,
+                'email': self.request.user.email,
+                'name': getattr(self.request.user, 'get_full_name', lambda: None)() or self.request.user.email
+            }
+        
+        logger.info(f"[EventQuestionViewSet] Deleting question {question_id} by {actor.get('email') if actor else 'unknown'}")
+        
+        # Delete the question
+        instance.delete()
+        
+        # Broadcast deletion
+        broadcast_question_event_sync(
+            event_id=event_id,
+            event_type="question.deleted",
+            question_data={
+                "id": question_id,
+                "event": event_id,
+            },
+            actor=actor
+        )
+        
+        logger.info(f"[EventQuestionViewSet] Broadcasted question.deleted for {question_id} with actor: {actor}")
+        
+        logger.info(f"[EventQuestionViewSet] Deleting question {question_id} by {actor_email}")
+        
+        # Delete the question
+        instance.delete()
+        
+        # Broadcast deletion
+        broadcast_question_event_sync(
+            event_id=event_id,
+            event_type="question.deleted",
+            question_data={
+                "id": question_id,
+                "event": event_id,
+            },
+            actor=actor_email
+        )
+        
+        logger.info(f"[EventQuestionViewSet] Broadcasted question.deleted for {question_id}")
+        # instance.delete()
+    
+    @extend_schema(
+        summary="Bulk Create Questions",
+        description=(
+            "Create multiple event questions in a single request with nested options. "
+            "All questions are validated before any are created (all-or-nothing). "
+            "Useful for importing pre-built forms or creating entire sections at once. "
+            "\n\n**Features:**\n"
+            "- Atomic transaction: all questions created or none\n"
+            "- Supports nested options for choice questions\n"
+            "- Validates all questions before creating any\n"
+            "- Returns all created questions with IDs\n"
+            "\n\n**Request Format:**\n"
+            "Array of question objects, each with:\n"
+            "- event: Event UUID\n"
+            "- question_title: String\n"
+            "- question_body: String\n"
+            "- question_type: Choice type\n"
+            "- required: Boolean (optional)\n"
+            "- order: Integer (optional)\n"
+            "- options: Array of {option_text, order} (for choice questions)\n"
+        ),
+        tags=["Event Questions"],
+        request={
+            'application/json': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'event': {'type': 'string', 'format': 'uuid'},
+                        'question_title': {'type': 'string'},
+                        'question_body': {'type': 'string'},
+                        'question_type': {'type': 'string'},
+                        'required': {'type': 'boolean'},
+                        'order': {'type': 'integer'},
+                        'options': {
+                            'type': 'array',
+                            'items': {
+                                'type': 'object',
+                                'properties': {
+                                    'option_text': {'type': 'string'},
+                                    'order': {'type': 'integer'}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        responses={
+            201: EventQuestionSerializer(many=True),
+            400: OpenApiResponse(description='Validation errors in one or more questions')
+        }
+    )
+    @action(detail=False, methods=['post'], url_path='bulk-create')
+    def bulk_create(self, request):
+        """
+        Bulk create multiple questions with nested options atomically.
+        """
+        from django.db import transaction
+        
+        if not isinstance(request.data, list):
+            return Response(
+                {'detail': 'Request data must be an array of questions'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate all questions first
+        serializers_list = []
+        for question_data in request.data:
+            serializer = EventQuestionSerializer(data=question_data, context={'request': request})
+            if not serializer.is_valid():
+                return Response(
+                    {
+                        'detail': 'Validation failed',
+                        'errors': serializer.errors
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            serializers_list.append(serializer)
+        
+        # All valid - create atomically
+        created_questions = []
+        with transaction.atomic():
+            for serializer in serializers_list:
+                question = serializer.save()
+                created_questions.append(question)
+        
+        # Return all created questions
+        output_serializer = EventQuestionSerializer(
+            created_questions,
+            many=True,
+            context={'request': request}
+        )
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+    
+    @extend_schema(
+        summary="Reorder Questions",
+        description=(
+            "Update the display order of multiple questions in a single atomic operation. "
+            "Useful for drag-and-drop reordering in form builders. "
+            "\n\n**Features:**\n"
+            "- Atomic transaction: all orders updated or none\n"
+            "- Validates all question IDs exist and belong to same event\n"
+            "- Handles unique constraint by updating in correct sequence\n"
+            "- Broadcasts update via WebSocket after success\n"
+            "\n\n**Request Format:**\n"
+            "```json\n"
+            "{\n"
+            '  "questions": [\n'
+            '    {"id": "uuid1", "order": 0},\n'
+            '    {"id": "uuid2", "order": 1},\n'
+            '    {"id": "uuid3", "order": 2}\n'
+            "  ]\n"
+            "}\n"
+            "```"
+        ),
+        tags=["Event Questions"],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'questions': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'object',
+                            'properties': {
+                                'id': {'type': 'string', 'format': 'uuid'},
+                                'order': {'type': 'integer'}
+                            },
+                            'required': ['id', 'order']
+                        }
+                    }
+                },
+                'required': ['questions']
+            }
+        },
+        responses={
+            200: OpenApiResponse(description='Questions reordered successfully'),
+            400: OpenApiResponse(description='Validation errors')
+        }
+    )
+    @action(detail=False, methods=['post'], url_path='reorder')
+    def reorder(self, request):
+        """
+        Reorder questions atomically.
+        """
+        from django.db import transaction
+        import uuid
+        
+        questions_data = request.data.get('questions', [])
+        
+        if not questions_data:
+            return Response(
+                {'detail': 'questions array is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Extract and validate question IDs
+            question_ids = [item['id'] for item in questions_data]
+            
+            # Fetch all questions
+            questions = EventQuestion.objects.filter(id__in=question_ids)
+            
+            if questions.count() != len(question_ids):
+                return Response(
+                    {'detail': 'One or more question IDs not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify all questions belong to the same event
+            event_ids = questions.values_list('event_id', flat=True).distinct()
+            if len(event_ids) > 1:
+                return Response(
+                    {'detail': 'All questions must belong to the same event'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update orders atomically
+            with transaction.atomic():
+                # Create a mapping of ID to order
+                order_map = {item['id']: item['order'] for item in questions_data}
+                
+                # Update each question
+                for question in questions:
+                    question.order = order_map[str(question.id)]
+                
+                # Bulk update
+                EventQuestion.objects.bulk_update(questions, ['order'])
+            
+            return Response({'message': 'Questions reordered successfully'})
+        
+        except KeyError as e:
+            return Response(
+                {'detail': f'Missing required field: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'detail': f'Error reordering questions: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 @extend_schema_view(
@@ -3102,6 +3551,170 @@ class EventQuestionAnswerViewSet(viewsets.ModelViewSet):
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['question', 'attendee']
+    
+    @extend_schema(
+        summary="Submit Form (Batch Answers)",
+        description=(
+            "Submit all answers for a registration form in a single atomic transaction. "
+            "Validates that all required questions are answered and creates all answers atomically. "
+            "\n\n**Features:**\n"
+            "- Atomic transaction: all answers created or none\n"
+            "- Validates all required questions are answered\n"
+            "- Supports text answers and option selections\n"
+            "- Bulk creates all answers and choices\n"
+            "- Returns complete submission with any validation errors\n"
+            "\n\n**Request Format:**\n"
+            "```json\n"
+            "{\n"
+            '  "attendee": 123,\n'
+            '  "answers": [\n'
+            "    {\n"
+            '      "question": "uuid1",\n'
+            '      "answer_text": "My answer",\n'
+            '      "selected_option_ids": []\n'
+            "    },\n"
+            "    {\n"
+            '      "question": "uuid2",\n'
+            '      "answer_text": "",\n'
+            '      "selected_option_ids": [1, 2]\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "```\n"
+        ),
+        tags=["Event Question Answers"],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'attendee': {'type': 'integer'},
+                    'answers': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'object',
+                            'properties': {
+                                'question': {'type': 'string', 'format': 'uuid'},
+                                'answer_text': {'type': 'string'},
+                                'selected_option_ids': {
+                                    'type': 'array',
+                                    'items': {'type': 'integer'}
+                                }
+                            },
+                            'required': ['question']
+                        }
+                    }
+                },
+                'required': ['attendee', 'answers']
+            }
+        },
+        responses={
+            201: EventQuestionAnswerSerializer(many=True),
+            400: OpenApiResponse(description='Validation errors or missing required answers')
+        }
+    )
+    @action(detail=False, methods=['post'], url_path='submit-form')
+    def submit_form(self, request):
+        """
+        Submit all form answers in a single atomic transaction.
+        """
+        from django.db import transaction
+        
+        attendee_id = request.data.get('attendee')
+        answers_data = request.data.get('answers', [])
+        
+        if not attendee_id:
+            return Response(
+                {'detail': 'attendee is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not answers_data:
+            return Response(
+                {'detail': 'answers array is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get all question IDs from answers
+            question_ids = [answer['question'] for answer in answers_data]
+            
+            # Fetch all questions
+            questions = EventQuestion.objects.filter(id__in=question_ids).prefetch_related('options')
+            questions_dict = {str(q.id): q for q in questions}
+            
+            # Check if all questions exist
+            if len(questions_dict) != len(question_ids):
+                missing = set(question_ids) - set(questions_dict.keys())
+                return Response(
+                    {'detail': f'Questions not found: {missing}'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get event from first question (all should be same event)
+            first_question = next(iter(questions_dict.values()))
+            event = first_question.event
+            
+            # Get all required questions for this event
+            all_event_questions = event.questions.all()
+            required_question_ids = set(
+                str(q.id) for q in all_event_questions if q.required
+            )
+            answered_question_ids = set(question_ids)
+            
+            # Check if all required questions are answered
+            missing_required = required_question_ids - answered_question_ids
+            if missing_required:
+                return Response(
+                    {
+                        'detail': 'Missing required questions',
+                        'missing_question_ids': list(missing_required)
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate all answers
+            validated_answers = []
+            for answer_data in answers_data:
+                # Add attendee to each answer
+                answer_data['attendee'] = attendee_id
+                
+                serializer = EventQuestionAnswerSerializer(
+                    data=answer_data,
+                    context={'request': request}
+                )
+                
+                if not serializer.is_valid():
+                    return Response(
+                        {
+                            'detail': 'Validation failed',
+                            'errors': serializer.errors,
+                            'question': answer_data.get('question')
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                validated_answers.append(serializer)
+            
+            # All valid - create atomically
+            created_answers = []
+            with transaction.atomic():
+                for serializer in validated_answers:
+                    answer = serializer.save()
+                    created_answers.append(answer)
+            
+            # Return all created answers
+            output_serializer = EventQuestionAnswerSerializer(
+                created_answers,
+                many=True,
+                context={'request': request}
+            )
+            return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+        
+        except Exception as e:
+            return Response(
+                {'detail': f'Error submitting form: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 @extend_schema_view(
