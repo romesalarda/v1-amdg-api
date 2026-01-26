@@ -65,12 +65,13 @@ class JWTWebSocketMiddleware(BaseMiddleware):
                 token = auth_header.split(' ')[1]
         
         if not token:
-            # No token provided - close connection
-            logger.warning(
-                f"WebSocket connection attempt without token from {scope.get('client', ['unknown'])[0]}"
+            # No token in URL - allow connection, consumer will handle authentication via message
+            logger.info(
+                f"WebSocket connection without URL token from {scope.get('client', ['unknown'])[0]} - will authenticate via message"
             )
-            await self.close_connection(send, code=4003, reason="Authentication required")
-            return
+            scope['user'] = AnonymousUser()
+            scope['event_id'] = scope.get('url_route', {}).get('kwargs', {}).get('event_id')
+            return await super().__call__(scope, receive, send)
         
         try:
             # Validate token using simplejwt

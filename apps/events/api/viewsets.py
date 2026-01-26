@@ -3183,29 +3183,9 @@ class EventQuestionViewSet(viewsets.ModelViewSet):
                 "event": event_id,
             },
             actor=actor
-        )
-        
+        )        
         logger.info(f"[EventQuestionViewSet] Broadcasted question.deleted for {question_id} with actor: {actor}")
         
-        logger.info(f"[EventQuestionViewSet] Deleting question {question_id} by {actor_email}")
-        
-        # Delete the question
-        instance.delete()
-        
-        # Broadcast deletion
-        broadcast_question_event_sync(
-            event_id=event_id,
-            event_type="question.deleted",
-            question_data={
-                "id": question_id,
-                "event": event_id,
-            },
-            actor=actor_email
-        )
-        
-        logger.info(f"[EventQuestionViewSet] Broadcasted question.deleted for {question_id}")
-        # instance.delete()
-    
     @extend_schema(
         summary="Bulk Create Questions",
         description=(
