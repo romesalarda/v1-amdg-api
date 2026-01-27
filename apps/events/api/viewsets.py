@@ -3333,6 +3333,7 @@ class EventQuestionViewSet(viewsets.ModelViewSet):
         Reorder questions atomically.
         """
         from django.db import transaction
+        from apps.events.utils.websocket import broadcast_question_event_sync
         import uuid
         
         questions_data = request.data.get('questions', [])
@@ -3364,17 +3365,37 @@ class EventQuestionViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Get event for broadcasting
+            event_id = str(event_ids[0]) if event_ids else None
+            
             # Update orders atomically
             with transaction.atomic():
                 # Create a mapping of ID to order
                 order_map = {item['id']: item['order'] for item in questions_data}
-                
-                # Update each question
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"[EventQuestionViewSet] Reordering questions for event {event_id} with order map: {order_map}")
+                # Update each question's order
                 for question in questions:
                     question.order = order_map[str(question.id)]
+                    question.save(update_fields=['order'])
+            
+            # Broadcast reorder event to WebSocket clients
+            if event_id:
+                actor = None
+                if request.user and request.user.is_authenticated:
+                    actor = {
+                        'id': request.user.id,
+                        'email': request.user.email,
+                        'name': request.user.get_full_name() or request.user.email,
+                    }
                 
-                # Bulk update
-                EventQuestion.objects.bulk_update(questions, ['order'])
+                broadcast_question_event_sync(
+                    event_id=event_id,
+                    event_type='question.reordered',
+                    question_data={'question_ids': question_ids},
+                    actor=actor
+                )
             
             return Response({'message': 'Questions reordered successfully'})
         

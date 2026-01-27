@@ -1142,6 +1142,9 @@ class EventQuestionSerializer(serializers.ModelSerializer):
             'created_at': {'default': None},
             'updated_at': {'default': None},
         }
+        # Remove unique constraint validation at serializer level
+        # Let the database-level deferrable constraint handle it during transaction commit
+        validators = []
     
     @extend_schema_field({
         'type': 'object',
@@ -1259,12 +1262,13 @@ class EventQuestionSerializer(serializers.ModelSerializer):
     
     def update(self, instance, validated_data):
         """
-        Update question with smart option merging.
+        Update question with smart option merging and order management.
         
         Strategy:
         - Options with 'id': update existing
         - Options without 'id': create new
         - Existing options not in payload: delete
+        - Order changes: shift other questions to prevent conflicts
         
         Args:
             instance: Existing EventQuestion instance
@@ -1274,10 +1278,35 @@ class EventQuestionSerializer(serializers.ModelSerializer):
             Updated EventQuestion instance
         """
         from django.db import transaction
+        from django.db.models import F
         
         options_data = validated_data.pop('options', None)
+        new_order = validated_data.get('order')
         
         with transaction.atomic():
+            # Handle order changes to prevent unique constraint violations
+            if new_order is not None and new_order != instance.order:
+                old_order = instance.order
+                event = instance.event
+                
+                # Get all questions in this event (excluding current one)
+                questions = EventQuestion.objects.filter(
+                    event=event
+                ).exclude(id=instance.id)
+                
+                if new_order < old_order:
+                    # Moving up: shift questions [new_order, old_order) down by 1
+                    questions.filter(
+                        order__gte=new_order,
+                        order__lt=old_order
+                    ).update(order=F('order') + 1)
+                else:
+                    # Moving down: shift questions (old_order, new_order] up by 1
+                    questions.filter(
+                        order__gt=old_order,
+                        order__lte=new_order
+                    ).update(order=F('order') - 1)
+            
             # Update question fields
             for attr, value in validated_data.items():
                 setattr(instance, attr, value)

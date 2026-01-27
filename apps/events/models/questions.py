@@ -33,7 +33,11 @@ class EventQuestion(models.Model):
     class Meta:
         ordering = ['order', 'created_at']
         constraints = [
-            models.UniqueConstraint(fields=['event', 'order'], name='unique_question_order_per_event'),
+            models.UniqueConstraint(
+                fields=['event', 'order'], 
+                name='unique_question_order_per_event',
+                deferrable=models.Deferrable.DEFERRED,
+            ),
         ]
             
     

@@ -373,3 +373,5 @@ For issues and questions, please open an issue on GitHub or contact the developm
 ---
 
 Built with ❤️ by the AMDG team
+
+uvicorn core.asgi:application --reload     

@@ -49,6 +49,7 @@ class EventQuestionConsumer(AsyncWebsocketConsumer):
         self.event_id = self.scope['url_route']['kwargs']['event_id']
         self.group_name = f"event_{self.event_id}_questions"
         self.presence_group_name = f"event_{self.event_id}_presence"
+        self.presence_key = f"event_presence:{self.event_id}"
         
         # Accept connection immediately (will authenticate via message)
         await self.accept()
@@ -70,8 +71,9 @@ class EventQuestionConsumer(AsyncWebsocketConsumer):
         Args:
             close_code: The WebSocket close code
         """
-        # Broadcast that user left (if authenticated)
+        # Remove from presence tracking
         if self.authenticated and self.user:
+            await self.remove_from_presence()
             await self.broadcast_presence('left')
         
         # Leave groups
@@ -282,6 +284,11 @@ class EventQuestionConsumer(AsyncWebsocketConsumer):
         if not self.user:
             return
         
+        # Add to presence tracking on join
+        if status == 'joined':
+            await self.add_to_presence()
+        
+        # Broadcast to all clients
         await self.channel_layer.group_send(
             self.presence_group_name,
             {
@@ -297,6 +304,15 @@ class EventQuestionConsumer(AsyncWebsocketConsumer):
                 }
             }
         )
+        
+        # If joining, send list of existing users to this client
+        if status == 'joined':
+            active_users = await self.get_active_users()
+            await self.send(text_data=json.dumps({
+                'type': 'presence.list',
+                'users': active_users,
+                'timestamp': timezone.now().isoformat()
+            }))
     
     async def presence_event(self, event):
         """
@@ -310,6 +326,106 @@ class EventQuestionConsumer(AsyncWebsocketConsumer):
             await self.send(text_data=json.dumps(data))
         except Exception as e:
             logger.error(f"Error broadcasting presence: {str(e)}", exc_info=True)
+    
+    async def get_active_users(self):
+        """
+        Get list of currently connected users in this event from Redis.
+        
+        Returns:
+            List of user dictionaries with id, email, and name
+        """
+        try:
+            import redis.asyncio as redis
+            from django.conf import settings
+            
+            # Get Redis connection from channel layer
+            redis_url = getattr(settings, 'CHANNEL_LAYERS', {}).get('default', {}).get('CONFIG', {}).get('hosts', [('localhost', 6379)])[0]
+            
+            # Connect to Redis
+            if isinstance(redis_url, tuple):
+                r = redis.Redis(host=redis_url[0], port=redis_url[1], decode_responses=True)
+            else:
+                r = redis.from_url(redis_url, decode_responses=True)
+            
+            # Get all users in presence set
+            user_data_list = await r.smembers(self.presence_key)
+            
+            active_users = []
+            for user_json in user_data_list:
+                try:
+                    user_data = json.loads(user_json)
+                    # Exclude current user from list
+                    if user_data.get('id') != self.user.id:
+                        active_users.append(user_data)
+                except json.JSONDecodeError:
+                    continue
+            
+            await r.close()
+            return active_users
+            
+        except Exception as e:
+            logger.error(f"Error getting active users: {str(e)}", exc_info=True)
+            return []
+    
+    async def add_to_presence(self):
+        """
+        Add current user to presence tracking in Redis.
+        """
+        try:
+            import redis.asyncio as redis
+            from django.conf import settings
+            
+            redis_url = getattr(settings, 'CHANNEL_LAYERS', {}).get('default', {}).get('CONFIG', {}).get('hosts', [('localhost', 6379)])[0]
+            
+            if isinstance(redis_url, tuple):
+                r = redis.Redis(host=redis_url[0], port=redis_url[1], decode_responses=True)
+            else:
+                r = redis.from_url(redis_url, decode_responses=True)
+            
+            user_data = json.dumps({
+                'id': self.user.id,
+                'email': self.user.email,
+                'name': getattr(self.user, 'get_full_name', lambda: self.user.email)(),
+            })
+            
+            # Add to set with expiry (24 hours)
+            await r.sadd(self.presence_key, user_data)
+            await r.expire(self.presence_key, 86400)
+            
+            await r.close()
+            
+        except Exception as e:
+            logger.error(f"Error adding to presence: {str(e)}", exc_info=True)
+    
+    async def remove_from_presence(self):
+        """
+        Remove current user from presence tracking in Redis.
+        """
+        try:
+            import redis.asyncio as redis
+            from django.conf import settings
+            
+            redis_url = getattr(settings, 'CHANNEL_LAYERS', {}).get('default', {}).get('CONFIG', {}).get('hosts', [('localhost', 6379)])[0]
+            
+            if isinstance(redis_url, tuple):
+                r = redis.Redis(host=redis_url[0], port=redis_url[1], decode_responses=True)
+            else:
+                r = redis.from_url(redis_url, decode_responses=True)
+            
+            # Remove all entries for this user (in case of duplicates)
+            members = await r.smembers(self.presence_key)
+            for member in members:
+                try:
+                    user_data = json.loads(member)
+                    if user_data.get('id') == self.user.id:
+                        await r.srem(self.presence_key, member)
+                except json.JSONDecodeError:
+                    continue
+            
+            await r.close()
+            
+        except Exception as e:
+            logger.error(f"Error removing from presence: {str(e)}", exc_info=True)
     
     @database_sync_to_async
     def authenticate_token(self, token):
