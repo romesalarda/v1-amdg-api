@@ -3,12 +3,16 @@ WebSocket consumer for real-time event question updates.
 
 Handles WebSocket connections for the registration form builder,
 broadcasting question create/update/delete events to connected clients.
+Supports WebSocket-first architecture with mutation handlers.
 """
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from channels.db import database_sync_to_async
+from django.db import transaction
+from django.core.serializers.json import DjangoJSONEncoder
+from django.utils import timezone
 
 from .base import BaseRealtimeConsumer
 
@@ -27,13 +31,23 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
     - JWT authentication (inherited from base)
     - Event staff/creator permission checks
     - Real-time broadcasts for question CRUD operations
+    - WebSocket-first mutation handlers (create/update/delete/reorder)
+    - Transaction ID tracking for client-side deduplication
     - Presence tracking for active editors (inherited from base)
     - Ping/pong keepalive (inherited from base)
     
-    Message Types Sent:
-    - question.created: New question added
-    - question.updated: Question modified
-    - question.deleted: Question removed
+    Message Types Received (Client → Server):
+    - question.create: Create new question
+    - question.update: Update existing question
+    - question.delete: Delete question
+    - question.reorder: Bulk reorder questions
+    
+    Message Types Sent (Server → Client):
+    - question.created: New question added (broadcast to all)
+    - question.updated: Question modified (broadcast to all)
+    - question.deleted: Question removed (broadcast to all)
+    - question.reordered: Questions reordered (broadcast to all)
+    - error: Validation/permission error (sent to sender only)
     - authenticated: Client successfully connected (inherited)
     - pong: Response to ping for keepalive (inherited)
     - user.joined/user.left: Presence updates (inherited)
@@ -119,21 +133,296 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
         """
         Handle event question-specific WebSocket messages.
         
-        Currently logs unhandled message types for future feature development.
-        Can be extended to support client-initiated actions like:
-        - Creating/updating questions from WebSocket
-        - Requesting question lists
-        - Subscribing to specific question updates
+        Routes authenticated client messages to appropriate mutation handlers.
+        Supports CRUD operations and bulk reordering.
         
         Args:
             message_type: Message type from client
-            data: Full message dictionary
+            data: Full message dictionary including txn_id and mutation data
         """
-        # Log for future feature development
         logger.debug(
-            f"[questions] Unhandled message type: {message_type} "
+            f"[questions] Received message type '{message_type}' "
             f"from user {self.user.email}"
         )
+        
+        # Route to appropriate handler
+        if message_type == 'question.create':
+            await self.handle_question_create(data)
+        elif message_type == 'question.update':
+            await self.handle_question_update(data)
+        elif message_type == 'question.delete':
+            await self.handle_question_delete(data)
+        elif message_type == 'question.reorder':
+            await self.handle_question_reorder(data)
+        else:
+            logger.debug(
+                f"[questions] Unhandled message type: {message_type} "
+                f"from user {self.user.email}"
+            )
+    
+    # Mutation Handlers
+    
+    async def handle_question_create(self, data: dict):
+        """Handle question creation from WebSocket."""
+        txn_id = data.get('txn_id')
+        question_data = data.get('data', {})
+        
+        try:
+            if not question_data.get('question_title'):
+                await self.send_error_to_sender(
+                    txn_id=txn_id, error='Question title is required', code='VALIDATION_ERROR'
+                )
+                return
+            
+            question_data['event_id'] = self.event_id
+            result = await self.create_question_db(question_data)
+            
+            if result['success']:
+                await self.broadcast_to_room({
+                    'type': 'question.created',
+                    'txn_id': txn_id,
+                    'question': result['question'],
+                    'actor': self.get_actor_info(),
+                    'timestamp': timezone.now().isoformat()
+                })
+                logger.info(f"[questions] Created question {result['question']['id']} by {self.user.email}")
+            else:
+                await self.send_error_to_sender(txn_id=txn_id, error=result['error'], code=result['code'])
+        except Exception as e:
+            logger.error(f"[questions] Error creating question: {str(e)}", exc_info=True)
+            await self.send_error_to_sender(txn_id=txn_id, error='Internal server error', code='SERVER_ERROR')
+    
+    async def handle_question_update(self, data: dict):
+        """Handle question update from WebSocket."""
+        txn_id = data.get('txn_id')
+        question_id = data.get('question_id')
+        update_data = data.get('data', {})
+        
+        try:
+            if not question_id:
+                await self.send_error_to_sender(txn_id=txn_id, error='Question ID is required', code='VALIDATION_ERROR')
+                return
+            
+            result = await self.update_question_db(question_id, update_data)
+            
+            if result['success']:
+                await self.broadcast_to_room({
+                    'type': 'question.updated',
+                    'txn_id': txn_id,
+                    'question': result['question'],
+                    'actor': self.get_actor_info(),
+                    'timestamp': timezone.now().isoformat()
+                })
+                logger.info(f"[questions] Updated question {question_id} by {self.user.email}")
+            else:
+                await self.send_error_to_sender(txn_id=txn_id, error=result['error'], code=result['code'])
+        except Exception as e:
+            logger.error(f"[questions] Error updating question: {str(e)}", exc_info=True)
+            await self.send_error_to_sender(txn_id=txn_id, error='Internal server error', code='SERVER_ERROR')
+    
+    async def handle_question_delete(self, data: dict):
+        """Handle question deletion from WebSocket."""
+        txn_id = data.get('txn_id')
+        question_id = data.get('question_id')
+        
+        try:
+            if not question_id:
+                await self.send_error_to_sender(txn_id=txn_id, error='Question ID is required', code='VALIDATION_ERROR')
+                return
+            
+            result = await self.delete_question_db(question_id)
+            
+            if result['success']:
+                await self.broadcast_to_room({
+                    'type': 'question.deleted',
+                    'txn_id': txn_id,
+                    'question_id': question_id,
+                    'actor': self.get_actor_info(),
+                    'timestamp': timezone.now().isoformat()
+                })
+                logger.info(f"[questions] Deleted question {question_id} by {self.user.email}")
+            else:
+                await self.send_error_to_sender(txn_id=txn_id, error=result['error'], code=result['code'])
+        except Exception as e:
+            logger.error(f"[questions] Error deleting question: {str(e)}", exc_info=True)
+            await self.send_error_to_sender(txn_id=txn_id, error='Internal server error', code='SERVER_ERROR')
+    
+    async def handle_question_reorder(self, data: dict):
+        """Handle bulk question reordering from WebSocket."""
+        txn_id = data.get('txn_id')
+        questions_order = data.get('questions', [])
+        
+        try:
+            if not questions_order or not isinstance(questions_order, list):
+                await self.send_error_to_sender(txn_id=txn_id, error='Questions array is required', code='VALIDATION_ERROR')
+                return
+            
+            for item in questions_order:
+                if 'id' not in item or 'order' not in item:
+                    await self.send_error_to_sender(txn_id=txn_id, error='Each question must have id and order', code='VALIDATION_ERROR')
+                    return
+            
+            result = await self.reorder_questions_db(questions_order)
+            
+            if result['success']:
+                await self.broadcast_to_room({
+                    'type': 'question.reordered',
+                    'txn_id': txn_id,
+                    'questions': questions_order,
+                    'actor': self.get_actor_info(),
+                    'timestamp': timezone.now().isoformat()
+                })
+                logger.info(f"[questions] Reordered {len(questions_order)} questions by {self.user.email}")
+            else:
+                await self.send_error_to_sender(txn_id=txn_id, error=result['error'], code=result['code'])
+        except Exception as e:
+            logger.error(f"[questions] Error reordering questions: {str(e)}", exc_info=True)
+            await self.send_error_to_sender(txn_id=txn_id, error='Internal server error', code='SERVER_ERROR')
+    
+    # Database Operations
+    
+    @database_sync_to_async
+    def create_question_db(self, question_data: dict) -> dict:
+        """Create question in database with validation."""
+        from apps.events.api.serializers import EventQuestionSerializer
+        from apps.events.models import Event
+        
+        try:
+            try:
+                event = Event.objects.get(event_id=self.event_id)
+            except Event.DoesNotExist:
+                return {'success': False, 'error': 'Event not found', 'code': 'NOT_FOUND'}
+            
+            serializer_data = {'event': event.id, **question_data}
+            serializer_data.pop('event_id', None)
+            
+            serializer = EventQuestionSerializer(data=serializer_data, context={'request': None})
+            
+            if not serializer.is_valid():
+                error_msg = '; '.join([f"{field}: {', '.join(errors)}" for field, errors in serializer.errors.items()])
+                return {'success': False, 'error': error_msg, 'code': 'VALIDATION_ERROR'}
+            
+            with transaction.atomic():
+                question = serializer.save()
+                question.refresh_from_db()
+                response_serializer = EventQuestionSerializer(question)
+                question_json = json.loads(json.dumps(response_serializer.data, cls=DjangoJSONEncoder))
+            
+            return {'success': True, 'question': question_json}
+        except Exception as e:
+            logger.error(f"[questions] Database error creating question: {str(e)}", exc_info=True)
+            return {'success': False, 'error': str(e), 'code': 'DATABASE_ERROR'}
+    
+    @database_sync_to_async
+    def update_question_db(self, question_id: str, update_data: dict) -> dict:
+        """Update question in database with validation."""
+        from apps.events.api.serializers import EventQuestionSerializer
+        from apps.events.models import EventQuestion
+        
+        try:
+            try:
+                question = EventQuestion.objects.select_related('event').prefetch_related('options').get(
+                    id=question_id, event__event_id=self.event_id
+                )
+            except EventQuestion.DoesNotExist:
+                return {'success': False, 'error': 'Question not found', 'code': 'NOT_FOUND'}
+            
+            serializer = EventQuestionSerializer(question, data=update_data, partial=True, context={'request': None})
+            
+            if not serializer.is_valid():
+                error_msg = '; '.join([f"{field}: {', '.join(errors)}" for field, errors in serializer.errors.items()])
+                return {'success': False, 'error': error_msg, 'code': 'VALIDATION_ERROR'}
+            
+            with transaction.atomic():
+                question = serializer.save()
+                question.refresh_from_db()
+                response_serializer = EventQuestionSerializer(question)
+                question_json = json.loads(json.dumps(response_serializer.data, cls=DjangoJSONEncoder))
+            
+            return {'success': True, 'question': question_json}
+        except Exception as e:
+            logger.error(f"[questions] Database error updating question: {str(e)}", exc_info=True)
+            return {'success': False, 'error': str(e), 'code': 'DATABASE_ERROR'}
+    
+    @database_sync_to_async
+    def delete_question_db(self, question_id: str) -> dict:
+        """Delete question from database."""
+        from apps.events.models import EventQuestion
+        
+        try:
+            try:
+                question = EventQuestion.objects.get(id=question_id, event__event_id=self.event_id)
+            except EventQuestion.DoesNotExist:
+                return {'success': False, 'error': 'Question not found', 'code': 'NOT_FOUND'}
+            
+            with transaction.atomic():
+                question.delete()
+            
+            return {'success': True}
+        except Exception as e:
+            logger.error(f"[questions] Database error deleting question: {str(e)}", exc_info=True)
+            return {'success': False, 'error': str(e), 'code': 'DATABASE_ERROR'}
+    
+    @database_sync_to_async
+    def reorder_questions_db(self, questions_order: list) -> dict:
+        """Reorder questions using two-phase update strategy."""
+        from apps.events.models import EventQuestion
+        
+        try:
+            with transaction.atomic():
+                question_ids = [item['id'] for item in questions_order]
+                questions = EventQuestion.objects.filter(
+                    event__event_id=self.event_id
+                ).select_for_update().order_by('id')
+                
+                questions_dict = {str(q.id): q for q in questions}
+                
+                for item in questions_order:
+                    if str(item['id']) not in questions_dict:
+                        return {'success': False, 'error': f"Question {item['id']} not found", 'code': 'NOT_FOUND'}
+                
+                # Phase 1: Move to temporary high orders
+                temp_order_start = 900000
+                for idx, item in enumerate(questions_order):
+                    question = questions_dict[str(item['id'])]
+                    question.order = temp_order_start + idx
+                    question.save(update_fields=['order'])
+                
+                # Phase 2: Update to final orders
+                for item in questions_order:
+                    question = questions_dict[str(item['id'])]
+                    question.order = item['order']
+                    question.save(update_fields=['order'])
+            
+            return {'success': True}
+        except Exception as e:
+            logger.error(f"[questions] Database error reordering questions: {str(e)}", exc_info=True)
+            return {'success': False, 'error': str(e), 'code': 'DATABASE_ERROR'}
+    
+    # Helper Methods
+    
+    def get_actor_info(self) -> dict:
+        """Get current user info for broadcast messages."""
+        return {
+            'id': self.user.id,
+            'email': self.user.email,
+            'name': getattr(self.user, 'get_full_name', lambda: self.user.email)()
+        }
+    
+    async def send_error_to_sender(self, txn_id: Optional[str], error: str, code: str):
+        """Send error message to sender only (not broadcast)."""
+        await self.send(text_data=json.dumps({
+            'type': 'error',
+            'txn_id': txn_id,
+            'error': error,
+            'code': code,
+            'timestamp': timezone.now().isoformat()
+        }))
+        logger.warning(f"[questions] Error sent to {self.user.email}: {code} - {error} (txn_id: {txn_id})")
+    
+    async def broadcast_to_room(self, message: dict):
+        """Broadcast message to all clients in the room."""
+        await self.channel_layer.group_send(self.group_name, {'type': 'question_event', 'data': message})
     
     # Event-specific channel layer handlers
     

@@ -1144,7 +1144,7 @@ class EventQuestionSerializer(serializers.ModelSerializer):
         }
         # Remove unique constraint validation at serializer level
         # Let the database-level deferrable constraint handle it during transaction commit
-        validators = []
+        # validators = []
     
     @extend_schema_field({
         'type': 'object',
@@ -1284,15 +1284,22 @@ class EventQuestionSerializer(serializers.ModelSerializer):
         new_order = validated_data.get('order')
         
         with transaction.atomic():
-            # Handle order changes to prevent unique constraint violations
+            # Handle order changes to prevent unique constraint violations and deadlocks
             if new_order is not None and new_order != instance.order:
                 old_order = instance.order
                 event = instance.event
                 
-                # Get all questions in this event (excluding current one)
-                questions = EventQuestion.objects.filter(
-                    event=event
-                ).exclude(id=instance.id)
+                # Use select_for_update to prevent deadlocks by locking rows in consistent order
+                # Lock all questions in this event ordered by PK to ensure consistent lock acquisition
+                EventQuestion.objects.filter(event=event).select_for_update().order_by('id').exists()
+                
+                # Step 1: Move current question to high temporary order to avoid conflicts
+                temp_order = 999999
+                instance.order = temp_order
+                instance.save(update_fields=['order'])
+                
+                # Step 2: Shift other questions
+                questions = EventQuestion.objects.filter(event=event).exclude(id=instance.id)
                 
                 if new_order < old_order:
                     # Moving up: shift questions [new_order, old_order) down by 1
@@ -1306,11 +1313,14 @@ class EventQuestionSerializer(serializers.ModelSerializer):
                         order__gt=old_order,
                         order__lte=new_order
                     ).update(order=F('order') - 1)
+                
+                # Step 3: Set current question to final position
+                instance.order = new_order
             
             # Update question fields
             for attr, value in validated_data.items():
                 setattr(instance, attr, value)
-            instance.save()
+            instance.save() # deadlock occurs here
             
             # Handle options if provided
             if options_data is not None:
