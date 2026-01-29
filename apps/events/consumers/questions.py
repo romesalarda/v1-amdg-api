@@ -296,6 +296,18 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
             serializer_data = {'event': event.id, **question_data}
             serializer_data.pop('event_id', None)
             
+            # Clean data based on question type
+            question_type = serializer_data.get('question_type')
+            
+            # Remove min_value and max_value for non-slider questions
+            if question_type != 'slider':
+                serializer_data.pop('min_value', None)
+                serializer_data.pop('max_value', None)
+            
+            # Remove options for non-choice questions
+            if question_type not in ['multiple_choice', 'single_choice']:
+                serializer_data.pop('options', None)
+            
             serializer = EventQuestionSerializer(data=serializer_data, context={'request': None})
             
             if not serializer.is_valid():
@@ -326,6 +338,18 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
                 )
             except EventQuestion.DoesNotExist:
                 return {'success': False, 'error': 'Question not found', 'code': 'NOT_FOUND'}
+            
+            # Clean data based on question type (use existing or new question_type)
+            question_type = update_data.get('question_type', question.question_type)
+            
+            # Remove min_value and max_value for non-slider questions
+            if question_type != 'slider':
+                update_data.pop('min_value', None)
+                update_data.pop('max_value', None)
+            
+            # Remove options for non-choice questions
+            if question_type not in ['multiple_choice', 'single_choice']:
+                update_data.pop('options', None)
             
             serializer = EventQuestionSerializer(question, data=update_data, partial=True, context={'request': None})
             

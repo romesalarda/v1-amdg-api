@@ -340,6 +340,7 @@ class UserOrganisationMembershipViewSet(viewsets.ModelViewSet):
             )
             membership.verify_with_code(acceptance_code)
             serializer = self.get_serializer(membership)
+
             return Response(serializer.data)
         except OrganisationAcceptanceCode.DoesNotExist:
             return Response(

@@ -379,10 +379,10 @@ class UserOrganisationMembershipDetailSerializer(UserOrganisationMembershipListS
 
 class UserOrganisationMembershipCreateUpdateSerializer(serializers.ModelSerializer):
     """Create/Update serializer for UserOrganisationMembership."""
-    
+    access_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
     class Meta:
         model = UserOrganisationMembership
-        fields = ('id','organisation', 'user')
+        fields = ('id','organisation', 'user', 'access_code')
     
     def validate(self, attrs):
         """Prevent duplicate membership."""
@@ -396,6 +396,23 @@ class UserOrganisationMembershipCreateUpdateSerializer(serializers.ModelSerializ
                 "This user is already a member of this organisation."
             )
         
+        if organisation.required_acceptance_code:
+            access_code = attrs.pop('access_code', '').strip()
+            if not access_code:
+                raise serializers.ValidationError(
+                    "An acceptance code is required to join this organisation."
+                )
+            try:
+                code_obj = OrganisationAcceptanceCode.objects.get(
+                    organisation=organisation,
+                    code=access_code,
+                    is_active=True
+                )
+                if not code_obj.is_valid:
+                    raise serializers.ValidationError("The provided acceptance code is not valid.")
+            except OrganisationAcceptanceCode.DoesNotExist:
+                raise serializers.ValidationError("The provided acceptance code is not valid.")
+        
         return attrs
     
     def create(self, validated_data):
@@ -403,6 +420,11 @@ class UserOrganisationMembershipCreateUpdateSerializer(serializers.ModelSerializ
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             validated_data['added_by'] = request.user
+
+        organisation = validated_data['organisation']
+        if organisation.required_acceptance_code:
+            validated_data["verified_at"] = timezone.now()
+
         return super().create(validated_data)
 
 
