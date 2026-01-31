@@ -1,5 +1,22 @@
 from django_filters import rest_framework as filters
+from django.contrib.auth import get_user_model
 from apps.users.models import Profile
+
+User = get_user_model()
+
+
+class UserFilterSet(filters.FilterSet):
+    """Advanced filtering for User model."""
+    organisation = filters.CharFilter(
+        field_name='organisations_memberships__organisation__title',
+        lookup_expr='icontains',
+        label='Organisation',
+        help_text='Filter by organisation name (case-insensitive partial match)'
+    )
+    
+    class Meta:
+        model = User
+        fields = ['is_active', 'oauth_provider', 'email_verified', 'is_staff', 'organisation']
 
 
 class ProfileFilterSet(filters.FilterSet):

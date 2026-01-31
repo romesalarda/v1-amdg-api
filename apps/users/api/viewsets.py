@@ -49,7 +49,7 @@ from .serializers import (
     GoogleOAuthCallbackSerializer,
     ProfileSerializer,
 )
-from .filtersets import ProfileFilterSet
+from .filtersets import ProfileFilterSet, UserFilterSet
 from apps.users.models import Profile
 
 User = get_user_model()
@@ -111,6 +111,11 @@ class IsOwnerOrAdmin(permissions.BasePermission):
                 name='oauth_provider',
                 type=OpenApiTypes.STR,
                 description='Filter by OAuth provider (google, github, etc.)'
+            ),
+            OpenApiParameter(
+                name='organisation',
+                type=OpenApiTypes.STR,
+                description='Filter by organisation name (case-insensitive partial match)'
             ),
             OpenApiParameter(
                 name='ordering',
@@ -241,7 +246,7 @@ class UserViewSet(viewsets.ModelViewSet):
         filters.OrderingFilter
     ]
     search_fields = ['email', 'username', 'first_name', 'last_name']
-    filterset_fields = ['is_active', 'oauth_provider', 'email_verified', 'is_staff']
+    filterset_class = UserFilterSet
     ordering_fields = ['created_at', 'updated_at', 'email', 'username', 'date_joined']
     ordering = ['-created_at']
     

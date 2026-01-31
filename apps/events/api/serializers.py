@@ -1653,6 +1653,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
     invited_by_email = serializers.EmailField(source='invited_by.email', read_only=True)
     invited_by_name = serializers.SerializerMethodField()
     is_valid = serializers.BooleanField(read_only=True)
+    permission_template_name = serializers.SerializerMethodField()
     _links = serializers.SerializerMethodField()
     
     class Meta:
@@ -1661,6 +1662,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
             'id', 'event', 'event_title', 'event_display_code',
             'target_user', 'target_user_email', 'target_user_name',
             'invited_by', 'invited_by_email', 'invited_by_name',
+            'permission_template', 'permission_template_name',
             'accepted', 'accepted_at', 'expires_at', 'added_at',
             'is_active', 'is_valid', '_links'
         )
@@ -1678,6 +1680,15 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
         """Get full name of the user who sent the invite."""
         if obj.invited_by:
             return obj.invited_by.get_full_name() or obj.invited_by.email
+        return None
+    
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_permission_template_name(self, obj):
+        """Get the name of the permission template if one is set."""
+        if obj.permission_template:
+            from apps.events.permission_templates import get_template
+            template = get_template(obj.permission_template)
+            return template['name'] if template else obj.permission_template
         return None
     
     @extend_schema_field({
@@ -1738,6 +1749,17 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Expiry date must be in the future.")
         return value
     
+    def validate_permission_template(self, value):
+        """Validate that the permission template code is valid."""
+        if value:
+            from apps.events.permission_templates import is_valid_template
+            if not is_valid_template(value):
+                raise serializers.ValidationError(
+                    f"Invalid permission template code: {value}. "
+                    "Use GET /api/event/permission-templates to see available templates."
+                )
+        return value
+    
     def validate(self, data):
         """Validate the entire invite creation/update."""
         # Get event from context (set by viewset)
@@ -1758,6 +1780,14 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
             target_user = data.get('target_user')
             
             if target_user:
+                # Validate user is in the organization (if event has one)
+                if event.organisation:
+                    from apps.events.utils.staff_helpers import validate_user_in_organization
+                    try:
+                        validate_user_in_organization(target_user, event)
+                    except serializers.ValidationError as e:
+                        raise serializers.ValidationError(str(e))
+                
                 existing_invite = EventStaffInvite.objects.filter(
                     event=event,
                     target_user=target_user,

@@ -2652,6 +2652,15 @@ class EventStaffViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(assigned_by=self.request.user)
 
+    def perform_destroy(self, instance):
+        super().perform_destroy(instance)
+
+        # also remove admin roles
+        EventRoleAssignment.objects.filter(
+            event=instance.event,
+            user=instance.user
+        ).delete()
+
 
 @extend_schema_view(
     list=extend_schema(

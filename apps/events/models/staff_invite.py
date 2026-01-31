@@ -18,6 +18,14 @@ class EventStaffInvite(models.Model):
     target_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='event_staff_invites_received')
     invited_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='event_staff_invites_sent')
     
+    # Permission template to apply on acceptance
+    permission_template = models.CharField(
+        max_length=50, 
+        blank=True, 
+        null=True,
+        help_text="Code of the permission template to apply when invite is accepted"
+    )
+    
     accepted = models.BooleanField(default=False)
     accepted_at = models.DateTimeField(blank=True, null=True)
     expires_at = models.DateTimeField(blank=True, null=True)
@@ -66,11 +74,32 @@ class EventStaffInvite(models.Model):
         self.accepted_at = timezone.now()
         self.is_active = False
 
-        EventStaff.objects.create(
+        # Create staff member
+        staff = EventStaff.objects.create(
             event=self.event,
             user=self.target_user,
             assigned_by=self.invited_by,
             notes=f"Staff added via invite {self.id}"
         )
+
+        # Apply permission template if one is set
+        if self.permission_template:
+            from apps.events.utils.staff_helpers import apply_permission_template
+            try:
+                apply_permission_template(
+                    event=self.event,
+                    user=self.target_user,
+                    template_code=self.permission_template,
+                    assigned_by=self.invited_by
+                )
+            except ValidationError as e:
+                # Log the error but don't fail the acceptance
+                # The staff member is still added, just without the template permissions
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Failed to apply permission template {self.permission_template} "
+                    f"for invite {self.id}: {str(e)}"
+                )
 
         self.save()
