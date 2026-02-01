@@ -781,27 +781,36 @@ class EventViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['get'], url_path='availability-templates')
     def availability_templates(self, request):
-        """List all available availability window templates."""
+        """
+        List availability window templates.
+        
+        Returns:
+        - Templates created by the current user
+        - Predefined templates (is_predefined=True) from the user's organization(s)
+        """
         from apps.common.models import AvailabilityWindowTemplate
         from apps.common.api.serializers import AvailabilityWindowTemplateSerializer
         from apps.organisations.models import Organisation
-        # Get predefined templates
-        templates = AvailabilityWindowTemplate.objects.filter(is_predefined=True)
+        from django.db.models import Q
         
-        # If user is authenticated, include their organization's custom templates
-        if request.user.is_authenticated:
-            user_orgs = Organisation.objects.filter(
-                memberships__user=request.user
+        if not request.user.is_authenticated:
+            return Response(
+                {"detail": "Authentication required"},
+                status=status.HTTP_401_UNAUTHORIZED
             )
-            custom_templates = AvailabilityWindowTemplate.objects.filter(
-                is_predefined=False,
-                organisation__in=user_orgs
-            )
-            templates = templates | custom_templates
         
-        serializer = AvailabilityWindowTemplateSerializer(templates, many=True, context={'request': request})
+        # Get user's organizations
+        user_orgs = Organisation.objects.filter(
+            memberships__user=request.user
+        )
+        
+        # Filter: (created by user) OR (predefined AND in user's org)
+        templates = AvailabilityWindowTemplate.objects.filter(
+            Q(created_by=request.user) |  # Templates created by this user
+            Q(is_predefined=True, organisation__in=user_orgs)  # Predefined templates from user's orgs
+        ).distinct().order_by('-created_at')
 
-        # paginate results
+        # Paginate results
         paginated = self.paginate_queryset(templates)
         if paginated is not None:
             serializer = AvailabilityWindowTemplateSerializer(paginated, many=True, context={'request': request})
@@ -809,6 +818,219 @@ class EventViewSet(viewsets.ModelViewSet):
         
 
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Manage Availability Window Template",
+        description=(
+            "Update (PATCH) or delete (DELETE) an availability window template. "
+            "Only the creator of the template can modify it. Predefined templates cannot be modified. "
+            "For updates: only name and description can be changed. Window configurations are immutable."
+        ),
+        tags=["Events", "Availability Windows"],
+        parameters=[
+            OpenApiParameter(
+                name='template_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='UUID of the template to update or delete',
+                required=True
+            )
+        ],
+        request=AvailabilityWindowTemplateSerializer,
+        responses={
+            200: AvailabilityWindowTemplateSerializer,
+            204: {"description": "Template deleted successfully"},
+            400: {"description": "Missing or invalid template_id"},
+            403: {"description": "Permission denied - not the creator or template is predefined"},
+            404: {"description": "Template not found"},
+        }
+    )
+    @action(detail=False, methods=['patch', 'delete'], url_path='availability-templates/manage', url_name='manage-availability-template')
+    def manage_availability_template(self, request, **kwargs):
+        """
+        Update or delete a template based on HTTP method.
+        
+        PATCH: Update template metadata (name and description only).
+        DELETE: Remove the template permanently.
+        
+        Only the creator can modify. Predefined templates are immutable.
+        """
+        from apps.common.models import AvailabilityWindowTemplate
+        from apps.common.api.serializers import AvailabilityWindowTemplateSerializer
+        
+        template_id = request.query_params.get('template_id')
+        if not template_id:
+            return Response(
+                {"detail": "template_id query parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            template = AvailabilityWindowTemplate.objects.get(template_id=template_id)
+        except AvailabilityWindowTemplate.DoesNotExist:
+            return Response(
+                {"detail": "Template not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if template is predefined
+        if template.is_predefined:
+            action = "modified" if request.method == 'PATCH' else "deleted"
+            return Response(
+                {"detail": f"Predefined templates cannot be {action}"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if user is the creator
+        if template.created_by != request.user:
+            action = "edit" if request.method == 'PATCH' else "delete"
+            return Response(
+                {"detail": f"Only the creator can {action} this template"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Handle DELETE method
+        if request.method == 'DELETE':
+            template.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        
+        # Handle PATCH method
+        # Only allow updating name and description
+        allowed_fields = {'name', 'description'}
+        update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
+        
+        serializer = AvailabilityWindowTemplateSerializer(
+            template,
+            data=update_data,
+            partial=True,
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Preview Template Application",
+        description=(
+            "Preview what availability windows would be created if this template is applied to the event. "
+            "Returns a list of windows that would be created with their calculated dates, "
+            "plus any conflicts with existing windows."
+        ),
+        tags=["Events", "Availability Windows"],
+        parameters=[
+            OpenApiParameter(
+                name='template_id',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description='ID of the template to preview',
+                required=True,
+            ),
+        ],
+        responses={
+            200: {
+                "description": "Preview data with windows and conflicts",
+                "type": "object",
+                "properties": {
+                    "windows": {"type": "array"},
+                    "conflicts": {"type": "array"},
+                    "has_conflicts": {"type": "boolean"},
+                }
+            },
+            404: {"description": "Event or template not found"},
+        }
+    )
+    @action(detail=True, methods=['get'], url_path='preview-template-application', url_name='preview-template-application')
+    def preview_template_application(self, request, event_id=None, **kwargs):
+        """
+        Preview template application showing what windows would be created and any conflicts.
+        """
+        from apps.common.models import AvailabilityWindowTemplate, AvailabilityWindow
+        from datetime import timedelta
+        
+        template_id = request.query_params.get('template_id')
+        if not template_id:
+            return Response(
+                {"detail": "template_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get event
+        event = self.get_object()
+        
+        # Get template
+        try:
+            template = AvailabilityWindowTemplate.objects.get(template_id=template_id)
+        except AvailabilityWindowTemplate.DoesNotExist:
+            return Response(
+                {"detail": "Template not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not event.start_datetime:
+            return Response(
+                {"detail": "Event must have a start date to apply template"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get existing windows for conflict detection
+        existing_windows = AvailabilityWindow.objects.filter(
+            availability_type=ContentType.objects.get_for_model(Event),
+            target_id=event.event_id
+        )
+        
+        # Calculate what windows would be created
+        preview_windows = []
+        conflicts = []
+        
+        for window_config in template.windows_config:
+            # Calculate dates
+            available_from = event.start_datetime + timedelta(days=window_config['offset_from_event_start'])
+            available_to = event.start_datetime + timedelta(days=window_config['offset_to_event_start'])
+            
+            window_data = {
+                'name': window_config.get('name', f"{window_config['availability_type'].replace('_', ' ').title()}"),
+                'description': window_config.get('description'),
+                'availability_type': window_config['availability_type'],
+                'available_from': available_from.isoformat(),
+                'available_to': available_to.isoformat(),
+            }
+            preview_windows.append(window_data)
+            
+            # Check for conflicts with existing windows
+            for existing in existing_windows:
+                if not existing.available_from or not existing.available_to:
+                    continue
+                
+                # Check if dates overlap
+                if (available_from < existing.available_to and 
+                    available_to > existing.available_from):
+                    
+                    # Same type overlap is more critical
+                    is_same_type = existing.availability_type == window_config['availability_type']
+                    
+                    conflicts.append({
+                        'new_window': window_data['name'],
+                        'existing_window': existing.name,
+                        'conflict_type': 'same_type_overlap' if is_same_type else 'different_type_overlap',
+                        'severity': 'high' if is_same_type else 'medium',
+                        'message': f"{'Same type ' if is_same_type else ''}Overlap with existing window '{existing.name}'",
+                        'existing_window_details': {
+                            'name': existing.name,
+                            'type': existing.availability_type,
+                            'from': existing.available_from.isoformat(),
+                            'to': existing.available_to.isoformat(),
+                        }
+                    })
+        
+        return Response({
+            'windows': preview_windows,
+            'conflicts': conflicts,
+            'has_conflicts': len(conflicts) > 0,
+            'conflict_summary': f"{len(conflicts)} conflict(s) detected" if conflicts else "No conflicts",
+        })
     
     @extend_schema(
         summary="Apply Template to Event",
@@ -841,12 +1063,18 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='apply-availability-template', 
-            permission_classes=[permissions.IsAuthenticated])
-    def apply_availability_template(self, request, event_id=None):
-        """Apply a template to create multiple availability windows for the event."""
-        from apps.common.models import AvailabilityWindowTemplate
+            permission_classes=[permissions.IsAuthenticated], url_name='apply-availability-template')
+    def apply_availability_template(self, request, event_id=None, **kwargs):
+        """
+        Apply a template to create multiple availability windows for the event.
+        
+        The frontend should call preview-template-application first to check for conflicts.
+        This endpoint will apply the template regardless of conflicts.
+        """
+        from apps.common.models import AvailabilityWindowTemplate, AvailabilityWindow
         from apps.common.api.serializers import AvailabilityWindowTemplateSerializer, AvailabilityWindowSerializer
         from apps.organisations.models import Organisation
+        from datetime import timedelta
         
         event = self.get_object()
         
@@ -872,22 +1100,58 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check if template is accessible (predefined or belongs to user's org)
-        if not template.is_predefined:
-            user_orgs = Organisation.objects.filter(    
-                memberships__user=request.user
+        # Check if template is accessible (created by user OR predefined in user's org)
+        from django.db.models import Q
+        user_orgs = Organisation.objects.filter(memberships__user=request.user)
+        
+        is_accessible = (
+            template.created_by == request.user or
+            (template.is_predefined and template.organisation in user_orgs)
+        )
+        
+        if not is_accessible:
+            return Response(
+                {"detail": "You don't have access to this template"},
+                status=status.HTTP_403_FORBIDDEN
             )
-            if template.organisation not in user_orgs:
-                return Response(
-                    {"detail": "You don't have access to this template"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        
+        # Check for conflicts before applying
+        existing_windows = AvailabilityWindow.objects.filter(
+            availability_type=ContentType.objects.get_for_model(Event),
+            target_id=event.event_id
+        )
+        
+        conflicts = []
+        for window_config in template.windows_config:
+            available_from = event.start_datetime + timedelta(days=window_config['offset_from_event_start'])
+            available_to = event.start_datetime + timedelta(days=window_config['offset_to_event_start'])
+            
+            for existing in existing_windows:
+                if not existing.available_from or not existing.available_to:
+                    continue
+                
+                if (available_from < existing.available_to and 
+                    available_to > existing.available_from):
+                    is_same_type = existing.availability_type == window_config['availability_type']
+                    conflicts.append({
+                        'new_window': window_config.get('name', window_config['availability_type']),
+                        'existing_window': existing.name,
+                        'same_type': is_same_type,
+                    })
         
         # Apply the template
         try:
             created_windows = template.apply_to_event(event, timezone=event.timezone)
             serializer = AvailabilityWindowSerializer(created_windows, many=True, context={'request': request})
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+            response_data = {
+                'windows': serializer.data,
+                'conflicts_detected': conflicts,
+                'message': f"Created {len(created_windows)} availability window(s)" + 
+                          (f" with {len(conflicts)} overlap(s)" if conflicts else "")
+            }
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response(
                 {"detail": f"Failed to apply template: {str(e)}"},
@@ -926,8 +1190,8 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='save-windows-as-template',
-            permission_classes=[permissions.IsAuthenticated])
-    def save_windows_as_template(self, request, event_id=None):
+            permission_classes=[permissions.IsAuthenticated], url_name='save-windows-as-template')
+    def save_windows_as_template(self, request, event_id=None, **kwargs):
         """Save the current event's availability windows as a custom template."""
         from apps.common.models import AvailabilityWindowTemplate
         from apps.common.api.serializers import AvailabilityWindowTemplateSerializer
