@@ -11,7 +11,8 @@ from drf_spectacular.types import OpenApiTypes
 from django.contrib.contenttypes.models import ContentType
 
 from apps.common.models import (
-    AvailabilityWindow, 
+    AvailabilityWindow,
+    AvailabilityWindowTemplate,
     Resource, 
     AccessRule,
     AvailabilityTypeChoices,
@@ -77,6 +78,72 @@ class AvailabilityWindowSerializer(serializers.ModelSerializer):
                     'available_to': 'Must be after available_from'
                 })
         return attrs
+
+
+class AvailabilityWindowTemplateSerializer(serializers.ModelSerializer):
+    """Serializer for AvailabilityWindowTemplate model."""
+    
+    created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
+    organisation_name = serializers.CharField(source='organisation.name', read_only=True)
+    windows_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = AvailabilityWindowTemplate
+        fields = (
+            'template_id', 'name', 'description', 'is_predefined',
+            'organisation', 'organisation_name', 'windows_config',
+            'created_by', 'created_by_email', 'windows_count',
+            'created_at', 'updated_at'
+        )
+        read_only_fields = ('template_id', 'created_at', 'updated_at', 'created_by')
+        extra_kwargs = {
+            'name': {'help_text': 'Name of the template'},
+            'description': {'help_text': 'Optional description of what this template provides'},
+            'is_predefined': {'help_text': 'Whether this is a system-defined template', 'default': False},
+            'windows_config': {'help_text': 'JSON configuration for availability windows in this template'},
+            'organisation': {'help_text': 'Organization that owns this custom template (null for predefined)', 'required': False, 'allow_null': True},
+        }
+    
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_windows_count(self, obj):
+        """Get the number of windows in this template."""
+        return len(obj.windows_config) if obj.windows_config else 0
+    
+    def validate_windows_config(self, value):
+        """Validate the windows_config JSON structure."""
+        if not isinstance(value, list):
+            raise serializers.ValidationError('windows_config must be a list')
+        
+        for idx, window in enumerate(value):
+            if not isinstance(window, dict):
+                raise serializers.ValidationError(f'Window {idx} must be an object')
+            
+            # Required fields
+            if 'name' not in window:
+                raise serializers.ValidationError(f'Window {idx} missing required field: name')
+            if 'availability_type' not in window:
+                raise serializers.ValidationError(f'Window {idx} missing required field: availability_type')
+            if 'offset_from_event_start' not in window:
+                raise serializers.ValidationError(f'Window {idx} missing required field: offset_from_event_start')
+            if 'offset_to_event_start' not in window:
+                raise serializers.ValidationError(f'Window {idx} missing required field: offset_to_event_start')
+            
+            # Validate availability_type is valid
+            from apps.common.models import AvailabilityTypeChoices
+            if window['availability_type'] not in [choice[0] for choice in AvailabilityTypeChoices.choices]:
+                raise serializers.ValidationError(f'Window {idx} has invalid availability_type')
+            
+            # Validate offsets are numbers
+            if not isinstance(window['offset_from_event_start'], (int, float)):
+                raise serializers.ValidationError(f'Window {idx} offset_from_event_start must be a number')
+            if not isinstance(window['offset_to_event_start'], (int, float)):
+                raise serializers.ValidationError(f'Window {idx} offset_to_event_start must be a number')
+            
+            # Validate offset logic (from should be before to)
+            if window['offset_from_event_start'] >= window['offset_to_event_start']:
+                raise serializers.ValidationError(f'Window {idx} offset_from must be before offset_to')
+        
+        return value
 
 
 class ResourceSerializer(serializers.ModelSerializer):

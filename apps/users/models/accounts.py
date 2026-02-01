@@ -131,3 +131,13 @@ class CommunityUser(AbstractUser):
         """Return the URL of the user's profile picture if available."""
         # Placeholder for future profile picture URL logic
         return self.profile.profile_picture.url if hasattr(self, 'profile') and self.profile.profile_picture else None
+    
+    @property
+    def is_verified(self):
+        """Check if the user's email is verified."""
+        return self.email_verified
+    
+    @property
+    def is_oauth_user(self):
+        """Check if the user logged in via OAuth."""
+        return bool(self.oauth_provider and self.oauth_id)

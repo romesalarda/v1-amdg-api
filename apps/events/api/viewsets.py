@@ -29,6 +29,7 @@ from apps.events.models import (
 from apps.common.models import AvailabilityWindow, Resource
 from apps.common.api.serializers import (
     AvailabilityWindowSerializer,
+    AvailabilityWindowTemplateSerializer,
     ResourceSerializer
 )
 from .serializers import (
@@ -557,6 +558,10 @@ class EventViewSet(viewsets.ModelViewSet):
     def availability_windows(self, request, event_id=None):
         event = self.get_object()
         windows = event.availability_windows.all()
+        paginated = self.paginate_queryset(windows)
+        if paginated is not None:
+            serializer = AvailabilityWindowSerializer(paginated, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
         serializer = AvailabilityWindowSerializer(windows, many=True, context={'request': request})
         return Response(serializer.data)
     
@@ -647,6 +652,340 @@ class EventViewSet(viewsets.ModelViewSet):
         
         window.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @extend_schema(
+        summary="Update Availability Window",
+        description=(
+            "Update an existing availability window for the event. "
+            "Allows partial updates (PATCH) or full updates (PUT) of availability window properties. "
+            "Only event creators, staff, and superusers can update availability windows. "
+            "The window_id can be provided as a query parameter or in the request body as 'availability_id'. "
+            "Validates that the window belongs to this event before updating."
+        ),
+        tags=["Events"],
+        parameters=[
+            OpenApiParameter(
+                name='window_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Availability window ID to update (UUID). Can also be provided in request body as availability_id.',
+                required=False
+            )
+        ],
+        request=AvailabilityWindowSerializer,
+        responses={
+            200: AvailabilityWindowSerializer,
+            400: OpenApiResponse(description='Invalid data or missing window_id'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Window not found for this event')
+        }
+    )
+    @action(detail=True, methods=['patch', 'put'], url_path='update-availability-window', permission_classes=[permissions.IsAuthenticated])
+    def update_availability_window(self, request, event_id=None):
+        """
+        Update an existing availability window for the event.
+        
+        Allows partial updates (PATCH) or full updates (PUT) of availability windows.
+        Only the event creator, staff, or superuser can update windows.
+        
+        Path Parameters:
+        - event_id (string): The unique identifier of the event
+        
+        Query Parameters:
+        - window_id (UUID, optional): The availability_id of the window to update.
+          Can also be provided in the request body as 'availability_id'.
+        
+        Request Body:
+        - name (string, optional): Window name
+        - description (string, optional): Window description
+        - availability_type (string, optional): Type of availability window
+        - available_from (datetime, optional): Start datetime
+        - available_to (datetime, optional): End datetime
+        - timezone (string, optional): Timezone string
+        - availability_id (UUID, optional): Window ID if not in query params
+        
+        Response Codes:
+        - 200: Window updated successfully
+        - 400: Invalid data or missing window_id
+        - 403: Permission denied
+        - 404: Window not found for this event
+        
+        Example Request:
+        PATCH /api/events/{event_id}/update-availability-window/?window_id={uuid}
+        {
+          "name": "Updated Registration Window",
+          "available_to": "2026-03-15T23:59:59Z"
+        }
+        """
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to update availability windows for this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get window_id from query params or request body
+        # availability_id is UUID type, event_id in path is string
+        window_id = request.query_params.get('window_id') or request.data.get('availability_id')
+        if not window_id:
+            return Response(
+                {"detail": "window_id query parameter or availability_id in request body is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Fetch the window and verify it belongs to this event
+        try:
+            content_type = ContentType.objects.get_for_model(Event)
+            window = AvailabilityWindow.objects.get(
+                availability_id=window_id,
+                target_id=event.id,
+                target_type=content_type
+            )
+        except AvailabilityWindow.DoesNotExist:
+            return Response(
+                {"detail": "Availability window not found for this event"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Determine if partial update (PATCH) or full update (PUT)
+        partial = request.method == 'PATCH'
+        
+        # Update the window using the serializer
+        serializer = AvailabilityWindowSerializer(
+            window,
+            data=request.data,
+            partial=partial,
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="List Availability Window Templates",
+        description=(
+            "Retrieve all available templates for creating availability windows. "
+            "Includes both system-defined predefined templates and custom templates "
+            "created by the user's organization. Templates contain configurations for "
+            "creating multiple availability windows with predefined offsets from the event date."
+        ),
+        tags=["Events", "Availability Windows"],
+        responses={
+            200: AvailabilityWindowTemplateSerializer(many=True),
+        }
+    )
+    @action(detail=False, methods=['get'], url_path='availability-templates')
+    def availability_templates(self, request):
+        """List all available availability window templates."""
+        from apps.common.models import AvailabilityWindowTemplate
+        from apps.common.api.serializers import AvailabilityWindowTemplateSerializer
+        from apps.organisations.models import Organisation
+        # Get predefined templates
+        templates = AvailabilityWindowTemplate.objects.filter(is_predefined=True)
+        
+        # If user is authenticated, include their organization's custom templates
+        if request.user.is_authenticated:
+            user_orgs = Organisation.objects.filter(
+                memberships__user=request.user
+            )
+            custom_templates = AvailabilityWindowTemplate.objects.filter(
+                is_predefined=False,
+                organisation__in=user_orgs
+            )
+            templates = templates | custom_templates
+        
+        serializer = AvailabilityWindowTemplateSerializer(templates, many=True, context={'request': request})
+
+        # paginate results
+        paginated = self.paginate_queryset(templates)
+        if paginated is not None:
+            serializer = AvailabilityWindowTemplateSerializer(paginated, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
+        
+
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Apply Template to Event",
+        description=(
+            "Apply an availability window template to the event. This will create multiple "
+            "availability windows based on the template configuration. Each window's dates "
+            "are calculated using offsets from the event start date. This is a convenient "
+            "way to set up standard availability windows (registration, payment, refunds, etc.) "
+            "without manually creating each one."
+        ),
+        tags=["Events", "Availability Windows"],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'template_id': {
+                        'type': 'string',
+                        'format': 'uuid',
+                        'description': 'UUID of the template to apply'
+                    }
+                },
+                'required': ['template_id']
+            }
+        },
+        responses={
+            201: AvailabilityWindowSerializer(many=True),
+            400: OpenApiTypes.OBJECT,
+            403: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='apply-availability-template', 
+            permission_classes=[permissions.IsAuthenticated])
+    def apply_availability_template(self, request, event_id=None):
+        """Apply a template to create multiple availability windows for the event."""
+        from apps.common.models import AvailabilityWindowTemplate
+        from apps.common.api.serializers import AvailabilityWindowTemplateSerializer, AvailabilityWindowSerializer
+        from apps.organisations.models import Organisation
+        
+        event = self.get_object()
+        
+        # Permission check
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to apply templates to this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        template_id = request.data.get('template_id')
+        if not template_id:
+            return Response(
+                {"detail": "template_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            template = AvailabilityWindowTemplate.objects.get(template_id=template_id)
+        except AvailabilityWindowTemplate.DoesNotExist:
+            return Response(
+                {"detail": "Template not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if template is accessible (predefined or belongs to user's org)
+        if not template.is_predefined:
+            user_orgs = Organisation.objects.filter(    
+                memberships__user=request.user
+            )
+            if template.organisation not in user_orgs:
+                return Response(
+                    {"detail": "You don't have access to this template"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        # Apply the template
+        try:
+            created_windows = template.apply_to_event(event, timezone=event.timezone)
+            serializer = AvailabilityWindowSerializer(created_windows, many=True, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response(
+                {"detail": f"Failed to apply template: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Save Current Windows as Template",
+        description=(
+            "Save the current event's availability windows as a reusable template. "
+            "The template will be associated with your organization and can be applied "
+            "to future events. Window dates are converted to offsets from event start date "
+            "for reusability."
+        ),
+        tags=["Events", "Availability Windows"],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'name': {
+                        'type': 'string',
+                        'description': 'Name for the template'
+                    },
+                    'description': {
+                        'type': 'string',
+                        'description': 'Optional description of the template'
+                    }
+                },
+                'required': ['name']
+            }
+        },
+        responses={
+            201: AvailabilityWindowTemplateSerializer,
+            400: OpenApiTypes.OBJECT,
+            403: OpenApiTypes.OBJECT,
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='save-windows-as-template',
+            permission_classes=[permissions.IsAuthenticated])
+    def save_windows_as_template(self, request, event_id=None):
+        """Save the current event's availability windows as a custom template."""
+        from apps.common.models import AvailabilityWindowTemplate
+        from apps.common.api.serializers import AvailabilityWindowTemplateSerializer
+        from datetime import datetime
+        
+        event = self.get_object()
+        
+        # Permission check
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to create templates from this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        name = request.data.get('name')
+        if not name:
+            return Response(
+                {"detail": "Template name is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get event's availability windows
+        windows = event.availability_windows.all()
+        if not windows:
+            return Response(
+                {"detail": "Event has no availability windows to save"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Convert windows to template format (calculate offsets from event start)
+        event_start = event.start_datetime
+        windows_config = []
+        
+        for window in windows:
+            # Calculate offsets in days
+            offset_from = (window.available_from - event_start).total_seconds() / (24 * 3600)
+            offset_to = (window.available_to - event_start).total_seconds() / (24 * 3600)
+            
+            windows_config.append({
+                'name': window.name,
+                'description': window.description or '',
+                'availability_type': window.availability_type,
+                'offset_from_event_start': round(offset_from, 2),
+                'offset_to_event_start': round(offset_to, 2),
+            })
+        
+        # Create the template
+        template = AvailabilityWindowTemplate.objects.create(
+            name=name,
+            description=request.data.get('description', ''),
+            is_predefined=False,
+            organisation=event.organisation,
+            windows_config=windows_config,
+            created_by=request.user
+        )
+        
+        serializer = AvailabilityWindowTemplateSerializer(template, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
     
     @extend_schema(
         summary="List Event Resources",
