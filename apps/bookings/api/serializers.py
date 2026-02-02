@@ -551,7 +551,7 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookingPackage
         fields = (
-            'id', 'name', 'event', 'event_name', 'ticket_type', 'ticket_type_title',
+            'id', 'name', 'event', 'event_name', 'ticket_type', 'ticket_type_title','description',
             'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount', 'is_active',
             'created_by', 'created_by_name', 'created_at', '_links'
         )
@@ -901,6 +901,7 @@ class EventAlternativeSigninListSerializer(serializers.ModelSerializer):
         model = EventAlternativeSigninIdentifier
         fields = (
             'id', 'title', 'event', 'event_name', 'is_active',
+            'format_match', 'description',
             'verification_status', 'verification_status_display',
             'max_uses_per_signin', 'created_at', '_links'
         )
