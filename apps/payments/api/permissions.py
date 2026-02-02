@@ -336,16 +336,33 @@ class IsAdministrativeStaffOnly(permissions.BasePermission):
         ```
     """
     
-    message = "Only administrators and staff can perform this action."
+    message = "Only administrators and staff can perform this action. You must have an administrative role for the relevant event."
     
     def has_permission(self, request, view) -> bool:
-        """Check if user has administrative privileges."""
+        """Check if user has administrative privileges.
+        
+        For create/update actions on discounts, validates that the user has
+        access to the event associated with the target object to prevent
+        cross-event discount manipulation.
+        """
         if not request.user or not request.user.is_authenticated:
             return False
         
-        # Django superusers and staff always have access
+        # Superusers and staff bypass all permission checks for administrative convenience
+        # They have unrestricted access to all events and objects
         if request.user.is_superuser or request.user.is_staff:
             return True
+        
+        # For discount create/update actions, validate event access BEFORE allowing operation
+        if view.action in ['create', 'update', 'partial_update']:
+            # Extract target information from request data
+            target_type_id = request.data.get('target_type')
+            target_id = request.data.get('target_id')
+            
+            if target_type_id and target_id:
+                # Validate that the target object's event matches user's event access
+                if not self._validate_event_access_for_target(request.user, target_type_id, target_id):
+                    return False
         
         # Check for administrative event role
         # For list views, we check if user has ANY administrative role
@@ -360,6 +377,44 @@ class IsAdministrativeStaffOnly(permissions.BasePermission):
         """Check administrative access for specific object."""
         admin_check = IsAdministrativeStaff()
         return admin_check.has_object_permission(request, view, obj)
+    
+    def _validate_event_access_for_target(self, user, target_type_id, target_id) -> bool:
+        """Validate user has administrative access to the target object's event.
+        
+        Args:
+            user: The user making the request
+            target_type_id: ContentType ID of the target object
+            target_id: ID of the target object
+            
+        Returns:
+            bool: True if user has access, False otherwise
+        """
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import BookingPackage
+        
+        try:
+            content_type = ContentType.objects.get(pk=target_type_id)
+            model_class = content_type.model_class()
+            target_obj = model_class.objects.select_related('event').get(pk=target_id)
+            
+            # Extract event from target object
+            if isinstance(target_obj, BookingPackage):
+                event = target_obj.event
+                
+                # Check if user has ADMINISTRATIVE role for this event
+                has_access = EventRoleAssignment.objects.filter(
+                    user=user,
+                    event=event,
+                    role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+                ).exists()
+                
+                return has_access
+            
+            # For other target types, deny access (only superusers/staff can create)
+            return False
+            
+        except (ContentType.DoesNotExist, model_class.DoesNotExist):
+            return False
 
 
 class IsReadOnly(permissions.BasePermission):

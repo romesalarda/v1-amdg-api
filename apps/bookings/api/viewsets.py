@@ -1175,6 +1175,130 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
         rules = package.rules.filter(active=True)
         serializer = BookingPackageRuleSerializer(rules, many=True, context={'request': request})
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Add discount to booking package",
+        description=(
+            "Create a discount specifically for this booking package. "
+            "The discount will be automatically linked to this package. "
+            "Administrative staff only."
+        ),
+        tags=["Booking Packages"],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'description': 'Discount name'},
+                    'description': {'type': 'string', 'description': 'Optional description'},
+                    'discount_type': {'type': 'string', 'enum': ['PERCENTAGE', 'FIXED']},
+                    'percentage': {'type': 'string', 'description': 'Percentage value (0-100) for percentage discounts'},
+                    'amount': {'type': 'string', 'description': 'Fixed amount for fixed discounts'},
+                    'active': {'type': 'boolean', 'default': True},
+                },
+                'required': ['name', 'discount_type'],
+            }
+        },
+        responses={
+            201: {'description': 'Discount created successfully'},
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'},
+        },
+        operation_id="bookings_package_add_discount",
+    )
+    @action(detail=True, methods=['post'], url_path='discounts', permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaff])
+    def add_discount(self, request, pk=None):
+        """Add a discount to this booking package."""
+        from apps.payments.models import Discount, DiscountType
+        from apps.payments.api.serializers import DiscountDetailSerializer
+        from django.contrib.contenttypes.models import ContentType
+        from djmoney.money import Money
+        from decimal import Decimal
+        
+        package = self.get_object()
+        
+        # Validate required fields
+        name = request.data.get('name')
+        discount_type = request.data.get('discount_type')
+        
+        if not name:
+            return Response(
+                {'name': ['This field is required.']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not discount_type or discount_type not in ['PERCENTAGE', 'FIXED']:
+            return Response(
+                {'discount_type': ['Must be either PERCENTAGE or FIXED.']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate type-specific fields
+        if discount_type == 'PERCENTAGE':
+            percentage = request.data.get('percentage')
+            if not percentage:
+                return Response(
+                    {'percentage': ['Percentage is required for percentage discounts.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                percentage_val = Decimal(str(percentage))
+                if not (0 <= percentage_val <= 100):
+                    return Response(
+                        {'percentage': ['Percentage must be between 0 and 100.']},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except (ValueError, TypeError):
+                return Response(
+                    {'percentage': ['Invalid percentage value.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        elif discount_type == 'FIXED':
+            amount = request.data.get('amount')
+            if not amount:
+                return Response(
+                    {'amount': ['Amount is required for fixed discounts.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                amount_val = Decimal(str(amount))
+                if amount_val <= 0:
+                    return Response(
+                        {'amount': ['Amount must be greater than zero.']},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except (ValueError, TypeError):
+                return Response(
+                    {'amount': ['Invalid amount value.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Create discount with automatic target linkage
+        try:
+            discount_data = {
+                'name': name,
+                'description': request.data.get('description', ''),
+                'discount_type': discount_type,
+                'target_type': ContentType.objects.get_for_model(BookingPackage),
+                'target_id': package.id,
+                'active': request.data.get('active', True),
+                'created_by': request.user,
+            }
+            
+            if discount_type == 'PERCENTAGE':
+                discount_data['percentage'] = Decimal(str(request.data.get('percentage')))
+            else:
+                discount_data['amount'] = Money(Decimal(str(request.data.get('amount'))), 'GBP')
+            
+            discount = Discount.objects.create(**discount_data)
+            
+            serializer = DiscountDetailSerializer(discount, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 # ============================================================================

@@ -468,14 +468,17 @@ class DiscountListSerializer(serializers.ModelSerializer):
     
     _links = serializers.SerializerMethodField()
     discount_value = serializers.SerializerMethodField(help_text="Human-readable discount value")
+    target_package = serializers.SerializerMethodField(help_text="Target booking package if applicable")
     created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
     created_at = serializers.DateTimeField(read_only=True)
+    rules = DiscountRuleSerializer(many=True, read_only=True)
     
     class Meta:
         model = Discount
         fields = (
             'id', 'discount_id', 'name', 'discount_type', 'discount_value',
-            'active', 'created_by', 'created_by_name', 'created_at', '_links'
+            'description', 'percentage', 'amount', 'target_package',
+            'active', 'created_by', 'created_by_name', 'created_at', 'rules', '_links'
         )
         read_only_fields = ('id', 'discount_id', 'created_at')
         extra_kwargs = {
@@ -485,6 +488,28 @@ class DiscountListSerializer(serializers.ModelSerializer):
     def get_discount_value(self, obj) -> str:
         """Return human-readable discount value."""
         return obj.display_value
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'id': {'type': 'integer'},
+            'name': {'type': 'string'},
+        },
+        'nullable': True
+    })
+    def get_target_package(self, obj) -> Optional[Dict[str, Any]]:
+        """Return target booking package info if discount is linked to a package."""
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import BookingPackage
+        
+        if obj.target and obj.target_type:
+            package_ct = ContentType.objects.get_for_model(BookingPackage)
+            if obj.target_type == package_ct and isinstance(obj.target, BookingPackage):
+                return {
+                    'id': obj.target.id,
+                    'name': obj.target.name,
+                }
+        return None
     
     @extend_schema_field({
         'type': 'object',
@@ -579,20 +604,81 @@ class DiscountCreateUpdateSerializer(serializers.ModelSerializer):
                     'amount': "Discount amount must be greater than zero."
                 })
         
-        # Validate target exists
+        # Validate target exists and user has access
         target_type = attrs.get('target_type')
         target_id = attrs.get('target_id')
         
         if target_type and target_id:
             try:
                 model_class = target_type.model_class()
-                model_class.objects.get(pk=target_id)
+                target_obj = model_class.objects.get(pk=target_id)
+                
+                # Validate user has access to the target object
+                self._validate_target_access(target_obj)
+                
             except model_class.DoesNotExist:
                 raise serializers.ValidationError({
                     'target_id': f"Target object does not exist."
                 })
         
         return attrs
+    
+    def _validate_target_access(self, target_obj):
+        """
+        Validate that the user has access to manage discounts for the target object.
+        
+        For BookingPackage: User must have ADMINISTRATIVE role for the package's event.
+        Superusers and staff always have access.
+        
+        Args:
+            target_obj: The target object (e.g., BookingPackage)
+        
+        Raises:
+            ValidationError: If user doesn't have access to the target
+        """
+        request = self.context.get('request')
+        if not request or not request.user:
+            raise serializers.ValidationError({
+                'target_id': "Unable to verify user access to target object."
+            })
+        
+        user = request.user
+        
+        # Superusers and staff have access to everything
+        if user.is_superuser or user.is_staff:
+            return
+        
+        # Check access based on target type
+        from apps.bookings.models import BookingPackage
+        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+        
+        if isinstance(target_obj, BookingPackage):
+            # User must have ADMINISTRATIVE role for this event
+            has_access = EventRoleAssignment.objects.filter(
+                user=user,
+                event=target_obj.event,
+                role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+            ).exists()
+            
+            if not has_access:
+                raise serializers.ValidationError({
+                    'target_id': (
+                        f"Permission denied: You don't have the required administrative role for event '{target_obj.event.title}'. "
+                        f"To manage discounts for this booking package, you need an ADMINISTRATIVE role assignment "
+                        f"(such as Event Manager, Financial Manager, or Administrator) for this event. "
+                        f"Please contact your event organizer or system administrator."
+                    )
+                })
+        else:
+            # For other target types, we might need to add validation later
+            # For now, require superuser/staff for unknown target types
+            raise serializers.ValidationError({
+                'target_id': (
+                    f"Permission denied: Only system administrators can create discounts for this target type. "
+                    f"If you need to create discounts for {type(target_obj).__name__} objects, "
+                    f"please contact your system administrator to request elevated permissions."
+                )
+            })
 
 
 # ============================================================================

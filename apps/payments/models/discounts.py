@@ -82,11 +82,11 @@ class Discount(models.Model):
         if self.discount_type == DiscountType.FIXED and self.amount is None:
             raise ValidationError("Fixed discount requires amount.")
 
-        if self.discount_type == DiscountType.PERCENTAGE and self.amount:
-            raise ValidationError("Percentage discount must not define amount.")
+        # if self.discount_type == DiscountType.PERCENTAGE and self.amount:
+        #     raise ValidationError("Percentage discount must not define amount.")
 
-        if self.discount_type == DiscountType.FIXED and self.percentage:
-            raise ValidationError("Fixed discount must not define percentage.")
+        # if self.discount_type == DiscountType.FIXED and self.percentage:
+        #     raise ValidationError("Fixed discount must not define percentage.")
         
         if self.target_id is None or self.target_type is None:
             raise ValidationError("Discount must have a valid target.")

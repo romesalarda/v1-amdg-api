@@ -279,6 +279,7 @@ class DiscountFilterSet(filters.FilterSet):
     - Discount type (PERCENTAGE/FIXED)
     - Active status
     - Target type and ID
+    - Event (filters by target objects within the event)
     - Creation date
     - Amount/percentage ranges
     """
@@ -301,6 +302,16 @@ class DiscountFilterSet(filters.FilterSet):
     target_id = filters.NumberFilter(
         field_name='target_id',
         help_text="Filter by target object ID"
+    )
+    
+    # Event filtering - filters discounts by target objects within the event
+    event = filters.NumberFilter(
+        method='filter_by_event',
+        help_text="Filter discounts by event ID (filters target objects within the event)"
+    )
+    event__event_id = filters.UUIDFilter(
+        method='filter_by_event_uuid',
+        help_text="Filter discounts by event UUID"
     )
     
     min_percentage = filters.NumberFilter(
@@ -354,6 +365,66 @@ class DiscountFilterSet(filters.FilterSet):
             Q(name__icontains=value) |
             Q(description__icontains=value)
         )
+    
+    def filter_by_event(self, queryset, name, value):
+        """
+        Filter discounts by event ID.
+        Currently supports BookingPackage as the main target type.
+        Uses Subquery for optimized database performance.
+        """
+        if not value:
+            return queryset
+        
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import BookingPackage
+        from django.db.models import OuterRef, Exists
+        
+        # Get BookingPackages for this event using Subquery pattern
+        booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+        package_subquery = BookingPackage.objects.filter(
+            event_id=value,
+            id=OuterRef('target_id')
+        )
+        
+        # Filter discounts targeting these packages using EXISTS
+        return queryset.filter(
+            target_type=booking_package_ct
+        ).annotate(
+            has_matching_package=Exists(package_subquery)
+        ).filter(has_matching_package=True)
+    
+    def filter_by_event_uuid(self, queryset, name, value):
+        """
+        Filter discounts by event UUID.
+        Currently supports BookingPackage as the main target type.
+        Uses Subquery for optimized database performance.
+        """
+        if not value:
+            return queryset
+        
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import BookingPackage
+        from apps.events.models import Event
+        from django.db.models import OuterRef, Exists
+        
+        try:
+            event = Event.objects.get(event_id=value)
+        except Event.DoesNotExist:
+            return queryset.none()
+        
+        # Get BookingPackages for this event using Subquery pattern
+        booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+        package_subquery = BookingPackage.objects.filter(
+            event=event,
+            id=OuterRef('target_id')
+        )
+        
+        # Filter discounts targeting these packages using EXISTS
+        return queryset.filter(
+            target_type=booking_package_ct
+        ).annotate(
+            has_matching_package=Exists(package_subquery)
+        ).filter(has_matching_package=True)
 
 
 class DiscountRuleFilterSet(filters.FilterSet):
@@ -363,6 +434,7 @@ class DiscountRuleFilterSet(filters.FilterSet):
     Supports filtering by:
     - Rule type
     - Discount
+    - Event (filters by discount's target event)
     - Active status
     - Value matching
     """
@@ -380,6 +452,16 @@ class DiscountRuleFilterSet(filters.FilterSet):
     discount__discount_id = filters.UUIDFilter(
         field_name='discount__discount_id',
         help_text="Filter by discount UUID"
+    )
+    
+    # Event filtering - filters rules by discount's target event
+    event = filters.NumberFilter(
+        method='filter_by_event',
+        help_text="Filter rules by event ID"
+    )
+    event__event_id = filters.UUIDFilter(
+        method='filter_by_event_uuid',
+        help_text="Filter rules by event UUID"
     )
     
     active = filters.BooleanFilter(
@@ -411,6 +493,66 @@ class DiscountRuleFilterSet(filters.FilterSet):
             Q(name__icontains=value) |
             Q(description__icontains=value)
         )
+    
+    def filter_by_event(self, queryset, name, value):
+        """
+        Filter discount rules by event ID.
+        Filters based on the event of the discount's target object.
+        Uses Subquery for optimized database performance.
+        """
+        if not value:
+            return queryset
+        
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import BookingPackage
+        from django.db.models import OuterRef, Exists
+        
+        # Get BookingPackages for this event using Subquery pattern
+        booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+        package_subquery = BookingPackage.objects.filter(
+            event_id=value,
+            id=OuterRef('discount__target_id')
+        )
+        
+        # Filter rules for discounts targeting these packages using EXISTS
+        return queryset.filter(
+            discount__target_type=booking_package_ct
+        ).annotate(
+            has_matching_package=Exists(package_subquery)
+        ).filter(has_matching_package=True)
+    
+    def filter_by_event_uuid(self, queryset, name, value):
+        """
+        Filter discount rules by event UUID.
+        Filters based on the event of the discount's target object.
+        Uses Subquery for optimized database performance.
+        """
+        if not value:
+            return queryset
+        
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import BookingPackage
+        from apps.events.models import Event
+        from django.db.models import OuterRef, Exists
+        
+        try:
+            event = Event.objects.get(event_id=value)
+        except Event.DoesNotExist:
+            return queryset.none()
+        
+        # Get BookingPackages for this event using Subquery pattern
+        booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+        package_subquery = BookingPackage.objects.filter(
+            event=event,
+            id=OuterRef('discount__target_id')
+        )
+        
+        # Filter rules for discounts targeting these packages using EXISTS
+        return queryset.filter(
+            discount__target_type=booking_package_ct
+        ).annotate(
+            has_matching_package=Exists(package_subquery)
+        ).filter(has_matching_package=True)
 
 
 class RefundRequestFilterSet(filters.FilterSet):

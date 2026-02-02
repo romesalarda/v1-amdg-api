@@ -128,7 +128,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Payment.objects.select_related(
-        'user', 'event', 'method'
+        'user', 'event', 'method', 'target_type'
     ).prefetch_related(
         'refund_requests', 'donations', 'history_actions'
     )
@@ -566,6 +566,32 @@ class PaymentMethodViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         summary="List discounts",
         description="Retrieve all discounts. Only accessible by administrative staff.",
+        parameters=[
+            OpenApiParameter(
+                name='event',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter discounts by event ID (shows discounts for objects within this event)'
+            ),
+            OpenApiParameter(
+                name='event__event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Filter discounts by event UUID'
+            ),
+            OpenApiParameter(
+                name='discount_type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by discount type (PERCENTAGE or FIXED)'
+            ),
+            OpenApiParameter(
+                name='active',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description='Filter active/inactive discounts'
+            ),
+        ],
         tags=["Discounts"],
     ),
     retrieve=extend_schema(
@@ -610,11 +636,16 @@ class DiscountViewSet(viewsets.ModelViewSet):
     """
     ViewSet for Discount model operations.
     
-    Permissions: Administrative staff only
-    Provides full CRUD for discount management.
+    Permissions: Administrative staff only (includes event managers with ADMINISTRATIVE role)
+    Provides full CRUD for discount management with event-scoped filtering.
+    
+    Event Filtering:
+    - Use ?event=<event_id> or ?event__event_id=<event_id> to filter discounts
+    - Only shows discounts targeting objects within the specified event
+    - Event managers can only manage discounts for their events
     """
     
-    queryset = Discount.objects.select_related('created_by').prefetch_related('rules')
+    queryset = Discount.objects.select_related('created_by', 'target_type').prefetch_related('rules')
     permission_classes = [permissions.IsAuthenticated, IsAdministrativeStaffOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -623,6 +654,77 @@ class DiscountViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'name', 'discount_type']
     ordering = ['-created_at']
     lookup_field = 'discount_id'
+    
+    def get_queryset(self):
+        """
+        Filter queryset based on user permissions and event access.
+        
+        - Superusers/staff see all discounts
+        - Event managers see only discounts for events they manage
+        - Supports ?event=<id> and ?event__event_id=<uuid> query parameters
+        """
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Superusers and staff see everything
+        if user.is_superuser or user.is_staff:
+            return queryset
+        
+        # Check for event filter in query params
+        event_id = self.request.query_params.get('event')
+        event_uuid = self.request.query_params.get('event__event_id')
+        
+        if event_id or event_uuid:
+            # Event-specific filtering handled by filterset
+            # Just ensure user has access to that event
+            from apps.events.models import Event, EventRoleAssignment, EventRoleCategoryChoices
+            
+            try:
+                if event_uuid:
+                    event = Event.objects.get(event_id=event_uuid)
+                else:
+                    event = Event.objects.get(id=event_id)
+                
+                # Check if user has administrative role for this event
+                has_admin_role = EventRoleAssignment.objects.filter(
+                    user=user,
+                    event=event,
+                    role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+                ).exists()
+                
+                if not has_admin_role:
+                    # User doesn't have access to this event
+                    return queryset.none()
+            except Event.DoesNotExist:
+                return queryset.none()
+        else:
+            # No event filter - show discounts for events user manages
+            from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+            from django.contrib.contenttypes.models import ContentType
+            from apps.bookings.models import BookingPackage
+            
+            # Get events where user has ADMINISTRATIVE role
+            managed_events = EventRoleAssignment.objects.filter(
+                user=user,
+                role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+            ).values_list('event_id', flat=True)
+            
+            if not managed_events:
+                return queryset.none()
+            
+            # Filter discounts targeting objects within managed events
+            # Currently supporting BookingPackage as the main target
+            booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+            package_ids = BookingPackage.objects.filter(
+                event_id__in=managed_events
+            ).values_list('id', flat=True)
+            
+            queryset = queryset.filter(
+                target_type=booking_package_ct,
+                target_id__in=package_ids
+            )
+        
+        return queryset
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -641,6 +743,32 @@ class DiscountViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         summary="List discount rules",
         description="Retrieve all discount rules. Only accessible by administrative staff.",
+        parameters=[
+            OpenApiParameter(
+                name='event',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter rules by event ID (shows rules for discounts in this event)'
+            ),
+            OpenApiParameter(
+                name='event__event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Filter rules by event UUID'
+            ),
+            OpenApiParameter(
+                name='discount',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter rules by discount ID'
+            ),
+            OpenApiParameter(
+                name='rule_type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by rule type'
+            ),
+        ],
         tags=["Discounts"],
     ),
     retrieve=extend_schema(
@@ -689,8 +817,12 @@ class DiscountRuleViewSet(viewsets.ModelViewSet):
     """
     ViewSet for DiscountRule model operations.
     
-    Permissions: Administrative staff only
-    Manages rules for discount application.
+    Permissions: Administrative staff only (includes event managers with ADMINISTRATIVE role)
+    Manages rules for discount application with event-scoped filtering.
+    
+    Event Filtering:
+    - Use ?event=<event_id> or ?event__event_id=<event_id> to filter rules
+    - Filters based on the event of the discount's target object
     """
     
     queryset = DiscountRule.objects.select_related('discount', 'added_by')
@@ -702,6 +834,87 @@ class DiscountRuleViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'name', 'rule_type']
     ordering = ['-created_at']
     lookup_field = 'rule_id'
+    
+    def get_queryset(self):
+        """
+        Filter queryset based on user permissions and event access.
+        
+        - Superusers/staff see all rules
+        - Event managers see only rules for discounts targeting their events
+        - Supports ?event=<id> and ?event__event_id=<uuid> query parameters
+        """
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Superusers and staff see everything
+        if user.is_superuser or user.is_staff:
+            return queryset
+        
+        # Check for event filter in query params
+        event_id = self.request.query_params.get('event')
+        event_uuid = self.request.query_params.get('event__event_id')
+        
+        if event_id or event_uuid:
+            # Event-specific filtering
+            from apps.events.models import Event, EventRoleAssignment, EventRoleCategoryChoices
+            from django.contrib.contenttypes.models import ContentType
+            from apps.bookings.models import BookingPackage
+            
+            try:
+                if event_uuid:
+                    event = Event.objects.get(event_id=event_uuid)
+                else:
+                    event = Event.objects.get(id=event_id)
+                
+                # Check if user has administrative role for this event
+                has_admin_role = EventRoleAssignment.objects.filter(
+                    user=user,
+                    event=event,
+                    role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+                ).exists()
+                
+                if not has_admin_role:
+                    return queryset.none()
+                
+                # Filter rules for discounts targeting objects in this event
+                booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+                package_ids = BookingPackage.objects.filter(
+                    event=event
+                ).values_list('id', flat=True)
+                
+                queryset = queryset.filter(
+                    discount__target_type=booking_package_ct,
+                    discount__target_id__in=package_ids
+                )
+            except Event.DoesNotExist:
+                return queryset.none()
+        else:
+            # No event filter - show rules for discounts in events user manages
+            from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+            from django.contrib.contenttypes.models import ContentType
+            from apps.bookings.models import BookingPackage
+            
+            # Get events where user has ADMINISTRATIVE role
+            managed_events = EventRoleAssignment.objects.filter(
+                user=user,
+                role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+            ).values_list('event_id', flat=True)
+            
+            if not managed_events:
+                return queryset.none()
+            
+            # Filter rules for discounts targeting objects within managed events
+            booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+            package_ids = BookingPackage.objects.filter(
+                event_id__in=managed_events
+            ).values_list('id', flat=True)
+            
+            queryset = queryset.filter(
+                discount__target_type=booking_package_ct,
+                discount__target_id__in=package_ids
+            )
+        
+        return queryset
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""

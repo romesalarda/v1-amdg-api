@@ -551,7 +551,7 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookingPackage
         fields = (
-            'id', 'name', 'event', 'event_name', 'ticket_type', 'ticket_type_title','description',
+            'id','name', 'event', 'event_name', 'ticket_type', 'ticket_type_title','description',
             'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount', 'is_active',
             'created_by', 'created_by_name', 'created_at', '_links'
         )
