@@ -257,7 +257,7 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def upcoming(self, request):
         from django.utils import timezone
-        queryset = self.get_queryset().filter(start_datetime__gt=timezone.now())
+        queryset = self.get_queryset().filter(start_datetime__gte=timezone.now())
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = EventListSerializer(page, many=True, context={'request': request})
@@ -1281,6 +1281,12 @@ class EventViewSet(viewsets.ModelViewSet):
         resource_type = request.query_params.get('resource_type')
         if resource_type:
             resources = resources.filter(resource_type=resource_type)
+
+        # paginate
+        paginated = self.paginate_queryset(resources)
+        if paginated is not None:
+            serializer = ResourceSerializer(paginated, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
         
         serializer = ResourceSerializer(resources, many=True, context={'request': request})
         return Response(serializer.data)
