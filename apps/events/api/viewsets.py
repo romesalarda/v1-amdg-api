@@ -200,8 +200,8 @@ class EventViewSet(viewsets.ModelViewSet):
         - add_staff / remove_staff / staff_list: Manage event staff
         - soft_delete_event / restore_event: Soft delete operations
         - availability_windows: Manage availability windows
-        - resources / add_resource / remove_resource: Resource management
-        - landing_images / add_landing_image: Landing page image management
+        - resources / add_resource / update_resource / remove_resource: Resource management
+        - landing_images / add_landing_image / promote_landing_image / demote_landing_image: Landing page image management
         - assign_permission: Assign permissions to users
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -1426,6 +1426,228 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Update Resource Metadata",
+        description=(
+            "Update resource metadata such as name, description, tag, and public visibility. "
+            "This endpoint updates resource information without requiring file re-upload. "
+            "Useful for changing resource categories, updating descriptions, or modifying tags. "
+            "Only event creators, staff, and superusers can update resources. "
+            "Requires resource_id query parameter."
+        ),
+        tags=["Events"],
+        parameters=[
+            OpenApiParameter(name='resource_id', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY,
+                           description='Resource ID to update', required=True)
+        ],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'description': 'Resource name'},
+                    'description': {'type': 'string', 'description': 'Resource description'},
+                    'tag': {'type': 'string', 'description': 'Resource tag (e.g., LANDING_PHOTO_MAIN, LANDING_PHOTO_SECONDARY)'},
+                    'public': {'type': 'boolean', 'description': 'Whether resource is public'},
+                },
+            }
+        },
+        responses={
+            200: ResourceSerializer,
+            400: OpenApiResponse(description='Bad request or protected resource'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Resource not found')
+        }
+    )
+    @action(detail=True, methods=['patch'], url_path='update-resource', permission_classes=[permissions.IsAuthenticated])
+    def update_resource(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to update resources for this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        resource_id = request.query_params.get('resource_id')
+        if not resource_id:
+            return Response(
+                {"detail": "resource_id query parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            resource = Resource.objects.get(id=resource_id, target_id=event.id)
+        except Resource.DoesNotExist:
+            return Response(
+                {"detail": "Resource not found for this event"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if resource.protected:
+            return Response(
+                {"detail": "This resource is protected and cannot be updated"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Use serializer for validation and update
+        serializer = ResourceSerializer(
+            resource, 
+            data=request.data, 
+            partial=True,  # Allow partial updates
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            # Only allow updating specific fields (security measure)
+            allowed_fields = ['name', 'description', 'tag', 'public']
+            update_data = {k: v for k, v in serializer.validated_data.items() if k in allowed_fields}
+            
+            if not update_data:
+                return Response(
+                    {"detail": "No valid fields to update. Allowed fields: name, description, tag, public"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            serializer.save(**update_data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Promote Landing Image to Main",
+        description=(
+            "Promote a secondary landing image to main landing image by updating its tag. "
+            "Automatically demotes the current main image to secondary if one exists. "
+            "This is more efficient than deleting and re-creating images. "
+            "Only event creators, staff, and superusers can promote images. "
+            "Requires resource_id query parameter."
+        ),
+        tags=["Events"],
+        parameters=[
+            OpenApiParameter(name='resource_id', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY,
+                           description='Resource ID of the secondary image to promote', required=True)
+        ],
+        responses={
+            200: ResourceSerializer,
+            400: OpenApiResponse(description='Bad request - resource must be a landing image'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Resource not found')
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='promote-landing-image', permission_classes=[permissions.IsAuthenticated])
+    def promote_landing_image(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to modify landing images for this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        resource_id = request.query_params.get('resource_id')
+        if not resource_id:
+            return Response(
+                {"detail": "resource_id query parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            resource = Resource.objects.get(id=resource_id, target_id=event.id)
+        except Resource.DoesNotExist:
+            return Response(
+                {"detail": "Resource not found for this event"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify this is a landing image
+        if resource.tag not in ['LANDING_PHOTO_MAIN', 'LANDING_PHOTO_SECONDARY']:
+            return Response(
+                {"detail": "Resource must be a landing image (LANDING_PHOTO_MAIN or LANDING_PHOTO_SECONDARY)"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # If already main, nothing to do
+        if resource.tag == 'LANDING_PHOTO_MAIN':
+            return Response(
+                {"detail": "Resource is already the main landing image"},
+                status=status.HTTP_200_OK
+            )
+        
+        # Demote current main image to secondary
+        existing_main = event.resources.filter(tag='LANDING_PHOTO_MAIN').exclude(id=resource.id)
+        for main_image in existing_main:
+            main_image.tag = 'LANDING_PHOTO_SECONDARY'
+            main_image.save()
+        
+        # Promote this image to main
+        resource.tag = 'LANDING_PHOTO_MAIN'
+        resource.save()
+        
+        serializer = ResourceSerializer(resource, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @extend_schema(
+        summary="Demote Landing Image to Secondary",
+        description=(
+            "Demote the main landing image to secondary by updating its tag. "
+            "This is more efficient than deleting and re-creating images. "
+            "Only event creators, staff, and superusers can demote images. "
+            "Requires resource_id query parameter."
+        ),
+        tags=["Events"],
+        parameters=[
+            OpenApiParameter(name='resource_id', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY,
+                           description='Resource ID of the main image to demote', required=True)
+        ],
+        responses={
+            200: ResourceSerializer,
+            400: OpenApiResponse(description='Bad request - resource must be the main landing image'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Resource not found')
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='demote-landing-image', permission_classes=[permissions.IsAuthenticated])
+    def demote_landing_image(self, request, event_id=None):
+        event = self.get_object()
+        
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
+            return Response(
+                {"detail": "You don't have permission to modify landing images for this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        resource_id = request.query_params.get('resource_id')
+        if not resource_id:
+            return Response(
+                {"detail": "resource_id query parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            resource = Resource.objects.get(id=resource_id, target_id=event.id)
+        except Resource.DoesNotExist:
+            return Response(
+                {"detail": "Resource not found for this event"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify this is the main landing image
+        if resource.tag != 'LANDING_PHOTO_MAIN':
+            return Response(
+                {"detail": "Resource must be the main landing image (LANDING_PHOTO_MAIN)"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Demote to secondary
+        resource.tag = 'LANDING_PHOTO_SECONDARY'
+        resource.save()
+        
+        serializer = ResourceSerializer(resource, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     @extend_schema(
         summary="Remove Resource from Event",
