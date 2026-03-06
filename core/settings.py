@@ -519,6 +519,17 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
+# Celery Beat Schedule - Periodic Tasks
+CELERY_BEAT_SCHEDULE = {
+    'mark-completed-events': {
+        'task': 'events.mark_completed_events',
+        'schedule': 3600.0,  # Run every hour (3600 seconds)
+        'options': {
+            'expires': 3000.0,  # Task expires after 50 minutes if not executed
+        }
+    },
+}
+
 # =============================================================================
 # EMAIL CONFIGURATION
 # =============================================================================

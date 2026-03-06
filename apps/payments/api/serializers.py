@@ -59,7 +59,7 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'method_id', 'code', 'title', 'method_type', 'is_active',
             'event', 'event_name', 'created_by', 'created_by_name',
-            'created_at', 'updated_at', '_links'
+            'created_at', 'updated_at', 'provided_details', '_links'
         )
         read_only_fields = ('id', 'method_id', 'code', 'created_at', 'updated_at')
         extra_kwargs = {
@@ -95,7 +95,7 @@ class PaymentMethodDetailSerializer(PaymentMethodSerializer):
     """Detailed serializer for PaymentMethod with full information."""
     
     class Meta(PaymentMethodSerializer.Meta):
-        fields = PaymentMethodSerializer.Meta.fields + ('description', 'provided_details')
+        fields = PaymentMethodSerializer.Meta.fields + ('description',)
 
 
 class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
@@ -544,12 +544,21 @@ class DiscountDetailSerializer(DiscountListSerializer):
 
 
 class DiscountCreateUpdateSerializer(serializers.ModelSerializer):
-    """Create/Update serializer for Discount with validation.
+    """Create/Update serializer for Discount with validation and nested rules.
     
     Note: target_type and target_id should only be set internally by the system.
+    Supports nested rule creation/update with a maximum of 2 rules per discount.
     """
     
     amount = MoneyField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    rules = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        allow_empty=True,
+        max_length=2,
+        write_only=True,
+        help_text="List of discount rules (maximum 2)"
+    )
     # Target fields for internal use only
     target_type = serializers.PrimaryKeyRelatedField(
         queryset=ContentType.objects.all(),
@@ -567,8 +576,51 @@ class DiscountCreateUpdateSerializer(serializers.ModelSerializer):
         model = Discount
         fields = (
             'name', 'description', 'discount_type', 'percentage', 'amount',
-            'target_type', 'target_id', 'active'
+            'target_type', 'target_id', 'active', 'rules'
         )
+    
+    def validate_rules(self, value):
+        """Validate rules array."""
+        if len(value) > 2:
+            raise serializers.ValidationError("Maximum 2 rules allowed per discount.")
+        
+        # Validate each rule
+        for idx, rule_data in enumerate(value):
+            # Check required fields
+            if 'rule_type' not in rule_data:
+                raise serializers.ValidationError({
+                    f'rule_{idx}': "rule_type is required for each rule."
+                })
+            if 'name' not in rule_data:
+                raise serializers.ValidationError({
+                    f'rule_{idx}': "name is required for each rule."
+                })
+            
+            rule_type = rule_data.get('rule_type')
+            rule_value = rule_data.get('value')
+            
+            # Rules that require a value
+            requires_value = [
+                'IS_AGE_LT', 'IS_AGE_GT', 'ORGANISATION_MATCHES',
+                'VALUE_MATCHES', 'EVENT_STAFF_ROLE_MATCHES', 'NAME_MATCHES',
+                'LOCATION_MATCHES', 'CODE_MATCHES'
+            ]
+            
+            if rule_type in requires_value and not rule_value:
+                raise serializers.ValidationError({
+                    f'rule_{idx}': f"Rule type {rule_type} requires a value."
+                })
+            
+            # Validate age rules have integer values
+            if rule_type in ['IS_AGE_GT', 'IS_AGE_LT']:
+                try:
+                    int(rule_value)
+                except (TypeError, ValueError):
+                    raise serializers.ValidationError({
+                        f'rule_{idx}': "Age rules require an integer value."
+                    })
+        
+        return value
     
     def validate(self, attrs):
         """Cross-field validation for discount configuration."""
@@ -679,6 +731,55 @@ class DiscountCreateUpdateSerializer(serializers.ModelSerializer):
                     f"please contact your system administrator to request elevated permissions."
                 )
             })
+    
+    def create(self, validated_data):
+        """Create discount with nested rules."""
+        rules_data = validated_data.pop('rules', [])
+        discount = super().create(validated_data)
+        
+        # Create rules
+        request = self.context.get('request')
+        user = request.user if request else None
+        
+        for rule_data in rules_data:
+            DiscountRule.objects.create(
+                discount=discount,
+                added_by=user,
+                rule_type=rule_data.get('rule_type'),
+                name=rule_data.get('name'),
+                description=rule_data.get('description', ''),
+                value=rule_data.get('value', ''),
+                active=rule_data.get('active', True)
+            )
+        
+        return discount
+    
+    def update(self, instance, validated_data):
+        """Update discount and sync rules."""
+        rules_data = validated_data.pop('rules', None)
+        discount = super().update(instance, validated_data)
+        
+        # If rules are provided, delete existing and create new ones
+        if rules_data is not None:
+            # Delete existing rules
+            instance.rules.all().delete()
+            
+            # Create new rules
+            request = self.context.get('request')
+            user = request.user if request else None
+            
+            for rule_data in rules_data:
+                DiscountRule.objects.create(
+                    discount=discount,
+                    added_by=user,
+                    rule_type=rule_data.get('rule_type'),
+                    name=rule_data.get('name'),
+                    description=rule_data.get('description', ''),
+                    value=rule_data.get('value', ''),
+                    active=rule_data.get('active', True)
+                )
+        
+        return discount
 
 
 # ============================================================================

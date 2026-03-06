@@ -366,12 +366,8 @@ python manage.py check
 
 This project is proprietary and confidential.
 
-## 🆘 Support
 
-For issues and questions, please open an issue on GitHub or contact the development team.
+uvicorn core.asgi:application --reload   
 
----
-
-Built with ❤️ by the AMDG team
-
-uvicorn core.asgi:application --reload     
+celery -A core worker --loglevel=info  
+celery -A core beat --loglevel=info

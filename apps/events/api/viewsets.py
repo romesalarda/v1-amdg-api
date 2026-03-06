@@ -220,6 +220,7 @@ class EventViewSet(viewsets.ModelViewSet):
         
         if not self.request.user.is_staff: # TODO misleading
             queryset = queryset.filter(status__in=[
+                EventStatusChoices.DRAFTING,
                 EventStatusChoices.PUBLISHED,
                 EventStatusChoices.OPEN,
                 EventStatusChoices.IN_PROGRESS,
@@ -234,6 +235,9 @@ class EventViewSet(viewsets.ModelViewSet):
         elif self.action in ['create', 'update', 'partial_update']:
             return EventCreateUpdateSerializer
         return EventDetailSerializer
+    
+    def perform_destroy(self, instance):
+        return instance.soft_delete()
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
