@@ -12,6 +12,7 @@ from drf_spectacular.types import OpenApiTypes
 from typing import Dict, Any
 
 from apps.attendee.models import (
+    Attendee,
     AccessibilityRequirement, AttendeeAccessibilityRequirement,
     DietaryRequirement, AttendeeDietaryRequirement,
     MedicalCondition, AttendeeMedicalCondition,
@@ -297,6 +298,10 @@ class AttendeeMedicalConditionSerializer(serializers.ModelSerializer):
     condition_details = MedicalConditionSerializer(
         source='medical_condition', read_only=True
     )
+    attendee = serializers.SlugRelatedField(
+        slug_field='attendee_id',
+        queryset=Attendee.objects.all()
+    )
     attendee_name = serializers.CharField(source='attendee.full_name', read_only=True)
     verification_status_display = serializers.CharField(
         source='get_verification_status_display', read_only=True
@@ -533,10 +538,22 @@ class AttendeeConsentSerializer(serializers.ModelSerializer):
         }
     
     def validate(self, attrs):
-        """Validate that the same consent isn't recorded twice."""
+        """Validate that the same consent isn't recorded twice."""        
         attendee = attrs.get('attendee', self.instance.attendee if self.instance else None)
+
+        if not attendee:
+            request = self.context.get('request')
+            if request and hasattr(request, 'user'):
+                # Try to get attendee from URL kwargs if not provided in data
+                attendee_id = self.context['view'].kwargs.get('attendee_id')
+                if attendee_id:
+                    try:
+                        attendee = Attendee.objects.get(attendee_id=attendee_id, deleted_at__isnull=True)
+                    except Attendee.DoesNotExist:
+                        pass
+
+
         consent = attrs.get('consent')
-        
         if attendee and consent:
             queryset = AttendeeConsent.objects.filter(
                 attendee=attendee,
@@ -551,17 +568,17 @@ class AttendeeConsentSerializer(serializers.ModelSerializer):
                 )
         
         return attrs
-    
+        
     def create(self, validated_data):
-        """Create and set recorded_by from request user."""
         request = self.context.get('request')
+
         if request and hasattr(request, 'user'):
             validated_data['recorded_by'] = request.user
         
         return super().create(validated_data)
     
     def update(self, instance, validated_data):
-        """Update consent and set given_at/given_by if consent is given."""
+
         if 'consent_given' in validated_data and validated_data['consent_given'] and not instance.consent_given:
             request = self.context.get('request')
             instance.given_at = timezone.now()

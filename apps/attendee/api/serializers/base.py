@@ -33,6 +33,7 @@ class AttendeeListSerializer(serializers.ModelSerializer):
     is_minor = serializers.BooleanField(read_only=True)
     event_title = serializers.CharField(source='event.title', read_only=True, allow_null=True)
     relationship_display = serializers.CharField(source='get_relationship_to_user_display', read_only=True)
+    area_from_name = serializers.CharField(source='area_from.area_name', read_only=True, allow_null=True)
     
     class Meta:
         model = Attendee
@@ -40,7 +41,7 @@ class AttendeeListSerializer(serializers.ModelSerializer):
             'attendee_id', 'attendee_display_id', 'first_name', 'last_name', 'full_name',
             'email', 'phone_number', 'date_of_birth', 'age', 'is_minor', 'gender',
             'relationship_to_user', 'relationship_display', 'event', 'event_title',
-            'created_at', '_links'
+            'created_at', '_links', 'area_from_name'
         )
         read_only_fields = ('attendee_id', 'attendee_display_id', 'full_name', 'age', 'is_minor', 'created_at')
     

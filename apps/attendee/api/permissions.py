@@ -97,6 +97,8 @@ class IsEventStaffOrReadOnly(permissions.BasePermission):
         return request.user and request.user.is_authenticated
     
     def has_object_permission(self, request, view, obj):
+        
+        from apps.attendee.models import Attendee
         # Allow read permissions for authenticated users
         if request.method in permissions.SAFE_METHODS:
             return True
@@ -106,6 +108,11 @@ class IsEventStaffOrReadOnly(permissions.BasePermission):
             return True
         
         # Check if user is event staff
+
+        if not hasattr(obj, 'event') and hasattr(obj, 'attendee'):
+            if isinstance(obj.attendee, Attendee) and obj.attendee.event:
+                obj.event = obj.attendee.event
+
         if hasattr(obj, 'event') and obj.event:
             from apps.events.models import EventStaff
             if EventStaff.objects.filter(
@@ -114,8 +121,8 @@ class IsEventStaffOrReadOnly(permissions.BasePermission):
             ).exists():
                 return True
         
-        return False
 
+        return False
 
 class IsGuardianOrStaff(permissions.BasePermission):
     """

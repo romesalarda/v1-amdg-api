@@ -95,7 +95,7 @@ class NestedAttendeeViewSetMixin:
     def perform_create(self, serializer):
         """Automatically set attendee on create."""
         attendee = self.get_attendee()
-        if attendee:
+        if attendee:          
             serializer.save(attendee=attendee)
         else:
             serializer.save()
