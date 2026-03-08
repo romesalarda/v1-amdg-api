@@ -15,7 +15,7 @@ class EventProductCategoryInline(admin.TabularInline):
 
 @admin.register(ProductCategory)
 class ProductCategoryAdmin(admin.ModelAdmin):
-    list_display = ('name', 'get_product_count', 'get_event_count', 'created_at', 'updated_at')
+    list_display = ('name', 'get_event_count', 'created_at', 'updated_at')
     search_fields = ('name', 'description')
     readonly_fields = ('created_at', 'updated_at')
     inlines = [EventProductCategoryInline]
@@ -30,22 +30,18 @@ class ProductCategoryAdmin(admin.ModelAdmin):
         }),
     )
     
-    def get_product_count(self, obj):
-        return obj.products.count()
-    get_product_count.short_description = 'Products'
-    
     def get_event_count(self, obj):
         return obj.event_categories.values('event').distinct().count()
     get_event_count.short_description = 'Events'
     
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        return qs.prefetch_related('products', 'event_categories')
+        return qs.prefetch_related('event_categories')
 
 
 @admin.register(EventProductCategory)
 class EventProductCategoryAdmin(admin.ModelAdmin):
-    list_display = ('event', 'category', 'get_product_count', 'added_at')
+    list_display = ('event', 'category', 'added_at')
     list_filter = ('added_at', 'event')
     search_fields = ('event__title', 'event__display_code', 'category__name')
     autocomplete_fields = ('event', 'category')
@@ -62,9 +58,9 @@ class EventProductCategoryAdmin(admin.ModelAdmin):
         }),
     )
     
-    def get_product_count(self, obj):
-        return obj.category.products.filter(event=obj.event).count()
-    get_product_count.short_description = 'Products in Event'
+    # def get_product_count(self, obj):
+    #     return obj.category.products.filter(event=obj.event).count()
+    # get_product_count.short_description = 'Products in Event'
 
 
 class ProductVariantInline(admin.TabularInline):

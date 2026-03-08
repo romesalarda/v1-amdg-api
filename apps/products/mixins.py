@@ -12,7 +12,9 @@ from datetime import datetime
 class ProductMixin (HasResourceMixin, HasAvailabilityMixin, HasRuleMixin):
     '''
     Shared mixin for models that involve payments, providing common properties and methods.
-    Images are marked as resources with tags 'PRODUCT_PHOTO_MAIN' and 'PRODUCT_PHOTO_SECONDARY'.
+    Images are marked as resources with tags:
+    - Products: 'PRODUCT_PHOTO_MAIN' and 'PRODUCT_PHOTO_SECONDARY'
+    - Variants: 'VARIANT_PHOTO_MAIN' and 'VARIANT_PHOTO_SECONDARY'
     '''
     @property
     def requires_verification(self):
@@ -93,6 +95,46 @@ class ProductMixin (HasResourceMixin, HasAvailabilityMixin, HasRuleMixin):
         '''
         if image_resource not in self.resources.all():
             raise exceptions.ValidationError("The provided resource is not associated with this product.")
+        
+        self.remove_resource(image_resource)
+    
+    @property
+    def variant_images(self):
+        '''
+        Returns variant image resources associated with this variant.
+        '''
+        return self.resources.filter(tag__in=['VARIANT_PHOTO_MAIN', 'VARIANT_PHOTO_SECONDARY'])
+    
+    def add_variant_image(self, image_resource: Resource, is_main: bool = True):
+        '''
+        Adds a variant image resource to the variant.
+
+        @param image_resource: The Resource instance representing the image.
+        @param is_main: Whether this image should be marked as the main variant image.
+        Returns the added Resource instance.
+        '''
+
+        if not image_resource.is_image:
+            raise exceptions.ValidationError("The provided resource is not an image.")
+
+        if is_main:
+            for existing_main in self.resources.filter(tag='VARIANT_PHOTO_MAIN'):
+                existing_main.tag = 'VARIANT_PHOTO_SECONDARY'
+                existing_main.save()
+            image_resource.tag = 'VARIANT_PHOTO_MAIN'
+        else:
+            image_resource.tag = 'VARIANT_PHOTO_SECONDARY'
+        
+        return self.add_resource(image_resource)
+    
+    def remove_variant_image(self, image_resource: Resource):
+        '''
+        Removes a variant image resource from the variant.
+
+        @param image_resource: The Resource instance representing the image to remove.
+        '''
+        if image_resource not in self.resources.all():
+            raise exceptions.ValidationError("The provided resource is not associated with this variant.")
         
         self.remove_resource(image_resource)
     

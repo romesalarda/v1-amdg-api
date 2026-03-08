@@ -561,7 +561,11 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='availability-windows')
     def availability_windows(self, request, event_id=None):
         event = self.get_object()
-        windows = event.availability_windows.all()
+        windows = event.extended_availability_windows.all()
+
+        # TODO: get related products, packages 
+
+
         paginated = self.paginate_queryset(windows)
         if paginated is not None:
             serializer = AvailabilityWindowSerializer(paginated, many=True, context={'request': request})

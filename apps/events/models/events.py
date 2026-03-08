@@ -260,6 +260,26 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         
         used_capacity = self.number_of_attendees + self.pending_intent_capacity
         return max(0, self.maximum_attendance - used_capacity)
+    
+    @property
+    def extended_availability_windows(self):
+
+        from apps.bookings.models import BookingPackage
+        from apps.products.models import Product
+
+        base = self.availability_windows
+        # get related products and packages availability windows as well
+        product_windows = AvailabilityWindow.objects.filter(
+            target_type=ContentType.objects.get(model='product'),
+            target_id__in=self.products.values_list('id', flat=True)
+        )
+
+        package_windows = AvailabilityWindow.objects.filter(
+            target_type=ContentType.objects.get(model='bookingpackage'),
+            target_id__in=self.booking_packages.values_list('id', flat=True)
+        )
+
+        return base.union(product_windows, package_windows).order_by('available_from')
 
 class EventSettings(models.Model):
     '''

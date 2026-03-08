@@ -36,6 +36,7 @@ from apps.bookings.models import (
 )
 from apps.events.models import Event
 from apps.common.models import VerificationStatus
+from apps.common.api.serializers import AvailabilityWindowSerializer
 
 User = get_user_model()
 
@@ -547,13 +548,14 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
     base_amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
     modified_amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
+    availability_windows = AvailabilityWindowSerializer(many=True, read_only=True)
     
     class Meta:
         model = BookingPackage
         fields = (
             'id','name', 'event', 'event_name', 'ticket_type', 'ticket_type_title','description',
             'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount', 'is_active',
-            'created_by', 'created_by_name', 'created_at', '_links'
+            'created_by', 'created_by_name', 'created_at', 'availability_windows', '_links'
         )
         read_only_fields = ('id', 'created_at', 'modified_amount')
     
@@ -577,6 +579,7 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
             'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
             'ticket_type': request.build_absolute_uri(f"/api/bookings/ticket-types/{obj.ticket_type.id}/"),
             'rules': request.build_absolute_uri(f"/api/bookings/packages/{obj.id}/rules/"),
+            'availability_windows': request.build_absolute_uri(f"/api/bookings/packages/{obj.id}/availability-windows/"),
         }
         
         if obj.created_by:
@@ -586,7 +589,7 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
 
 
 class BookingPackageDetailSerializer(BookingPackageListSerializer):
-    """Detailed serializer for BookingPackage with nested rules."""
+    """Detailed serializer for BookingPackage with nested rules and availability windows."""
     
     rules = BookingPackageRuleSerializer(many=True, read_only=True)
     ticket_count = serializers.SerializerMethodField()

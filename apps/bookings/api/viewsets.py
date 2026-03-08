@@ -39,6 +39,7 @@ from apps.bookings.models import (
     TicketType, Ticket,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
+from apps.common.api.serializers import AvailabilityWindowSerializer
 from .serializers import (
     BookingListSerializer, BookingDetailSerializer, BookingCreateSerializer, BookingUpdateSerializer,
     BookingIntentListSerializer, BookingIntentDetailSerializer, BookingIntentCreateSerializer, BookingIntentUpdateSerializer,
@@ -1299,6 +1300,212 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+    
+    @extend_schema(
+        summary="List availability windows for booking package",
+        description="Retrieve all availability windows associated with this booking package.",
+        tags=["Booking Packages"],
+        responses={200: AvailabilityWindowSerializer(many=True)},
+        operation_id="bookings_package_availability_windows_list",
+    )
+    @action(detail=True, methods=['get'], url_path='availability-windows')
+    def availability_windows(self, request, pk=None):
+        """Return all availability windows for this booking package."""
+        package = self.get_object()
+        from apps.common.models import AvailabilityWindow
+        from apps.common.api.serializers import AvailabilityWindowSerializer
+        
+        windows = package.availability_windows.all()
+        paginated = self.paginate_queryset(windows)
+        if paginated is not None:
+            serializer = AvailabilityWindowSerializer(paginated, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
+        serializer = AvailabilityWindowSerializer(windows, many=True, context={'request': request})
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Add availability window to booking package",
+        description=(
+            "Add a new availability window to the booking package defining when it's available for booking. "
+            "Specify start and end times to control package visibility and bookability. "
+            "Only administrative staff can add availability windows."
+        ),
+        tags=["Booking Packages"],
+        request=AvailabilityWindowSerializer,
+        responses={
+            201: AvailabilityWindowSerializer,
+            400: OpenApiResponse(description='Validation errors'),
+            403: OpenApiResponse(description='Permission denied')
+        },
+        operation_id="bookings_package_add_availability_window",
+    )
+    @action(detail=True, methods=['post'], url_path='add-availability-window', permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaff])
+    def add_availability_window(self, request, pk=None):
+        """Add an availability window to this booking package."""
+        from apps.common.models import AvailabilityWindow
+        from apps.common.api.serializers import AvailabilityWindowSerializer
+        from django.contrib.contenttypes.models import ContentType
+        
+        package = self.get_object()
+        
+        serializer = AvailabilityWindowSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            content_type = ContentType.objects.get_for_model(BookingPackage)
+            window = serializer.save(
+                target_type=content_type,
+                target_id=package.id
+            )
+            return Response(
+                AvailabilityWindowSerializer(window, context={'request': request}).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        methods=['PATCH'],
+        summary="Partially update availability window for booking package",
+        description=(
+            "Partially update an existing availability window for the booking package. "
+            "Only administrative staff can update availability windows. "
+            "Requires window_id query parameter."
+        ),
+        tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='window_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Availability window ID to update',
+                required=True
+            )
+        ],
+        request=AvailabilityWindowSerializer,
+        responses={
+            200: AvailabilityWindowSerializer,
+            400: OpenApiResponse(description='Invalid data or missing window_id'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Window not found')
+        },
+        operation_id="bookings_package_update_availability_window",
+    )
+    @extend_schema(
+        methods=['PUT'],
+        summary="Fully update availability window for booking package",
+        description=(
+            "Fully update an existing availability window for the booking package. "
+            "Only administrative staff can update availability windows. "
+            "Requires window_id query parameter."
+        ),
+        tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='window_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Availability window ID to update',
+                required=True
+            )
+        ],
+        request=AvailabilityWindowSerializer,
+        responses={
+            200: AvailabilityWindowSerializer,
+            400: OpenApiResponse(description='Invalid data or missing window_id'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Window not found')
+        },
+        operation_id="bookings_package_update_availability_window_full",
+    )
+    @action(detail=True, methods=['patch', 'put'], url_path='update-availability-window', permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaff])
+    def update_availability_window(self, request, pk=None):
+        """Update an existing availability window for the booking package."""
+        from apps.common.models import AvailabilityWindow
+        from apps.common.api.serializers import AvailabilityWindowSerializer
+        from django.contrib.contenttypes.models import ContentType
+        
+        package = self.get_object()
+        
+        window_id = request.query_params.get('window_id') or request.data.get('availability_id')
+        if not window_id:
+            return Response(
+                {"detail": "window_id query parameter or availability_id in request body is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            content_type = ContentType.objects.get_for_model(BookingPackage)
+            window = AvailabilityWindow.objects.get(
+                availability_id=window_id,
+                target_id=package.id,
+                target_type=content_type
+            )
+        except AvailabilityWindow.DoesNotExist:
+            return Response(
+                {"detail": "Availability window not found for this booking package"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = AvailabilityWindowSerializer(
+            window,
+            data=request.data,
+            partial=(request.method == 'PATCH'),
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Remove availability window from booking package",
+        description=(
+            "Remove an availability window from the booking package by its window ID. "
+            "Permanently deletes the window. "
+            "Only administrative staff can remove availability windows. "
+            "Requires window_id query parameter."
+        ),
+        tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='window_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Availability window ID to remove',
+                required=True
+            )
+        ],
+        responses={
+            204: OpenApiResponse(description='Window removed successfully'),
+            400: OpenApiResponse(description='Bad request - missing window_id'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Window not found')
+        },
+        operation_id="bookings_package_remove_availability_window",
+    )
+    @action(detail=True, methods=['delete'], url_path='remove-availability-window', permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaff])
+    def remove_availability_window(self, request, pk=None):
+        """Remove an availability window from this booking package."""
+        from apps.common.models import AvailabilityWindow
+        
+        package = self.get_object()
+        
+        window_id = request.query_params.get('window_id')
+        if not window_id:
+            return Response(
+                {"detail": "window_id query parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            window = AvailabilityWindow.objects.get(availability_id=window_id, target_id=package.id)
+        except AvailabilityWindow.DoesNotExist:
+            return Response(
+                {"detail": "Availability window not found for this booking package"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        window.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ============================================================================

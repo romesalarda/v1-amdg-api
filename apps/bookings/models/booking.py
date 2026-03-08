@@ -9,6 +9,7 @@ from django.utils import timezone
 import uuid
 
 from apps.common.models import SoftDeleteModel
+from apps.common.mixins import HasAvailabilityMixin
 
 class BookingIntentStatusChoices(models.TextChoices):
     """Status choices for booking intents."""
@@ -17,10 +18,11 @@ class BookingIntentStatusChoices(models.TextChoices):
     EXPIRED = 'EXPIRED', _('Expired')
     CANCELLED = 'CANCELLED', _('Cancelled')
 
-class BookingPackage(PayableModel):
+class BookingPackage(PayableModel, HasAvailabilityMixin):
     """
     Model representing a displayable booking package for an event.
     Inherits from PayableModel to include payment-related fields and discounts
+    Inherits from HasAvailabilityMixin to support availability windows
     # I.e. standard, early bird, VIP packages etc.
     """
     name = models.CharField(max_length=100)

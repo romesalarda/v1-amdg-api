@@ -35,6 +35,7 @@ from apps.products.models import (
 )
 from apps.events.models import Event
 from apps.common.models import Resource
+from apps.common.api.serializers import AvailabilityWindowSerializer
 
 User = get_user_model()
 
@@ -331,10 +332,10 @@ class ProductListSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         main_img = obj.product_images.filter(tag='PRODUCT_PHOTO_MAIN').first()
         
-        if main_img and main_img.file:
+        if main_img and main_img.image:
             return {
                 'id': main_img.id,
-                'url': request.build_absolute_uri(main_img.file.url) if request else None,
+                'url': request.build_absolute_uri(main_img.image.url) if request else None,
             }
         return None
     
@@ -344,6 +345,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             'self': {'type': 'string', 'format': 'uri'},
             'event': {'type': 'string', 'format': 'uri'},
             'variants': {'type': 'string', 'format': 'uri'},
+            'availability_windows': {'type': 'string', 'format': 'uri'},
         }
     })
     def get__links(self, obj) -> Dict[str, str]:
@@ -355,14 +357,15 @@ class ProductListSerializer(serializers.ModelSerializer):
             'self': request.build_absolute_uri(f"/api/products/list/{obj.product_id}/"),
             'event': request.build_absolute_uri(f"/api/events/{obj.event.event_id}/"),
             'variants': request.build_absolute_uri(f"/api/products/list/{obj.product_id}/variants/"),
+            'availability_windows': request.build_absolute_uri(f"/api/products/list/{obj.product_id}/availability-windows/"),
         }
 
 
 class ProductDetailSerializer(ProductListSerializer):
-    """Detailed serializer for Product with full information including images."""
+    """Detailed serializer for Product with full information including images and availability windows."""
     
     images = serializers.SerializerMethodField()
-    availability_windows = serializers.SerializerMethodField()
+    availability_windows = AvailabilityWindowSerializer(many=True, read_only=True)
     rules = serializers.SerializerMethodField()
     variants = serializers.SerializerMethodField()
     added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
@@ -414,7 +417,7 @@ class ProductDetailSerializer(ProductListSerializer):
         for img in images:
             img_data = {
                 'id': img.id,
-                'url': request.build_absolute_uri(img.file.url) if request and img.file else None,
+                'url': request.build_absolute_uri(img.image.url) if request and img.image else None,
                 'alt_text': img.name or obj.title,
             }
             
@@ -424,17 +427,6 @@ class ProductDetailSerializer(ProductListSerializer):
                 result['additional'].append(img_data)
         
         return result
-    
-    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
-    def get_availability_windows(self, obj) -> list:
-        """Return availability windows for the product."""
-        windows = obj.product_availability_windows.all()[:10]
-        return [{
-            'id': w.id,
-            'available_from': localize_datetime_to_event_timezone(w.available_from, obj.event).isoformat(),
-            'available_to': localize_datetime_to_event_timezone(w.available_to, obj.event).isoformat(),
-            'timezone': str(w.timezone),
-        } for w in windows]
     
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_rules(self, obj) -> list:
@@ -832,6 +824,7 @@ class ProductVariantListSerializer(serializers.ModelSerializer):
     final_price = serializers.SerializerMethodField(help_text="Final price after percentage modifier")
     size_display = serializers.CharField(source='get_size_display', read_only=True)
     is_in_stock = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
     added_at = EventTimezoneField(read_only=True)
     
     class Meta:
@@ -840,7 +833,7 @@ class ProductVariantListSerializer(serializers.ModelSerializer):
             'id', 'variant_id', 'product', 'product_title', 'size', 'size_display',
             'color', 'stock_quantity', 'max_purchase_quantity_per_order',
             'final_price', 'is_active', 'verified', 'is_in_stock',
-            'added_at', '_links'
+            'images', 'added_at', '_links'
         )
         read_only_fields = ('id', 'variant_id', 'added_at')
     
@@ -855,8 +848,62 @@ class ProductVariantListSerializer(serializers.ModelSerializer):
     @extend_schema_field({
         'type': 'object',
         'properties': {
+            'main': {
+                'type': 'object',
+                'nullable': True,
+                'properties': {
+                    'id': {'type': 'integer'},
+                    'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                    'alt_text': {'type': 'string'},
+                }
+            },
+            'additional': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'id': {'type': 'integer'},
+                        'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                        'alt_text': {'type': 'string'},
+                    }
+                }
+            }
+        }
+    })
+    def get_images(self, obj) -> Dict[str, Any]:
+        """Return all variant images."""
+        main_images = obj.resources.filter(tag='VARIANT_PHOTO_MAIN')
+        additional_images = obj.resources.filter(tag='VARIANT_PHOTO_SECONDARY')
+        request = self.context.get('request')
+        result = {
+            'main': None,
+            'additional': []
+        }
+        
+        if main_images.exists():
+            img = main_images.first()
+            # return full url
+            result['main'] = {
+                'id': img.id,
+                'url': request.build_absolute_uri(img.image.url) if img.image else None,
+                'alt_text': img.name or '',
+            }
+        
+        for img in additional_images:
+            result['additional'].append({
+                'id': img.id,
+                'url': request.build_absolute_uri(img.image.url) if img.image else None,
+                'alt_text': img.name or '',
+            })
+        
+        return result
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
             'self': {'type': 'string', 'format': 'uri'},
             'product': {'type': 'string', 'format': 'uri'},
+            'availability_windows': {'type': 'string', 'format': 'uri'},
         }
     })
     def get__links(self, obj) -> Dict[str, str]:
@@ -867,13 +914,16 @@ class ProductVariantListSerializer(serializers.ModelSerializer):
         return {
             'self': request.build_absolute_uri(f"/api/products/list/{obj.product.product_id}/variants/{obj.variant_id}/"),
             'product': request.build_absolute_uri(f"/api/products/list/{obj.product.product_id}/"),
+            'availability_windows': request.build_absolute_uri(f"/api/products/list/{obj.product.product_id}/variants/{obj.variant_id}/availability-windows/"),
         }
 
 
 class ProductVariantDetailSerializer(ProductVariantListSerializer):
-    """Detailed serializer for ProductVariant with full information."""
+    """Detailed serializer for ProductVariant with full information and availability windows."""
     
     product_details = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
+    availability_windows = AvailabilityWindowSerializer(many=True, read_only=True)
     added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
     last_updated_at = EventTimezoneField(read_only=True)
     last_updated_by_name = serializers.CharField(source='last_updated_by.username', read_only=True, allow_null=True)
@@ -882,13 +932,65 @@ class ProductVariantDetailSerializer(ProductVariantListSerializer):
     class Meta(ProductVariantListSerializer.Meta):
         fields = ProductVariantListSerializer.Meta.fields + (
             'base_amount', 'base_amount_currency', 'percentage_modifier', 'max_stock_quantity',
-            'product_details', 'added_by', 'added_by_name',
+            'images', 'availability_windows', 'product_details', 'added_by', 'added_by_name',
             'last_updated_by', 'last_updated_by_name', 'last_updated_at'
         )
     
     def get_base_amount(self, obj) -> str:
         """Return base amount as string."""
         return str(obj.base_amount)
+    
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'main': {
+                'type': 'object',
+                'nullable': True,
+                'properties': {
+                    'id': {'type': 'integer'},
+                    'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                    'alt_text': {'type': 'string'},
+                }
+            },
+            'additional': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'id': {'type': 'integer'},
+                        'url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                        'alt_text': {'type': 'string'},
+                    }
+                }
+            }
+        }
+    })
+    def get_images(self, obj) -> Dict[str, Any]:
+        """Return all variant images."""
+        main_images = obj.resources.filter(tag='VARIANT_PHOTO_MAIN')
+        additional_images = obj.resources.filter(tag='VARIANT_PHOTO_SECONDARY')
+        
+        result = {
+            'main': None,
+            'additional': []
+        }
+        
+        if main_images.exists():
+            img = main_images.first()
+            result['main'] = {
+                'id': img.id,
+                'url': img.file.url if img.file else None,
+                'alt_text': img.name or '',
+            }
+        
+        for img in additional_images:
+            result['additional'].append({
+                'id': img.id,
+                'url': img.file.url if img.file else None,
+                'alt_text': img.name or '',
+            })
+        
+        return result
     
     @extend_schema_field({'type': 'object'})
     def get_product_details(self, obj) -> dict:
@@ -945,24 +1047,30 @@ class ProductVariantCreateUpdateSerializer(serializers.ModelSerializer):
                 'stock_quantity': 'Stock quantity cannot exceed max stock quantity.'
             })
         
-        # Validate unique constraint
-        product = attrs.get('product')
-        size = attrs.get('size')
-        color = attrs.get('color')
+        # Validate unique size+color combination per product
+        product = attrs.get('product') or (self.instance.product if self.instance else None)
+        size = attrs.get('size') or (self.instance.size if self.instance else None)
+        color = attrs.get('color') or (self.instance.color if self.instance else None)
         
         if product and size and color:
+            # Normalize color to uppercase for comparison (hex colors)
+            normalized_color = color.upper() if color else None
+            
             queryset = ProductVariant.objects.filter(
                 product=product,
                 size=size,
-                color__iexact=color
+                color__iexact=normalized_color
             )
             if self.instance:
                 queryset = queryset.exclude(pk=self.instance.pk)
             
             if queryset.exists():
-                raise serializers.ValidationError(
-                    "A variant with this size and color already exists for this product."
-                )
+                raise serializers.ValidationError({
+                    'non_field_errors': [
+                        f"A variant with size '{size}' and color '{color}' already exists for this product. "
+                        "Each variant must have a unique combination of size and color."
+                    ]
+                })
         
         return attrs
     

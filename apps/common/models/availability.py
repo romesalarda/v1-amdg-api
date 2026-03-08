@@ -17,11 +17,14 @@ class AvailabilityTypeChoices(models.TextChoices):
     PAYMENT_WINDOW = 'PAYMENT_WINDOW', _('Payment Window')
 
     # specific product availability types
-    PRODUCT = 'PRODUCT_WINDOW', _('Product Window') # product specific availability
+    PRODUCT = 'PRODUCT_WINDOW', _('Product Window') # defines when a product is available for purchase
+    PRODUCT_PREVIEW_WINDOW = 'PRODUCT_PREVIEW_WINDOW', _('Product Preview Window') # product preview availability before actual product window opens
+
     DISCOUNT = 'DISCOUNT_WINDOW', _('Discount Window') # discount specific availability
     RESOURCE = 'RESOURCE_WINDOW', _('Resource Window') # resource specific availability
-    PAYMENT_PACKAGE = 'PAYMENT_PACKAGE_WINDOW', _('Payment Package Window') # payment package specific availability
 
+    PAYMENT_PACKAGE = 'PAYMENT_PACKAGE_WINDOW', _('Payment Package Window') # payment package specific availability
+    PAYMENT_PACKAGE_PREVIEW_WINDOW = 'PAYMENT_PACKAGE_PREVIEW_WINDOW', _('Payment Package Preview Window') # payment package preview availability before actual package window opens
 class AvailabilityWindow(models.Model):
     '''
     Model representing a generic availability window.
@@ -47,8 +50,27 @@ class AvailabilityWindow(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def clean(self):
+        from django.core.exceptions import ValidationError
+        
         if self.available_from >= self.available_to:
-            raise ValueError("available_from must be earlier than available_to")
+            raise ValidationError("available_from must be earlier than available_to")
+        
+        # Check for overlapping windows of the same type on the same target
+        if self.target_type_id and self.target_id:
+            overlapping = AvailabilityWindow.objects.filter(
+                target_type=self.target_type,
+                target_id=self.target_id,
+                availability_type=self.availability_type
+            ).exclude(pk=self.pk if self.pk else None)
+            
+            for window in overlapping:
+                # Check if there's any overlap
+                if (self.available_from <= window.available_to and 
+                    self.available_to >= window.available_from):
+                    raise ValidationError(
+                        f"This window overlaps with existing window '{window.name}' "
+                        f"({window.available_from} to {window.available_to})"
+                    )
                 
     class Meta:
         indexes = [

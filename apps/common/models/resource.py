@@ -21,6 +21,8 @@ class Resource(models.Model):
     '''
     Abstract base model for resources.
     '''
+    TYPE_CHOICES = ResourceTypeChoices
+
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
     

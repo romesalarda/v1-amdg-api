@@ -704,7 +704,7 @@ class DiscountCreateUpdateSerializer(serializers.ModelSerializer):
         from apps.bookings.models import BookingPackage
         from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
         
-        if isinstance(target_obj, BookingPackage):
+        if hasattr(target_obj, 'event'):
             # User must have ADMINISTRATIVE role for this event
             has_access = EventRoleAssignment.objects.filter(
                 user=user,
