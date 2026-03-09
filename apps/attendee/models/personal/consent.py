@@ -51,4 +51,4 @@ class AttendeeConsent(models.Model): # m2m through model
         unique_together = ('attendee', 'consent')
     
     def __str__(self):
-        return f"Consent {self.consent.code} for Event {self.event.id}"
+        return f"Consent {self.consent.code} for Event {self.attendee.event.id}"

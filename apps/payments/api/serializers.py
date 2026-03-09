@@ -189,7 +189,7 @@ class PaymentListSerializer(serializers.ModelSerializer):
             return {}
         
         links = {
-            'self': request.build_absolute_uri(f"/api/payments/{obj.payment_id}/"),
+            'self': request.build_absolute_uri(f"/api/payments/list/{obj.payment_id}/"),
             'user': request.build_absolute_uri(f"/api/users/{obj.user.id}/"),
             'event': request.build_absolute_uri(f"/api/events/{obj.event.id}/"),
         }

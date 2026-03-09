@@ -75,6 +75,7 @@ class AttendeeListSerializer(serializers.ModelSerializer):
         
         if obj.user:
             links['user'] = request.build_absolute_uri(f"/api/users/{obj.user.id}/")
+            links['profile'] = request.build_absolute_uri(f"/api/users/{obj.user.profile.id}/profile/")
         
         # Nested resource endpoints
         links['emergency_contacts'] = request.build_absolute_uri(
