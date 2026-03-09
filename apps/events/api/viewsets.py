@@ -43,6 +43,9 @@ from .serializers import (
     EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer,
     EventVenueSerializer, EventStaffInviteSerializer, EventStaffInviteListSerializer
 )
+from .filtersets import (
+    EventQuestionAnswerFilterSet
+)
 
 from apps.events.api.pagination import StandardPagination
 
@@ -4399,7 +4402,7 @@ class EventQuestionAnswerViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['question', 'attendee']
+    filterset_class = EventQuestionAnswerFilterSet
     
     @extend_schema(
         summary="Submit Form (Batch Answers)",

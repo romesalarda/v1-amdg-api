@@ -485,6 +485,7 @@ class OrderFilterSet(filters.FilterSet):
     Example queries:
         ?status=completed&created_after=2025-01-01
         ?customer=123&min_amount=50
+        ?attendee_id=550e8400-e29b-41d4-a716-446655440000
         ?order_reference__contains=ORD-FAM
         ?status__in=pending,processing
         ?event=456
@@ -541,11 +542,11 @@ class OrderFilterSet(filters.FilterSet):
         field_name='attendee__id',
         help_text="Filter by attendee ID"
     )
-    attendee__attendee_id = filters.UUIDFilter(
+    attendee_id = filters.UUIDFilter(
         field_name='attendee__attendee_id',
-        help_text="Filter by attendee UUID"
+        help_text="Filter by attendee UUID (public facing identifier)"
     )
-    attendee__email = filters.CharFilter(
+    attendee_email = filters.CharFilter(
         field_name='attendee__email',
         lookup_expr='icontains',
         help_text="Filter by attendee email"
@@ -634,7 +635,7 @@ class OrderFilterSet(filters.FilterSet):
             'order_reference', 'order_reference__contains', 'order_id',
             'status', 'status__in',
             'customer', 'customer__email', 'customer__username',
-            'attendee', 'attendee__attendee_id', 'attendee__email',
+            'attendee', 'attendee_id', 'attendee_email',
             'event', 'event__event_id',
             'created_after', 'created_before', 'created_date',
             'updated_after', 'updated_before',

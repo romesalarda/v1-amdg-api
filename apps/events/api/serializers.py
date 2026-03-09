@@ -1443,6 +1443,10 @@ class EventQuestionAnswerChoiceSerializer(serializers.ModelSerializer):
             )
         
         return links
+    
+def get_attendee_qs():
+    from apps.attendee.models import Attendee
+    return Attendee.objects.all()   
 
 
 class EventQuestionAnswerSerializer(serializers.ModelSerializer):
@@ -1453,6 +1457,7 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
     Validates option selections against question constraints.
     """
     question_title = serializers.CharField(source='question.question_title', read_only=True)
+    attendee = serializers.SlugRelatedField(slug_field='attendee_id', queryset=get_attendee_qs())
     attendee_name = serializers.SerializerMethodField()
     selected_options = EventQuestionAnswerChoiceSerializer(many=True, read_only=True)
     selected_option_ids = serializers.ListField(

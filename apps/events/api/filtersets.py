@@ -2,7 +2,8 @@ from django_filters import rest_framework as filters
 from django.db.models import Q
 from apps.events.models import (
     Event, EventType, EventAuthorization, EventPermission,
-    EventRole, EventStaff, EventReview, EventQuestion
+    EventRole, EventStaff, EventReview, EventQuestion,
+    EventQuestionAnswer
 )
 
 
@@ -152,4 +153,87 @@ class EventQuestionFilterSet(filters.FilterSet):
         return queryset.filter(
             Q(question_title__icontains=value) |
             Q(question_body__icontains=value)
+        )
+
+
+class EventQuestionAnswerFilterSet(filters.FilterSet):
+    """
+    Filterset for EventQuestionAnswer with attendee UUID support.
+    
+    Supports filtering by:
+    - Question ID
+    - Attendee ID (integer primary key)
+    - Attendee ID (UUID - public facing)
+    - Event ID (through question)
+    - Answer text search
+    
+    Example queries:
+        ?question=123
+        ?attendee=456
+        ?attendee_id=550e8400-e29b-41d4-a716-446655440000
+        ?event=789
+        ?search=answer text
+    """
+    
+    # Question filters
+    question = filters.NumberFilter(
+        field_name='question__id',
+        help_text="Filter by question ID"
+    )
+    question__event = filters.NumberFilter(
+        field_name='question__event__id',
+        help_text="Filter by event ID (through question)"
+    )
+    
+    # Attendee filters
+    attendee = filters.NumberFilter(
+        field_name='attendee__id',
+        help_text="Filter by attendee ID (integer primary key)"
+    )
+    attendee_id = filters.UUIDFilter(
+        field_name='attendee__attendee_id',
+        help_text="Filter by attendee UUID (public facing identifier)"
+    )
+    attendee_email = filters.CharFilter(
+        field_name='attendee__email',
+        lookup_expr='icontains',
+        help_text="Filter by attendee email"
+    )
+    
+    # Event filter (shortcut through question)
+    event = filters.NumberFilter(
+        field_name='question__event__id',
+        help_text="Filter by event ID"
+    )
+    event__event_id = filters.UUIDFilter(
+        field_name='question__event__event_id',
+        help_text="Filter by event UUID"
+    )
+    
+    # Answer text search
+    answer_text = filters.CharFilter(
+        field_name='answer_text',
+        lookup_expr='icontains',
+        help_text="Search in answer text"
+    )
+    
+    search = filters.CharFilter(
+        method='filter_search',
+        help_text="Search across answer text and question title"
+    )
+    
+    class Meta:
+        model = EventQuestionAnswer
+        fields = [
+            'question', 'question__event',
+            'attendee', 'attendee_id', 'attendee_email',
+            'event', 'event__event_id',
+            'answer_text', 'search'
+        ]
+    
+    def filter_search(self, queryset, name, value):
+        """Full-text search across answer text and question title."""
+        return queryset.filter(
+            Q(answer_text__icontains=value) |
+            Q(question__question_title__icontains=value)
         )
