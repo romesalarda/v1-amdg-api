@@ -35,6 +35,23 @@ from .personal import (
     FamilyAttendeeSerializer,
 )
 
+from .statistics import (
+    AgeDistributionSerializer,
+    GenderDistributionSerializer,
+    RelationshipDistributionSerializer,
+    AreaDistributionSerializer,
+    MedicalConditionsStatsSerializer,
+    AccessibilityRequirementsStatsSerializer,
+    DietaryRequirementsStatsSerializer,
+    EmergencyContactStatsSerializer,
+    ConsentStatsSerializer,
+    RegistrationTrendsSerializer,
+    AttendanceStatsSerializer,
+    PersonalInfoCombinedSerializer,
+    OverviewStatsSerializer,
+    DemographicsSerializer,
+)
+
 __all__ = [
     # Base serializers
     'AttendeeListSerializer',
@@ -63,4 +80,19 @@ __all__ = [
     'EventAttendanceSerializer',
     'AttendeeOrganisationSerializer',
     'FamilyAttendeeSerializer',
+    # Statistics serializers
+    'AgeDistributionSerializer',
+    'GenderDistributionSerializer',
+    'RelationshipDistributionSerializer',
+    'AreaDistributionSerializer',
+    'MedicalConditionsStatsSerializer',
+    'AccessibilityRequirementsStatsSerializer',
+    'DietaryRequirementsStatsSerializer',
+    'EmergencyContactStatsSerializer',
+    'ConsentStatsSerializer',
+    'RegistrationTrendsSerializer',
+    'AttendanceStatsSerializer',
+    'PersonalInfoCombinedSerializer',
+    'OverviewStatsSerializer',
+    'DemographicsSerializer',
 ]

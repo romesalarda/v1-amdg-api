@@ -25,6 +25,7 @@ from apps.attendee.api.viewsets import (
     EventAttendanceViewSet,
     AttendeeOrganisationViewSet,
 )
+from apps.attendee.api.statistics_viewset import AttendeeStatisticsViewSet
 
 app_name = 'attendee'
 
@@ -35,6 +36,9 @@ router = DefaultRouter()
 router.register(r'attendees', AttendeeViewSet, basename='attendee')
 router.register(r'guardians', AttendeeGuardianViewSet, basename='attendeeguardian')
 router.register(r'actions', AttendeeActionViewSet, basename='attendeeaction')
+
+# Statistics endpoints
+router.register(r'attendees/statistics', AttendeeStatisticsViewSet, basename='attendeestatistics')
 
 # Family and messaging endpoints
 router.register(r'family-groups', FamilyGroupViewSet, basename='familygroup')

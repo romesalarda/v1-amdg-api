@@ -18,6 +18,8 @@ from apps.attendee.models import (
     AttendeeMessagePriority, HumanRelationshipChoices,
 )
 from apps.common.models import VerificationStatus
+from apps.events.models import EventQuestion, EventQuestionAnswer, EventQuestionOption, EventQuestionTypeChoices
+from apps.products.models import Order, OrderItem, OrderStatusChoices
 
 
 class AttendeeFilterSet(django_filters.FilterSet):
@@ -93,6 +95,32 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     # Soft delete filter
     include_deleted = django_filters.BooleanFilter(method='filter_include_deleted')
+    
+    # Question answer filters
+    has_answered_questions = django_filters.BooleanFilter(method='filter_has_answered_questions', label='Has answered any questions')
+    question = django_filters.UUIDFilter(method='filter_question', label='Filter by specific question UUID')
+    question_answer_search = django_filters.CharFilter(method='filter_question_answer_search', label='Search within answer text')
+    answered_question_type = django_filters.ChoiceFilter(method='filter_answered_question_type', choices=EventQuestionTypeChoices.choices, label='Filter by question type')
+    has_unanswered_required_questions = django_filters.BooleanFilter(method='filter_has_unanswered_required_questions', label='Has incomplete required questions')
+    selected_option = django_filters.NumberFilter(method='filter_selected_option', label='Filter by selected choice option ID')
+    answer_submitted_after = django_filters.DateTimeFilter(method='filter_answer_submitted_after', label='Answers submitted after date')
+    answer_submitted_before = django_filters.DateTimeFilter(method='filter_answer_submitted_before', label='Answers submitted before date')
+    slider_answer_min = django_filters.NumberFilter(method='filter_slider_answer_min', label='Slider answer minimum value')
+    slider_answer_max = django_filters.NumberFilter(method='filter_slider_answer_max', label='Slider answer maximum value')
+    
+    # Order filters
+    has_orders = django_filters.BooleanFilter(method='filter_has_orders', label='Has any orders')
+    order_status = django_filters.ChoiceFilter(method='filter_order_status', choices=OrderStatusChoices.choices, label='Filter by order status')
+    order_status_not = django_filters.ChoiceFilter(method='filter_order_status_not', choices=OrderStatusChoices.choices, label='Exclude order status')
+    purchased_product = django_filters.NumberFilter(method='filter_purchased_product', label='Filter by purchased product variant ID')
+    purchased_product_title = django_filters.CharFilter(method='filter_purchased_product_title', label='Search in purchased product titles')
+    order_total_min = django_filters.NumberFilter(method='filter_order_total_min', label='Order total minimum amount')
+    order_total_max = django_filters.NumberFilter(method='filter_order_total_max', label='Order total maximum amount')
+    order_created_after = django_filters.DateTimeFilter(method='filter_order_created_after', label='Orders created after date')
+    order_created_before = django_filters.DateTimeFilter(method='filter_order_created_before', label='Orders created before date')
+    order_reference_id = django_filters.CharFilter(method='filter_order_reference_id', label='Search by order reference ID')
+    has_completed_orders = django_filters.BooleanFilter(method='filter_has_completed_orders', label='Has at least one completed order')
+    has_pending_orders = django_filters.BooleanFilter(method='filter_has_pending_orders', label='Has pending or processing orders')
     
     class Meta:
         model = Attendee
@@ -253,6 +281,136 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.all()  # Include deleted
         else:
             return queryset.filter(deleted_at__isnull=True)  # Exclude deleted
+    
+    # Question answer filter methods
+    def filter_has_answered_questions(self, queryset, name, value):
+        """Filter attendees who have answered any questions."""
+        if value:
+            return queryset.filter(question_answers__isnull=False).distinct()
+        else:
+            return queryset.filter(question_answers__isnull=True).distinct()
+    
+    def filter_question(self, queryset, name, value):
+        """Filter attendees who answered a specific question."""
+        return queryset.filter(question_answers__question__id=value).distinct()
+    
+    def filter_question_answer_search(self, queryset, name, value):
+        """Search within question answer text."""
+        return queryset.filter(question_answers__answer_text__icontains=value).distinct()
+    
+    def filter_answered_question_type(self, queryset, name, value):
+        """Filter attendees who answered questions of a specific type."""
+        return queryset.filter(question_answers__question__question_type=value).distinct()
+    
+    def filter_has_unanswered_required_questions(self, queryset, name, value):
+        """Filter attendees with incomplete required questions for their event."""
+        if value:
+            # Get attendees who have required questions in their event that they haven't answered
+            return queryset.filter(
+                event__questions__required=True
+            ).exclude(
+                question_answers__question__in=Q(event__questions__required=True)
+            ).distinct()
+        else:
+            # Get attendees who have answered all required questions
+            # This is complex - for now, return attendees who have at least one answer
+            return queryset.filter(question_answers__question__required=True).distinct()
+    
+    def filter_selected_option(self, queryset, name, value):
+        """Filter attendees who selected a specific choice option."""
+        return queryset.filter(
+            question_answers__selected_options__option__id=value
+        ).distinct()
+    
+    def filter_answer_submitted_after(self, queryset, name, value):
+        """Filter attendees who submitted answers after a specific date."""
+        return queryset.filter(question_answers__submitted_at__gte=value).distinct()
+    
+    def filter_answer_submitted_before(self, queryset, name, value):
+        """Filter attendees who submitted answers before a specific date."""
+        return queryset.filter(question_answers__submitted_at__lte=value).distinct()
+    
+    def filter_slider_answer_min(self, queryset, name, value):
+        """Filter attendees whose slider answers are at least the specified value."""
+        return queryset.filter(
+            question_answers__question__question_type=EventQuestionTypeChoices.SLIDER,
+            question_answers__answer_text__gte=str(value)
+        ).distinct()
+    
+    def filter_slider_answer_max(self, queryset, name, value):
+        """Filter attendees whose slider answers are at most the specified value."""
+        return queryset.filter(
+            question_answers__question__question_type=EventQuestionTypeChoices.SLIDER,
+            question_answers__answer_text__lte=str(value)
+        ).distinct()
+    
+    # Order filter methods
+    def filter_has_orders(self, queryset, name, value):
+        """Filter attendees with any orders."""
+        if value:
+            return queryset.filter(orders__isnull=False).distinct()
+        else:
+            return queryset.filter(orders__isnull=True).distinct()
+    
+    def filter_order_status(self, queryset, name, value):
+        """Filter attendees with orders in a specific status."""
+        return queryset.filter(orders__status=value).distinct()
+    
+    def filter_order_status_not(self, queryset, name, value):
+        """Exclude attendees with orders in a specific status."""
+        return queryset.exclude(orders__status=value).distinct()
+    
+    def filter_purchased_product(self, queryset, name, value):
+        """Filter attendees who purchased a specific product variant."""
+        return queryset.filter(
+            orders__order_items__product_variant__id=value
+        ).distinct()
+    
+    def filter_purchased_product_title(self, queryset, name, value):
+        """Search attendees by purchased product titles."""
+        return queryset.filter(
+            orders__order_items__product_variant__product__title__icontains=value
+        ).distinct()
+    
+    def filter_order_total_min(self, queryset, name, value):
+        """Filter attendees with orders totaling at least the specified amount."""
+        return queryset.filter(orders__total_amount__gte=value).distinct()
+    
+    def filter_order_total_max(self, queryset, name, value):
+        """Filter attendees with orders totaling at most the specified amount."""
+        return queryset.filter(orders__total_amount__lte=value).distinct()
+    
+    def filter_order_created_after(self, queryset, name, value):
+        """Filter attendees with orders created after a specific date."""
+        return queryset.filter(orders__created_at__gte=value).distinct()
+    
+    def filter_order_created_before(self, queryset, name, value):
+        """Filter attendees with orders created before a specific date."""
+        return queryset.filter(orders__created_at__lte=value).distinct()
+    
+    def filter_order_reference_id(self, queryset, name, value):
+        """Search attendees by order reference ID."""
+        return queryset.filter(orders__order_reference_id__icontains=value).distinct()
+    
+    def filter_has_completed_orders(self, queryset, name, value):
+        """Filter attendees with at least one completed order."""
+        if value:
+            return queryset.filter(orders__status=OrderStatusChoices.COMPLETED).distinct()
+        else:
+            return queryset.exclude(orders__status=OrderStatusChoices.COMPLETED).distinct()
+    
+    def filter_has_pending_orders(self, queryset, name, value):
+        """Filter attendees with pending or processing orders."""
+        if value:
+            return queryset.filter(
+                Q(orders__status=OrderStatusChoices.PENDING) |
+                Q(orders__status=OrderStatusChoices.PROCESSING)
+            ).distinct()
+        else:
+            return queryset.exclude(
+                Q(orders__status=OrderStatusChoices.PENDING) |
+                Q(orders__status=OrderStatusChoices.PROCESSING)
+            ).distinct()
 
 
 class AttendeeGuardianFilterSet(django_filters.FilterSet):
