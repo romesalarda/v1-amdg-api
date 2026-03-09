@@ -32,7 +32,8 @@ from apps.common.api.serializers import (
     AvailabilityWindowTemplateSerializer,
     ResourceSerializer
 )
-from .serializers import (
+from apps.events.api.serializers import (
+    
     EventTypeSerializer, EventListSerializer, EventDetailSerializer,
     EventCreateUpdateSerializer, EventSettingsSerializer,
     EventAuthorizationSerializer, EventPermissionSerializer,
@@ -43,7 +44,8 @@ from .serializers import (
     EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer,
     EventVenueSerializer, EventStaffInviteSerializer, EventStaffInviteListSerializer
 )
-from .filtersets import (
+
+from apps.events.api.filtersets import (
     EventQuestionAnswerFilterSet
 )
 

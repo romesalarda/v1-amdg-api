@@ -20,6 +20,7 @@ from apps.events.api.viewsets import (
     EventQuestionAnswerChoiceViewSet,
     EventVenueViewSet,
 )
+from apps.events.api.statistics_viewsets import EventStatisticsViewSet
 
 app_name = 'events'
 
@@ -41,6 +42,7 @@ router.register(r'question-options', EventQuestionOptionViewSet, basename='event
 router.register(r'question-answers', EventQuestionAnswerViewSet, basename='eventquestionanswer')
 router.register(r'answer-choices', EventQuestionAnswerChoiceViewSet, basename='eventquestionanswerchoice')
 router.register(r'venues', EventVenueViewSet, basename='eventvenue')
+router.register(r'statistics', EventStatisticsViewSet, basename='eventstatistics')
 
 urlpatterns = [
     path('event/', include(router.urls)),
