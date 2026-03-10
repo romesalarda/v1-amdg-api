@@ -22,7 +22,7 @@ from apps.events.models import (
 )
 from apps.organisations.models import Organisation
 from apps.bookings.models import Booking, BookingPackage
-from apps.bookings.models.ticket import TicketType
+from apps.bookings.models.ticket import TicketType, Ticket
 from apps.attendee.models import Attendee
 from apps.payments.models import Payment, PaymentStatusChoices
 from apps.products.models import Product
@@ -282,6 +282,31 @@ class EventStatisticsBaseTestCase(TestCase):
         self.payment4.target = self.booking4
         self.payment4.save()
         
+        # Create tickets linking packages to attendees and payments
+        self.ticket1 = Ticket.objects.create(
+            ticket_type=self.ticket_type1,
+            ticket_code='TKT-VIP-001',
+            attendee=self.attendee1,
+            package=self.package1,
+            payment=self.payment1
+        )
+        
+        self.ticket2 = Ticket.objects.create(
+            ticket_type=self.ticket_type2,
+            ticket_code='TKT-GEN-001',
+            attendee=self.attendee2,
+            package=self.package2,
+            payment=self.payment2
+        )
+        
+        self.ticket3 = Ticket.objects.create(
+            ticket_type=self.ticket_type3,
+            ticket_code='TKT-STD-001',
+            attendee=self.attendee3,
+            package=self.package3,
+            payment=self.payment3
+        )
+        
         # Create event staff
         self.staff1 = EventStaff.objects.create(
             event=self.open_event1,
@@ -520,7 +545,7 @@ class UpcomingEventsTest(EventStatisticsBaseTestCase):
             self.assertIn('event_id', event)
             self.assertIn('title', event)
             self.assertIn('start_datetime', event)
-            self.assertIn('type', event)
+            self.assertIn('event_type', event)
             self.assertIn('status', event)
     
     def test_upcoming_events_custom_timeframe(self):
@@ -546,7 +571,7 @@ class UpcomingEventsTest(EventStatisticsBaseTestCase):
         data = response.data
         # All returned events should be workshops
         for event in data['events']:
-            self.assertEqual(event['type'], 'Workshop')
+            self.assertEqual(event['event_type'], 'Workshop')
 
 
 class RevenueOverviewTest(EventStatisticsBaseTestCase):
@@ -592,7 +617,7 @@ class RevenueOverviewTest(EventStatisticsBaseTestCase):
     def test_revenue_overview_by_event(self):
         """Test revenue overview filtered by specific event."""
         response = self.client.get(
-            f'/api/event/statistics/revenue-overview/?event_id={self.open_event1.id}'
+            f'/api/event/statistics/revenue-overview/?event_id={self.open_event1.event_id}'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -665,6 +690,7 @@ class PaymentStatusDistributionTest(EventStatisticsBaseTestCase):
         self.assertIn('distribution', data)
         self.assertIn('total_bookings', data)
         self.assertIn('total_amount', data)
+        self.assertIn('total_payments', data)
         
         # Should have different payment statuses
         distribution = data['distribution']
@@ -677,6 +703,7 @@ class PaymentStatusDistributionTest(EventStatisticsBaseTestCase):
             self.assertIn('amount', item)
         
         # We created 3 completed and 1 pending payment
+        
         self.assertEqual(data['total_payments'], 4)
 
 
@@ -845,6 +872,7 @@ class BookingPackagePerformanceTest(EventStatisticsBaseTestCase):
         # Find VIP package
         vip_package = next((p for p in data['packages'] if p['package_name'] == 'VIP Package'), None)
         self.assertIsNotNone(vip_package)
+        print(vip_package)
         self.assertEqual(vip_package['bookings'], 1)
         self.assertEqual(float(vip_package['revenue']), 500.00)
     

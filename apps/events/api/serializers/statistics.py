@@ -188,6 +188,7 @@ class PaymentStatusDistributionSerializer(BaseStatisticsSerializer):
     )
     total_bookings = serializers.IntegerField()
     total_amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+    total_payments = serializers.IntegerField()
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as payment status pie chart."""

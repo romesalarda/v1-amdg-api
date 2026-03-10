@@ -880,11 +880,11 @@ def calculate_booking_package_performance(
     
     event_ids = list(event_queryset.values_list('id', flat=True))
     
-    # Package usage - calculate from payments linked to bookings
+    # Package usage - count unique bookings that have tickets with each package
     package_stats = BookingPackage.objects.filter(
         event_id__in=event_ids
     ).annotate(
-        booking_count=Count('tickets')
+        booking_count=Count('tickets__attendee__booking', distinct=True)
     ).values(
         'id',
         'name',
@@ -894,19 +894,11 @@ def calculate_booking_package_performance(
     ).order_by('-booking_count')
     
     packages_data = []
-    from django.contrib.contenttypes.models import ContentType
-    booking_ct = ContentType.objects.get_for_model(Booking)
     
     for item in package_stats:
-        # Calculate revenue from payments for bookings linked to this package
-        package_booking_ids = Booking.objects.filter(
-            event_id__in=event_ids
-        ).values_list('id', flat=True)
-        
+        # Calculate revenue from payments linked to tickets that use this package
         revenue = Payment.objects.filter(
-            event_id__in=event_ids,
-            target_type=booking_ct,
-            target_id__in=package_booking_ids,
+            tickets__package_id=item['id'],
             status=PaymentStatusChoices.COMPLETED
         ).aggregate(
             total=Coalesce(Sum('base_amount'), Decimal('0.00'))

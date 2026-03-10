@@ -142,6 +142,7 @@ SHOW_BREAKDOWN_PARAM = OpenApiParameter(
     default=False
 )
 
+import uuid
 
 class EventStatisticsViewSet(viewsets.GenericViewSet):
     """
@@ -161,8 +162,13 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         filters = {}
         
         if request.query_params.get('event_id'):
-            filters['event_id'] = int(request.query_params['event_id'])
-        
+            try:
+                event_id = request.query_params['event_id']
+                uuid_obj = uuid.UUID(event_id, version=4)
+                filters['event_id'] = str(uuid_obj)
+            except ValueError:
+                raise ValidationError({'event_id': 'Invalid UUID format for event_id.'})
+            
         if request.query_params.get('event_type_id'):
             filters['event_type_id'] = int(request.query_params['event_type_id'])
         
