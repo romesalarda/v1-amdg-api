@@ -140,7 +140,7 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
     - Soft-deleted attendee inclusion via ?include_deleted parameter
     """
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
     serializer_class = OverviewStatsSerializer  # Default serializer
     
     def _get_common_filters(self, request):

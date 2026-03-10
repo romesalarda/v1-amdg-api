@@ -37,7 +37,7 @@ def _get_base_queryset(event_id: Optional[str] = None, include_deleted: bool = F
     Returns:
         Filtered queryset of attendees
     """
-    queryset = Attendee.objects.all()
+    queryset = Attendee.all_objects.all()
     
     if not include_deleted:
         queryset = queryset.filter(deleted_at__isnull=True)
@@ -659,15 +659,14 @@ def calculate_attendance_stats(
             event__event_id=event_id
         )
     
-    checked_in = attendance_queryset.filter(checked_in=True).count()
+    checked_in = attendance_queryset.filter(check_in_time__isnull=False).count()
     not_checked_in = total_attendees - checked_in
     
     # Get check-in trend (by date)
     checkin_trends = attendance_queryset.filter(
-        checked_in=True,
-        checked_in_at__isnull=False
+        check_in_time__isnull=False
     ).annotate(
-        date=TruncDate('checked_in_at')
+        date=TruncDate('check_in_time')
     ).values('date').annotate(
         count=Count('id')
     ).order_by('date')

@@ -8,7 +8,7 @@ class BasePersonalInfoModel(RequiresVerificationModel):
     Abstract base model for personal information related models.
     """
     
-    code = models.CharField(max_length=10, unique=True)
+    code = models.CharField(max_length=20, unique=True)
     label = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
     
