@@ -930,6 +930,7 @@ def calculate_booking_package_performance(
 
 def calculate_overview_statistics(
     event_type_id: Optional[int] = None,
+    event_id: Optional[str] = None,
     organization_id: Optional[int] = None,
     status: Optional[str] = None,
     date_from: Optional[date] = None,
@@ -940,6 +941,7 @@ def calculate_overview_statistics(
     
     Args:
         event_type_id: Optional event type ID
+        event_id: Optional event ID
         organization_id: Optional organization ID
     
     Returns:
@@ -947,6 +949,7 @@ def calculate_overview_statistics(
     """
     queryset = _get_base_queryset(
         event_type_id=event_type_id,
+        event_id=event_id,
         organization_id=organization_id,
         include_deleted=False
     )

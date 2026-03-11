@@ -13,6 +13,10 @@ from typing import Dict, Any
 
 from apps.attendee import formatters
 
+# IMPORTANT: This module contains product-specific statistics serializers.
+# The ProductOverviewStatisticsSerializer is deliberately named to avoid
+# conflicts with event statistics (OverviewStatistics) in OpenAPI schema generation.
+
 
 class BaseProductStatisticsSerializer(serializers.Serializer):
     """
@@ -683,8 +687,8 @@ class RevenueBreakdownSerializer(BaseProductStatisticsSerializer):
         return config
 
 
-class OverviewStatisticsSerializer(BaseProductStatisticsSerializer):
-    """Serializer for comprehensive overview statistics."""
+class ProductOverviewStatisticsSerializer(BaseProductStatisticsSerializer):
+    """Serializer for comprehensive product overview statistics."""
     
     product_summary = serializers.DictField(
         help_text="Product count summary"

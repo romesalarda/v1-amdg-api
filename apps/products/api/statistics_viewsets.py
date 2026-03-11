@@ -45,7 +45,7 @@ from apps.products.api.serializers.statistics import (
     RevenueByCategorySerializer,
     RevenueTrendsSerializer,
     RevenueBreakdownSerializer,
-    OverviewStatisticsSerializer,
+    ProductOverviewStatisticsSerializer,
 )
 
 import uuid
@@ -201,7 +201,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
     """
     
     permission_classes = [permissions.IsAuthenticated]
-    serializer_class = OverviewStatisticsSerializer  # Default serializer
+    serializer_class = ProductOverviewStatisticsSerializer  # Default serializer
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
@@ -918,7 +918,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             INCLUDE_DELETED_PARAM,
             FORMAT_PARAM,
         ],
-        responses={200: OverviewStatisticsSerializer},
+        responses={200: ProductOverviewStatisticsSerializer},
         description="Get comprehensive overview dashboard with all key metrics including products, variants, orders, and revenue.",
         tags=["Product Statistics"],
     )
@@ -935,5 +935,5 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = OverviewStatisticsSerializer(data, context={'request': request})
+        serializer = ProductOverviewStatisticsSerializer(data, context={'request': request})
         return Response(serializer.data)

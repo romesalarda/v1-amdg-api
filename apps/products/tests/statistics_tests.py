@@ -1166,8 +1166,6 @@ class OrderStatusDistributionStatisticsTests(ProductStatisticsBaseTestCase):
         """Test status distribution with deleted included."""
         result_without = statistics.calculate_order_status_distribution()
         result_with = statistics.calculate_order_status_distribution(include_deleted=True)
-        print(result_without)
-        print(result_with)
         self.assertEqual(result_without['total_orders'], 13)
         self.assertEqual(result_with['total_orders'], 14)
 
@@ -1588,7 +1586,6 @@ class RevenueTrendsStatisticsTests(ProductStatisticsBaseTestCase):
     def test_trends_order(self):
         """Test order revenue trends."""
         result = statistics.calculate_revenue_trends(date_from=timezone.now() - timedelta(days=60), date_to=timezone.now())
-        print(result['trends'])
         if len(result['trends']) > 1:
             for i in range(1, len(result['trends'])):
                 self.assertGreaterEqual(
