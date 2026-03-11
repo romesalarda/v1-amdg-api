@@ -108,11 +108,12 @@ class Order(SoftDeleteModel): # no admin model
         self.clean()
         if not self.order_reference_id:
             try:
+                ref = self.attendee.event.display_code if self.attendee and self.attendee.event else 'EVT'
                 self.order_reference_id = try_generate_unique_display_code(
                     model_class=Order,
                     length=25,
                     prefix='ORD',
-                    args=[self.event.display_code],
+                    args=[ref],
                     lookup_field='order_reference_id',
                     max_attempts=settings.MAX_ID_GENERATION_ATTEMPTS
                 )

@@ -28,6 +28,7 @@ from apps.products.api.viewsets import (
     OrderViewSet,
     OrderItemViewSet,
 )
+from apps.products.api.statistics_viewsets import ProductStatisticsViewSet
 
 app_name = 'products'
 
@@ -44,6 +45,9 @@ router.register(r'list', ProductViewSet, basename='product')
 # Register order endpoints
 router.register(r'orders', OrderViewSet, basename='order')
 router.register(r'order-items', OrderItemViewSet, basename='orderitem')
+
+# Register statistics endpoints
+router.register(r'statistics', ProductStatisticsViewSet, basename='product-statistics')
 
 # Manually define nested routes for product variants
 # This creates: /api/products/list/{product_product_id}/variants/
