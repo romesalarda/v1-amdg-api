@@ -466,7 +466,7 @@ class PaymentStatusDistributionTests(PaymentStatisticsBaseTestCase):
     
     def test_status_distribution_with_event_filter(self):
         """Test status distribution filtered by event."""
-        result = statistics.calculate_payment_status_distribution(event_id=str(self.event1.id))
+        result = statistics.calculate_payment_status_distribution(event_id=str(self.event1.event_id))
         
         # Count event1 payments
         event1_payment_count = Payment.objects.filter(event=self.event1).count()
@@ -474,14 +474,14 @@ class PaymentStatusDistributionTests(PaymentStatisticsBaseTestCase):
     
     def test_status_distribution_percentages(self):
         """Test that percentages sum to approximately 100."""
-        result = statistics.calculate_payment_status_distribution(event_id=str(self.event1.id))
+        result = statistics.calculate_payment_status_distribution(event_id=str(self.event1.event_id))
         
         total_percentage = sum(item['percentage'] for item in result['distribution'])
         self.assertAlmostEqual(total_percentage, 100.0, places=1)
     
     def test_status_distribution_has_all_statuses(self):
         """Test that distribution includes all present statuses."""
-        result = statistics.calculate_payment_status_distribution(event_id=str(self.event1.id))
+        result = statistics.calculate_payment_status_distribution(event_id=str(self.event1.event_id))
         
         statuses_in_result = {item['status_code'] for item in result['distribution']}
         statuses_in_db = set(
@@ -504,7 +504,7 @@ class PaymentMethodDistributionTests(PaymentStatisticsBaseTestCase):
     
     def test_method_distribution_with_event_filter(self):
         """Test method distribution filtered by event."""
-        result = statistics.calculate_payment_method_distribution(event_id=str(self.event1.id))
+        result = statistics.calculate_payment_method_distribution(event_id=str(self.event1.event_id))
         
         event1_payment_count = Payment.objects.filter(event=self.event1).count()
         self.assertEqual(result['total'], event1_payment_count)
@@ -549,7 +549,7 @@ class PaymentTrendsTests(PaymentStatisticsBaseTestCase):
     
     def test_trends_with_event_filter(self):
         """Test trends filtered by event."""
-        result = statistics.calculate_payment_trends(event_id=str(self.event1.id))
+        result = statistics.calculate_payment_trends(event_id=str(self.event1.event_id))
         
         total_count = sum(item['count'] for item in result['trends'])
         event1_payments = Payment.objects.filter(event=self.event1).count()
@@ -582,7 +582,7 @@ class PaymentOverviewTests(PaymentStatisticsBaseTestCase):
     
     def test_overview_with_event_filter(self):
         """Test overview filtered by event."""
-        result = statistics.calculate_payment_overview(event_id=str(self.event1.id))
+        result = statistics.calculate_payment_overview(event_id=str(self.event1.event_id))
         
         event1_payments = Payment.objects.filter(event=self.event1).count()
         self.assertEqual(result['total_payments'], event1_payments)
@@ -611,7 +611,7 @@ class DiscountUsageTests(PaymentStatisticsBaseTestCase):
     
     def test_discount_usage_with_event_filter(self):
         """Test discount usage filtered by event."""
-        result = statistics.calculate_discount_usage(event_id=str(self.event1.id))
+        result = statistics.calculate_discount_usage(event_id=str(self.event1.event_id))
         
         event1_ct = ContentType.objects.get_for_model(Event)
         event1_discounts = Discount.objects.filter(
@@ -648,7 +648,7 @@ class DiscountRuleEffectivenessTests(PaymentStatisticsBaseTestCase):
     
     def test_rule_effectiveness_with_event_filter(self):
         """Test rule effectiveness filtered by event."""
-        result = statistics.calculate_discount_rule_effectiveness(event_id=str(self.event1.id))
+        result = statistics.calculate_discount_rule_effectiveness(event_id=str(self.event1.event_id))
         
         # Count rules for event1 discounts
         event1_ct = ContentType.objects.get_for_model(Event)
@@ -697,7 +697,7 @@ class RefundRequestStatsTests(PaymentStatisticsBaseTestCase):
     
     def test_refund_stats_with_event_filter(self):
         """Test refund stats filtered by event."""
-        result = statistics.calculate_refund_request_stats(event_id=str(self.event1.id))
+        result = statistics.calculate_refund_request_stats(event_id=str(self.event1.event_id))
         
         event1_refunds = RefundRequest.objects.filter(
             payment__event=self.event1
@@ -763,7 +763,7 @@ class DonationStatsTests(PaymentStatisticsBaseTestCase):
     
     def test_donation_stats_with_event_filter(self):
         """Test donation stats filtered by event."""
-        result = statistics.calculate_donation_stats(event_id=str(self.event1.id))
+        result = statistics.calculate_donation_stats(event_id=str(self.event1.event_id))
         
         event1_donations = Donation.objects.filter(
             payment__event=self.event1
@@ -822,7 +822,7 @@ class RevenueOverviewTests(PaymentStatisticsBaseTestCase):
     
     def test_only_completed_payments_counted(self):
         """Test that ONLY COMPLETED payments count toward revenue."""
-        result = statistics.calculate_revenue_overview(event_id=str(self.event1.id))
+        result = statistics.calculate_revenue_overview(event_id=str(self.event1.event_id))
         
         # Count only COMPLETED payments for event1
         completed_count = Payment.objects.filter(
@@ -870,7 +870,7 @@ class RevenueOverviewTests(PaymentStatisticsBaseTestCase):
     
     def test_revenue_excludes_failed_payments(self):
         """Test that FAILED payments are excluded from revenue."""
-        result = statistics.calculate_revenue_overview(event_id=str(self.event1.id))
+        result = statistics.calculate_revenue_overview(event_id=str(self.event1.event_id))
         
         # Verify failed payments exist but aren't counted
         failed_count = Payment.objects.filter(
@@ -903,7 +903,7 @@ class RevenueOverviewTests(PaymentStatisticsBaseTestCase):
     
     def test_revenue_with_event_filter(self):
         """Test revenue filtered by event."""
-        result = statistics.calculate_revenue_overview(event_id=str(self.event1.id))
+        result = statistics.calculate_revenue_overview(event_id=str(self.event1.event_id))
         
         # Should only include event1 completed payments
         event1_completed = Payment.objects.filter(
@@ -919,7 +919,7 @@ class RevenueTrendsTests(PaymentStatisticsBaseTestCase):
     
     def test_only_completed_payments_counted(self):
         """Test that only COMPLETED payments are counted in revenue trends."""
-        result = statistics.calculate_revenue_trends(event_id=str(self.event1.id))
+        result = statistics.calculate_revenue_trends(event_id=str(self.event1.event_id))
         
         # Count total payments in trends
         total_in_trends = sum(item['count'] for item in result['trends'])
@@ -952,7 +952,7 @@ class RevenueByMethodTests(PaymentStatisticsBaseTestCase):
     
     def test_only_completed_payments_counted(self):
         """Test that only COMPLETED payments are counted in revenue by method."""
-        result = statistics.calculate_revenue_by_method(event_id=str(self.event1.id))
+        result = statistics.calculate_revenue_by_method(event_id=str(self.event1.event_id))
         
         # Calculate expected revenue from completed Stripe payments
         stripe_completed_revenue = float(
@@ -983,7 +983,7 @@ class RevenueByMethodTests(PaymentStatisticsBaseTestCase):
     
     def test_revenue_by_method_percentages(self):
         """Test that revenue by method includes percentages."""
-        result = statistics.calculate_revenue_by_method(event_id=str(self.event1.id))
+        result = statistics.calculate_revenue_by_method(event_id=str(self.event1.event_id))
         
         if len(result['methods']) > 0:
             for method in result['methods']:
@@ -997,7 +997,7 @@ class RevenueBreakdownTests(PaymentStatisticsBaseTestCase):
     
     def test_only_completed_payments_in_gross_revenue(self):
         """Test that only COMPLETED payments are included in gross revenue."""
-        result = statistics.calculate_revenue_breakdown(event_id=str(self.event1.id))
+        result = statistics.calculate_revenue_breakdown(event_id=str(self.event1.event_id))
         
         # Calculate expected gross revenue
         expected_gross = float(
@@ -1068,7 +1068,7 @@ class OverviewStatsTests(PaymentStatisticsBaseTestCase):
     
     def test_overview_with_event_filter(self):
         """Test overview with event filter."""
-        result = statistics.calculate_overview_stats(event_id=str(self.event1.id))
+        result = statistics.calculate_overview_stats(event_id=str(self.event1.event_id))
         
         # Verify it's filtered to event1
         event1_payments = Payment.objects.filter(event=self.event1).count()
@@ -1155,7 +1155,7 @@ class PaymentStatisticsAPITests(PaymentStatisticsBaseTestCase):
         self.assertIn('generated_at', response.data)
         
         filters = response.data['filters_applied']
-        self.assertEqual(filters['event_id'], str(self.event1.id))
+        self.assertEqual(filters['event_id'], str(self.event1.event_id))
     
     def test_invalid_uuid_returns_error(self):
         """Test that invalid UUID format returns validation error."""
@@ -1207,7 +1207,7 @@ class PaymentStatisticsEdgeCaseTests(PaymentStatisticsBaseTestCase):
     
     def test_empty_event_statistics(self):
         """Test statistics for an event with no payments."""
-        result = statistics.calculate_payment_overview(event_id=str(self.event3.id))
+        result = statistics.calculate_payment_overview(event_id=str(self.event3.event_id))
         
         self.assertEqual(result['total_payments'], 0)
         self.assertIsNone(result['total_amount'])
@@ -1216,7 +1216,7 @@ class PaymentStatisticsEdgeCaseTests(PaymentStatisticsBaseTestCase):
     def test_revenue_with_no_completed_payments(self):
         """Test revenue calculation when there are no completed payments."""
         # Use event3 which has no payments
-        result = statistics.calculate_revenue_overview(event_id=str(self.event3.id))
+        result = statistics.calculate_revenue_overview(event_id=str(self.event3.event_id))
         
         self.assertEqual(result['total_completed_payments'], 0)
         self.assertIsNone(result['total_revenue'])
@@ -1225,12 +1225,12 @@ class PaymentStatisticsEdgeCaseTests(PaymentStatisticsBaseTestCase):
         """Test that include_deleted parameter only affects orders, not payments."""
         # Payment model doesn't support soft-delete
         result_without = statistics.calculate_payment_overview(
-            event_id=str(self.event1.id),
+            event_id=str(self.event1.event_id),
             include_deleted=False
         )
         
         result_with = statistics.calculate_payment_overview(
-            event_id=str(self.event1.id),
+            event_id=str(self.event1.event_id),
             include_deleted=True
         )
         

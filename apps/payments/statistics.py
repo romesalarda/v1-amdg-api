@@ -49,7 +49,7 @@ def _get_base_queryset(event_id: Optional[str] = None, include_deleted: bool = F
     queryset = Payment.objects.all()
     
     if event_id:
-        queryset = queryset.filter(event__id=event_id)
+        queryset = queryset.filter(event__event_id=event_id)
     
     return queryset
 
@@ -74,7 +74,7 @@ def _get_orders_base_queryset(event_id: Optional[str] = None, include_deleted: b
     
     if event_id:
         # Orders link to events through attendee
-        queryset = queryset.filter(attendee__event__id=event_id)
+        queryset = queryset.filter(attendee__event__event_id=event_id)
     
     return queryset
 
@@ -314,12 +314,20 @@ def calculate_discount_usage(
     Returns:
         Dictionary with discount usage data
     """
+    from apps.events.models import Event
     # Get discounts targeting the specific event or all if no event specified
     queryset = Discount.objects.filter(active=True)
     
     if event_id:
+        event = Event.objects.filter(event_id=event_id).first()
+        if not event:
+            # Event not found, return empty queryset
+            return {
+                'total_discounts': 0,
+                'type_distribution': []
+            }
         event_ct = ContentType.objects.get(app_label='events', model='event')
-        queryset = queryset.filter(target_type=event_ct, target_id=event_id)
+        queryset = queryset.filter(target_type=event_ct, target_id=event.id)
     
     total_discounts = queryset.count()
     
@@ -357,13 +365,21 @@ def calculate_discount_rule_effectiveness(
         Dictionary with rule effectiveness data
     """
     # Get rules for active discounts
+    from apps.events.models import Event
     queryset = DiscountRule.objects.filter(discount__active=True, active=True)
     
     if event_id:
+        event = Event.objects.filter(event_id=event_id).first()
+        if not event:
+            # Event not found, return empty results
+            return {
+                'total_rules': 0,
+                'rules': []
+            }
         event_ct = ContentType.objects.get(app_label='events', model='event')
         queryset = queryset.filter(
             discount__target_type=event_ct,
-            discount__target_id=event_id
+            discount__target_id=event.id
         )
     
     total_rules = queryset.count()
@@ -406,11 +422,20 @@ def calculate_top_discounts(
     Returns:
         Dictionary with top discounts data
     """
+    from apps.events.models import Event
     queryset = Discount.objects.filter(active=True)
     
     if event_id:
+        event = Event.objects.filter(event_id=event_id).first()
+        if not event:
+            # Event not found, return empty results
+            return {
+                'total_returned': 0,
+                'limit': limit,
+                'discounts': []
+            }
         event_ct = ContentType.objects.get(app_label='events', model='event')
-        queryset = queryset.filter(target_type=event_ct, target_id=event_id)
+        queryset = queryset.filter(target_type=event_ct, target_id=event.id)
     
     # Get top discounts ordered by creation date (most recently created)
     top_discounts = queryset.order_by('-created_at')[:limit]
@@ -459,7 +484,7 @@ def calculate_refund_request_stats(
     queryset = RefundRequest.objects.all()
     
     if event_id:
-        queryset = queryset.filter(payment__event__id=event_id)
+        queryset = queryset.filter(payment__event__event_id=event_id)
     
     total_requests = queryset.count()
     
@@ -511,7 +536,7 @@ def calculate_refund_trends(
     queryset = RefundRequest.objects.all()
     
     if event_id:
-        queryset = queryset.filter(payment__event__id=event_id)
+        queryset = queryset.filter(payment__event__event_id=event_id)
     
     # Apply date filtering
     if date_from:
@@ -566,7 +591,7 @@ def calculate_refund_processing_times(
     )
     
     if event_id:
-        queryset = queryset.filter(payment__event__id=event_id)
+        queryset = queryset.filter(payment__event__event_id=event_id)
     
     total_processed = queryset.count()
     
@@ -623,7 +648,7 @@ def calculate_donation_stats(
     queryset = Donation.objects.all()
     
     if event_id:
-        queryset = queryset.filter(payment__event__id=event_id)
+        queryset = queryset.filter(payment__event__event_id=event_id)
     
     total_donations = queryset.count()
     
@@ -677,7 +702,7 @@ def calculate_donation_trends(
     queryset = Donation.objects.all()
     
     if event_id:
-        queryset = queryset.filter(payment__event__id=event_id)
+        queryset = queryset.filter(payment__event__event_id=event_id)
     
     # Apply date filtering
     if date_from:
@@ -731,7 +756,7 @@ def calculate_top_donors(
     queryset = Donation.objects.filter(donated_by__isnull=False)
     
     if event_id:
-        queryset = queryset.filter(payment__event__id=event_id)
+        queryset = queryset.filter(payment__event__event_id=event_id)
     
     # Group by donor and sum amounts
     top_donors = queryset.values(
