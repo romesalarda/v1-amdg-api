@@ -26,6 +26,7 @@ from apps.bookings.api.viewsets import (
     EventAlternativeSigninViewSet,
     AttendeeAlternativeSigninViewSet,
 )
+from apps.bookings.api.statistics_viewset import BookingStatisticsViewSet
 
 app_name = 'bookings'
 
@@ -51,6 +52,9 @@ signin_router.register(r'alternative-signins', EventAlternativeSigninViewSet, ba
 attendee_signin_router = DefaultRouter()
 attendee_signin_router.register(r'attendee-alternative-signins', AttendeeAlternativeSigninViewSet, basename='attendeealternativesignin')
 
+statistics_router = DefaultRouter()
+statistics_router.register(r'statistics', BookingStatisticsViewSet, basename='booking-statistics')
+
 urlpatterns = [
     path('', include(booking_router.urls)),
     path('', include(intent_router.urls)),
@@ -59,4 +63,5 @@ urlpatterns = [
     path('', include(ticket_router.urls)),
     path('', include(signin_router.urls)),
     path('', include(attendee_signin_router.urls)),
+    path('', include(statistics_router.urls)),
 ]
