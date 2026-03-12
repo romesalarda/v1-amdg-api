@@ -36,10 +36,10 @@ from apps.attendee.api.serializers.statistics import (
     DietaryRequirementsStatsSerializer,
     EmergencyContactStatsSerializer,
     ConsentStatsSerializer,
-    RegistrationTrendsSerializer,
+    AttendeeRegistrationTrendsSerializer,
     AttendanceStatsSerializer,
     PersonalInfoCombinedSerializer,
-    OverviewStatsSerializer,
+    AttendeeOverviewStatsSerializer,
     DemographicsSerializer,
 )
 
@@ -141,7 +141,8 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
     """
     
     permission_classes = []
-    serializer_class = OverviewStatsSerializer  # Default serializer
+    serializer_class = AttendeeOverviewStatsSerializer  # Default serializer
+    queryset = None  # Statistics viewset doesn't use queryset
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
@@ -435,7 +436,7 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
             EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM,
             GROUP_BY_PARAM, DATE_FROM_PARAM, DATE_TO_PARAM
         ],
-        responses={200: RegistrationTrendsSerializer},
+        responses={200: AttendeeRegistrationTrendsSerializer},
         tags=["Attendee Statistics"],
     )
     @action(detail=False, methods=['get'], url_path='registration-trends')
@@ -475,7 +476,7 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         
-        serializer = RegistrationTrendsSerializer(data, context={'request': request})
+        serializer = AttendeeRegistrationTrendsSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -500,7 +501,7 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
         summary="Overview statistics",
         description="Combined overview statistics ideal for dashboard display.",
         parameters=[EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
-        responses={200: OverviewStatsSerializer},
+        responses={200: AttendeeOverviewStatsSerializer},
         tags=["Attendee Statistics"],
         examples=[
             OpenApiExample(
@@ -532,5 +533,5 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
         data = statistics.calculate_overview_stats(**filters)
         data = self._add_filter_metadata(data, request)
         
-        serializer = OverviewStatsSerializer(data, context={'request': request})
+        serializer = AttendeeOverviewStatsSerializer(data, context={'request': request})
         return Response(serializer.data)

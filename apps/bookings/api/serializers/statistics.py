@@ -279,7 +279,7 @@ class IntentTrendsSerializer(BaseStatisticsSerializer):
 # REVENUE STATISTICS SERIALIZERS
 # ============================================================================
 
-class RevenueOverviewSerializer(BaseStatisticsSerializer):
+class BookingRevenueOverviewSerializer(BaseStatisticsSerializer):
     """Serializer for revenue overview statistics."""
     total_revenue = serializers.FloatField()
     average_revenue_per_booking = serializers.FloatField()
@@ -317,7 +317,7 @@ class RevenueByTicketTypeSerializer(BaseStatisticsSerializer):
     distribution = RevenueByTicketTypeItemSerializer(many=True)
 
 
-class RevenueTrendsSerializer(BaseStatisticsSerializer):
+class BookingRevenueTrendsSerializer(BaseStatisticsSerializer):
     """Serializer for revenue trends."""
     total_revenue = serializers.FloatField()
     group_by = serializers.CharField()
@@ -331,7 +331,7 @@ class RevenueBreakdownItemSerializer(serializers.Serializer):
     payment_count = serializers.IntegerField()
 
 
-class RevenueBreakdownSerializer(BaseStatisticsSerializer):
+class BookingRevenueBreakdownSerializer(BaseStatisticsSerializer):
     """Serializer for revenue breakdown by status."""
     total_revenue_all_statuses = serializers.FloatField()
     completed_revenue = serializers.FloatField()

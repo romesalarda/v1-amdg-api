@@ -276,7 +276,7 @@ class ConsentStatsSerializer(BaseStatisticsSerializer):
         }
 
 
-class RegistrationTrendsSerializer(BaseStatisticsSerializer):
+class AttendeeRegistrationTrendsSerializer(BaseStatisticsSerializer):
     """Serializer for registration trends statistics."""
     total_attendees = serializers.IntegerField()
     group_by = serializers.CharField()
@@ -380,7 +380,7 @@ class PersonalInfoCombinedSerializer(BaseStatisticsSerializer):
         )
 
 
-class OverviewStatsSerializer(BaseStatisticsSerializer):
+class AttendeeOverviewStatsSerializer(BaseStatisticsSerializer):
     """Serializer for overview/dashboard statistics."""
     total_attendees = serializers.IntegerField()
     demographics = serializers.DictField()

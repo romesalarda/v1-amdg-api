@@ -13,15 +13,15 @@ from drf_spectacular.types import OpenApiTypes
 
 from apps.events.services import statistics
 from apps.events.api.serializers.statistics import (
-    StatusDistributionSerializer,
+    EventStatusDistributionSerializer,
     TypeDistributionSerializer,
     OrganizationDistributionSerializer,
     UpcomingEventsSerializer,
-    RevenueOverviewSerializer,
+    EventRevenueOverviewSerializer,
     RevenueByEventSerializer,
-    PaymentStatusDistributionSerializer,
+    EventPaymentStatusDistributionSerializer,
     CapacityUtilizationSerializer,
-    RegistrationTrendsSerializer,
+    EventRegistrationTrendsSerializer,
     ReviewStatisticsSerializer,
     StaffAllocationSerializer,
     BookingPackagePerformanceSerializer,
@@ -254,7 +254,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
             DATE_TO_PARAM,
             FORMAT_PARAM
         ],
-        responses={200: StatusDistributionSerializer},
+        responses={200: EventStatusDistributionSerializer},
         examples=[
             OpenApiExample(
                 'Status Distribution Example',
@@ -277,7 +277,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         data = statistics.calculate_status_distribution(**filters)
         data = self._add_filter_metadata(data, request)
         
-        serializer = StatusDistributionSerializer(data, context={'request': request})
+        serializer = EventStatusDistributionSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -399,7 +399,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
             DATE_TO_PARAM,
             FORMAT_PARAM
         ],
-        responses={200: RevenueOverviewSerializer},
+        responses={200: EventRevenueOverviewSerializer},
         examples=[
             OpenApiExample(
                 'Revenue Overview Example',
@@ -425,7 +425,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         data = statistics.calculate_revenue_overview(**filters)
         data = self._add_filter_metadata(data, request)
         
-        serializer = RevenueOverviewSerializer(data, context={'request': request})
+        serializer = EventRevenueOverviewSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -472,7 +472,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
             DATE_TO_PARAM,
             FORMAT_PARAM
         ],
-        responses={200: PaymentStatusDistributionSerializer}
+        responses={200: EventPaymentStatusDistributionSerializer}
     )
     @action(detail=False, methods=['get'], url_path='payment-status')
     def payment_status(self, request):
@@ -481,7 +481,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         data = statistics.calculate_payment_status_distribution(**filters)
         data = self._add_filter_metadata(data, request)
         
-        serializer = PaymentStatusDistributionSerializer(data, context={'request': request})
+        serializer = EventPaymentStatusDistributionSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -520,7 +520,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
             CUMULATIVE_PARAM,
             FORMAT_PARAM
         ],
-        responses={200: RegistrationTrendsSerializer}
+        responses={200: EventRegistrationTrendsSerializer}
     )
     @action(detail=False, methods=['get'], url_path='registration-trends')
     def registration_trends(self, request):
@@ -536,7 +536,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         
-        serializer = RegistrationTrendsSerializer(data, context={'request': request})
+        serializer = EventRegistrationTrendsSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(

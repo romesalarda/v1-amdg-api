@@ -47,11 +47,11 @@ from apps.bookings.api.serializers.statistics import (
     IntentOverviewSerializer,
     IntentConversionRateSerializer,
     IntentTrendsSerializer,
-    RevenueOverviewSerializer,
+    BookingRevenueOverviewSerializer,
     RevenueByPackageSerializer,
     RevenueByTicketTypeSerializer,
-    RevenueTrendsSerializer,
-    RevenueBreakdownSerializer,
+    BookingRevenueTrendsSerializer,
+    BookingRevenueBreakdownSerializer,
     BookingStatisticsOverviewSerializer,
 )
 from apps.attendee import formatters
@@ -172,6 +172,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
     
     permission_classes = [IsAuthenticated]
     serializer_class = BookingStatisticsOverviewSerializer  # Default serializer
+    queryset = None  # Statistics viewset doesn't use queryset
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
@@ -792,7 +793,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         summary="Revenue overview statistics",
         description="Revenue overview including total, average, and payment statistics. Only COMPLETED payments are counted.",
         parameters=[EVENT_ID_PARAM, ORGANIZATION_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
-        responses={200: RevenueOverviewSerializer},
+        responses={200: BookingRevenueOverviewSerializer},
         tags=["Booking Statistics"],
     )
     @action(detail=False, methods=['get'], url_path='revenue-overview')
@@ -805,7 +806,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueOverviewSerializer(data=data)
+        serializer = BookingRevenueOverviewSerializer(data=data)
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -861,7 +862,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             EVENT_ID_PARAM, ORGANIZATION_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM,
             GROUP_BY_PARAM, DATE_FROM_PARAM, DATE_TO_PARAM
         ],
-        responses={200: RevenueTrendsSerializer},
+        responses={200: BookingRevenueTrendsSerializer},
         tags=["Booking Statistics"],
     )
     @action(detail=False, methods=['get'], url_path='revenue-trends')
@@ -880,7 +881,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         data = self._format_response(data, request, chart_type='line', title='Revenue Trends')
-        serializer = RevenueTrendsSerializer(data=data)
+        serializer = BookingRevenueTrendsSerializer(data=data)
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -888,7 +889,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         summary="Revenue breakdown",
         description="Revenue breakdown by payment status including all statuses.",
         parameters=[EVENT_ID_PARAM, ORGANIZATION_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
-        responses={200: RevenueBreakdownSerializer},
+        responses={200: BookingRevenueBreakdownSerializer},
         tags=["Booking Statistics"],
     )
     @action(detail=False, methods=['get'], url_path='revenue-breakdown')
@@ -901,7 +902,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueBreakdownSerializer(data=data)
+        serializer = BookingRevenueBreakdownSerializer(data=data)
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     

@@ -30,7 +30,7 @@ from apps.products import statistics
 from apps.products.api.serializers.statistics import (
     ProductOverviewSerializer,
     CategoryDistributionSerializer,
-    StatusDistributionSerializer,
+    ProductStatusDistributionSerializer,
     ProductTrendsSerializer,
     VariantStockOverviewSerializer,
     SizeDistributionSerializer,
@@ -40,11 +40,11 @@ from apps.products.api.serializers.statistics import (
     OrderTrendsSerializer,
     OrdersByProductSerializer,
     OrdersByCategorySerializer,
-    RevenueOverviewSerializer,
+    ProductRevenueOverviewSerializer,
     RevenueByProductSerializer,
     RevenueByCategorySerializer,
-    RevenueTrendsSerializer,
-    RevenueBreakdownSerializer,
+    ProductRevenueTrendsSerializer,
+    ProductRevenueBreakdownSerializer,
     ProductOverviewStatisticsSerializer,
 )
 
@@ -199,9 +199,16 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
     - Raw or ECharts-ready format via ?format parameter
     - Soft-deleted record inclusion via ?include_deleted parameter
     """
-    
+
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ProductOverviewStatisticsSerializer  # Default serializer
+    queryset = None  # Statistics viewset doesn't use queryset
+    
+    def get_queryset(self):
+        # Statistics viewset doesn't use querysets, but this is required for schema generation
+        if getattr(self, 'swagger_fake_view', False):
+            return None
+        return None
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
@@ -473,7 +480,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             INCLUDE_DELETED_PARAM,
             FORMAT_PARAM,
         ],
-        responses={200: StatusDistributionSerializer},
+        responses={200: ProductStatusDistributionSerializer},
         description="Get distribution by active/inactive and verified/unverified status combinations.",
         tags=["Product Statistics"],
     )
@@ -487,7 +494,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             category_id=filters.get('category_id'),
         )
         data = self._add_filter_metadata(data, request)
-        serializer = StatusDistributionSerializer(data, context={'request': request})
+        serializer = ProductStatusDistributionSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -772,7 +779,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             INCLUDE_DELETED_PARAM,
             FORMAT_PARAM,
         ],
-        responses={200: RevenueOverviewSerializer},
+        responses={200: ProductRevenueOverviewSerializer},
         description="Get comprehensive revenue overview including total revenue, order count, and average order value. Only counts completed orders.",
         tags=["Product Statistics"],
     )
@@ -788,7 +795,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueOverviewSerializer(data, context={'request': request})
+        serializer = ProductRevenueOverviewSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -861,7 +868,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             INCLUDE_DELETED_PARAM,
             FORMAT_PARAM,
         ],
-        responses={200: RevenueTrendsSerializer},
+        responses={200: ProductRevenueTrendsSerializer},
         description="Get revenue trends over time. Only counts completed orders.",
         tags=["Product Statistics"],
     )
@@ -878,7 +885,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueTrendsSerializer(data, context={'request': request})
+        serializer = ProductRevenueTrendsSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -890,7 +897,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             INCLUDE_DELETED_PARAM,
             FORMAT_PARAM,
         ],
-        responses={200: RevenueBreakdownSerializer},
+        responses={200: ProductRevenueBreakdownSerializer},
         description="Get revenue breakdown by source (standalone products vs package-linked products). Only counts completed orders.",
         tags=["Product Statistics"],
     )
@@ -906,7 +913,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueBreakdownSerializer(data, context={'request': request})
+        serializer = ProductRevenueBreakdownSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(

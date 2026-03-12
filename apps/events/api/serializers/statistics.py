@@ -36,7 +36,7 @@ class BaseStatisticsSerializer(serializers.Serializer):
         raise NotImplementedError("Subclasses must implement format_for_echarts()")
 
 
-class StatusDistributionSerializer(BaseStatisticsSerializer):
+class EventStatusDistributionSerializer(BaseStatisticsSerializer):
     """Serializer for event status distribution statistics."""
     
     distribution = serializers.ListField(
@@ -122,7 +122,7 @@ class UpcomingEventsSerializer(BaseStatisticsSerializer):
         )
 
 
-class RevenueOverviewSerializer(BaseStatisticsSerializer):
+class EventRevenueOverviewSerializer(BaseStatisticsSerializer):
     """Serializer for revenue overview statistics."""
     
     total_revenue = serializers.DecimalField(
@@ -179,7 +179,7 @@ class RevenueByEventSerializer(BaseStatisticsSerializer):
         )
 
 
-class PaymentStatusDistributionSerializer(BaseStatisticsSerializer):
+class EventPaymentStatusDistributionSerializer(BaseStatisticsSerializer):
     """Serializer for payment status distribution."""
     
     distribution = serializers.ListField(
@@ -217,7 +217,7 @@ class CapacityUtilizationSerializer(BaseStatisticsSerializer):
         )
 
 
-class RegistrationTrendsSerializer(BaseStatisticsSerializer):
+class EventRegistrationTrendsSerializer(BaseStatisticsSerializer):
     """Serializer for registration trends over time."""
     
     trends = serializers.ListField(

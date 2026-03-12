@@ -47,11 +47,11 @@ from apps.payments.api.serializers.statistics import (
     DonationStatsSerializer,
     DonationTrendsSerializer,
     TopDonorsSerializer,
-    RevenueOverviewSerializer,
-    RevenueTrendsSerializer,
+    PaymentRevenueOverviewSerializer,
+    PaymentRevenueTrendsSerializer,
     RevenueByMethodSerializer,
-    RevenueBreakdownSerializer,
-    OverviewStatsSerializer,
+    PaymentRevenueBreakdownSerializer,
+    PaymentOverviewStatsSerializer,
 )
 
 
@@ -158,7 +158,8 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
     """
     
     permission_classes = [IsAuthenticated]
-    serializer_class = OverviewStatsSerializer  # Default serializer
+    serializer_class = PaymentOverviewStatsSerializer  # Default serializer
+    queryset = None  # Statistics viewset doesn't use queryset
     
     def _check_global_access(self, request):
         """
@@ -313,7 +314,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         summary="Overview statistics",
         description="Combined overview statistics ideal for dashboard display. Includes payments, revenue, discounts, refunds, and donations.",
         parameters=[EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
-        responses={200: OverviewStatsSerializer},
+        responses={200: PaymentOverviewStatsSerializer},
         tags=["Payment Statistics"],
         examples=[
             OpenApiExample(
@@ -363,7 +364,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = OverviewStatsSerializer(data, context={'request': request})
+        serializer = PaymentOverviewStatsSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     # ========================================================================
@@ -687,7 +688,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         summary="Revenue overview",
         description="Revenue overview statistics. CRITICAL: Only COMPLETED payments count toward revenue.",
         parameters=[EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
-        responses={200: RevenueOverviewSerializer},
+        responses={200: PaymentRevenueOverviewSerializer},
         tags=["Payment Statistics"],
         examples=[
             OpenApiExample(
@@ -717,7 +718,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = RevenueOverviewSerializer(data, context={'request': request})
+        serializer = PaymentRevenueOverviewSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -727,7 +728,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
             EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM,
             GROUP_BY_PARAM, DATE_FROM_PARAM, DATE_TO_PARAM
         ],
-        responses={200: RevenueTrendsSerializer},
+        responses={200: PaymentRevenueTrendsSerializer},
         tags=["Payment Statistics"],
     )
     @action(detail=False, methods=['get'], url_path='revenue-trends')
@@ -745,7 +746,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = RevenueTrendsSerializer(data, context={'request': request})
+        serializer = PaymentRevenueTrendsSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
@@ -774,7 +775,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         summary="Revenue breakdown",
         description="Detailed revenue breakdown including gross, refunded, and net revenue. CRITICAL: Only COMPLETED payments count toward revenue.",
         parameters=[EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
-        responses={200: RevenueBreakdownSerializer},
+        responses={200: PaymentRevenueBreakdownSerializer},
         tags=["Payment Statistics"],
     )
     @action(detail=False, methods=['get'], url_path='revenue-breakdown')
@@ -789,5 +790,5 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = RevenueBreakdownSerializer(data, context={'request': request})
+        serializer = PaymentRevenueBreakdownSerializer(data, context={'request': request})
         return Response(serializer.data)

@@ -3579,6 +3579,7 @@ class EventStaffAvailabilityViewSet(viewsets.ModelViewSet):
 
 @extend_schema_view(
     list=extend_schema(
+        operation_id='event_staff_invites_global_list',
         summary="List All Event Staff Invites",
         description=(
             "Retrieve a paginated list of all event staff invites across all events. "

@@ -45,10 +45,10 @@ from .statistics import (
     DietaryRequirementsStatsSerializer,
     EmergencyContactStatsSerializer,
     ConsentStatsSerializer,
-    RegistrationTrendsSerializer,
+    AttendeeRegistrationTrendsSerializer,
     AttendanceStatsSerializer,
     PersonalInfoCombinedSerializer,
-    OverviewStatsSerializer,
+    AttendeeOverviewStatsSerializer,
     DemographicsSerializer,
 )
 
@@ -90,9 +90,9 @@ __all__ = [
     'DietaryRequirementsStatsSerializer',
     'EmergencyContactStatsSerializer',
     'ConsentStatsSerializer',
-    'RegistrationTrendsSerializer',
+    'AttendeeRegistrationTrendsSerializer',
     'AttendanceStatsSerializer',
     'PersonalInfoCombinedSerializer',
-    'OverviewStatsSerializer',
+    'AttendeeOverviewStatsSerializer',
     'DemographicsSerializer',
 ]

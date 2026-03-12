@@ -121,7 +121,7 @@ class CategoryDistributionSerializer(BaseProductStatisticsSerializer):
         )
 
 
-class StatusDistributionSerializer(BaseProductStatisticsSerializer):
+class ProductStatusDistributionSerializer(BaseProductStatisticsSerializer):
     """Serializer for status distribution statistics (active/inactive + verified/unverified combinations)."""
     
     total_products = serializers.IntegerField(
@@ -495,7 +495,7 @@ class OrdersByCategorySerializer(BaseProductStatisticsSerializer):
         )
 
 
-class RevenueOverviewSerializer(BaseProductStatisticsSerializer):
+class ProductRevenueOverviewSerializer(BaseProductStatisticsSerializer):
     """Serializer for revenue overview statistics."""
     
     total_revenue = serializers.FloatField(
@@ -606,7 +606,7 @@ class RevenueByCategorySerializer(BaseProductStatisticsSerializer):
         return config
 
 
-class RevenueTrendsSerializer(BaseProductStatisticsSerializer):
+class ProductRevenueTrendsSerializer(BaseProductStatisticsSerializer):
     """Serializer for revenue trends over time."""
     
     total_revenue = serializers.FloatField(
@@ -657,7 +657,7 @@ class RevenueTrendsSerializer(BaseProductStatisticsSerializer):
         return config
 
 
-class RevenueBreakdownSerializer(BaseProductStatisticsSerializer):
+class ProductRevenueBreakdownSerializer(BaseProductStatisticsSerializer):
     """Serializer for revenue breakdown by source."""
     
     total_revenue = serializers.FloatField(

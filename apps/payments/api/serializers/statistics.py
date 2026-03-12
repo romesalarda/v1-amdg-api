@@ -346,7 +346,7 @@ class TopDonorsSerializer(BasePaymentStatisticsSerializer):
 # REVENUE STATISTICS SERIALIZERS
 # ============================================================================
 
-class RevenueOverviewSerializer(BasePaymentStatisticsSerializer):
+class PaymentRevenueOverviewSerializer(BasePaymentStatisticsSerializer):
     """Serializer for revenue overview statistics."""
     total_revenue = serializers.FloatField(allow_null=True)
     total_completed_payments = serializers.IntegerField()
@@ -370,7 +370,7 @@ class RevenueOverviewSerializer(BasePaymentStatisticsSerializer):
         )
 
 
-class RevenueTrendsSerializer(BasePaymentStatisticsSerializer):
+class PaymentRevenueTrendsSerializer(BasePaymentStatisticsSerializer):
     """Serializer for revenue trends over time."""
     trends = serializers.ListField(
         child=serializers.DictField()
@@ -427,7 +427,7 @@ class RevenueByMethodSerializer(BasePaymentStatisticsSerializer):
         )
 
 
-class RevenueBreakdownSerializer(BasePaymentStatisticsSerializer):
+class PaymentRevenueBreakdownSerializer(BasePaymentStatisticsSerializer):
     """Serializer for detailed revenue breakdown statistics."""
     gross_revenue = serializers.FloatField()
     completed_payment_count = serializers.IntegerField()
@@ -457,7 +457,7 @@ class RevenueBreakdownSerializer(BasePaymentStatisticsSerializer):
 # COMBINED OVERVIEW SERIALIZER
 # ============================================================================
 
-class OverviewStatsSerializer(BasePaymentStatisticsSerializer):
+class PaymentOverviewStatsSerializer(BasePaymentStatisticsSerializer):
     """Serializer for combined overview statistics."""
     payments = serializers.DictField()
     revenue = serializers.DictField()
