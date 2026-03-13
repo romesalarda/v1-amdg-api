@@ -10,9 +10,11 @@ Version: 1.0.0
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from datetime import date, timedelta
 import uuid
+from djmoney.money import Money
 
 from apps.attendee.models import (
     Attendee, AttendeeGuardian, AttendeeAction, AttendeeActionChoices,
@@ -24,8 +26,19 @@ from apps.attendee.models import (
     EventAttendance, AttendeeOrganisation, HumanRelationshipChoices
 )
 from apps.events.models import Event, EventType, EventStatusChoices, EventStaff
+from apps.bookings.models import Booking, BookingPackage, TicketType, Ticket
 from apps.organisations.models import Organisation
 from apps.common.models import VerificationStatus
+from apps.payments.models import (
+    Payment,
+    PaymentStatusChoices,
+    PaymentMethod,
+    PaymentMethodTypeChoices,
+    RefundRequest,
+    Donation,
+    Discount,
+    DiscountType,
+)
 
 User = get_user_model()
 
@@ -284,6 +297,141 @@ class AttendeeFilteringTests(AttendeeAPITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(response.data['results']), 1)
+
+
+class AttendeePaymentFilteringTests(AttendeeAPITestCase):
+    """Test attendee filtering by payment, refund, donation, and discount context."""
+
+    def setUp(self):
+        super().setUp()
+
+        self.booking = Booking.objects.create(
+            event=self.event,
+            made_by=self.regular_user,
+        )
+        self.attendee.booking = self.booking
+        self.attendee.save(update_fields=['booking'])
+
+        self.ticket_type = TicketType.objects.create(
+            event=self.event,
+            title='General Admission',
+            created_by=self.admin_user,
+        )
+        self.booking_package = BookingPackage.objects.create(
+            name='Standard Package',
+            event=self.event,
+            ticket_type=self.ticket_type,
+            base_amount=Money(75, 'GBP'),
+            created_by=self.admin_user,
+        )
+
+        self.payment_method = PaymentMethod.objects.create(
+            title='Main Bank Transfer',
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.BANK_TRANSFER,
+            created_by=self.admin_user,
+        )
+
+        booking_ct = ContentType.objects.get_for_model(Booking)
+        self.booking_payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(100, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=booking_ct,
+            target_id=self.booking.id,
+            bank_transfer_reference='BANKREF0001',
+        )
+
+        self.ticket_payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(75, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+        )
+
+        self.ticket = Ticket.objects.create(
+            ticket_type=self.ticket_type,
+            attendee=self.attendee,
+            package=self.booking_package,
+            payment=self.ticket_payment,
+        )
+
+        self.refund_request = RefundRequest.objects.create(
+            payment=self.booking_payment,
+            amount=Money(25, 'GBP'),
+            reason='Participant cannot attend event',
+            requested_by=self.regular_user,
+            is_active=True,
+        )
+
+        self.donation = Donation.objects.create(
+            amount=Money(10, 'GBP'),
+            donated_by=self.regular_user,
+            payment=self.booking_payment,
+        )
+
+        booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+        self.discount = Discount.objects.create(
+            name='Early Bird Saver',
+            discount_type=DiscountType.PERCENTAGE,
+            percentage=10,
+            target_type=booking_package_ct,
+            target_id=self.booking_package.id,
+            active=True,
+            created_by=self.admin_user,
+        )
+
+    def _assert_only_primary_attendee(self, response):
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['attendee_id'], str(self.attendee.attendee_id))
+
+    def test_filter_by_payment_id(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(f'/api/attendees/?payment_id={self.booking_payment.payment_id}')
+        self._assert_only_primary_attendee(response)
+
+    def test_filter_by_payment_reference(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(f'/api/attendees/?payment_reference={self.booking_payment.payment_reference}')
+        self._assert_only_primary_attendee(response)
+
+    def test_filter_by_bank_transfer_reference(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/attendees/?bank_transfer_reference=BANKREF0001')
+        self._assert_only_primary_attendee(response)
+
+    def test_filter_by_payment_target(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/attendees/?payment_target=booking')
+        self._assert_only_primary_attendee(response)
+
+    def test_filter_by_payment_method_type_and_title(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(
+            '/api/attendees/?payment_method_type=BANK_TRANSFER&payment_method_title=Main Bank'
+        )
+        self._assert_only_primary_attendee(response)
+
+    def test_filter_by_refund_status_and_active(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(
+            f'/api/attendees/?refund_status={VerificationStatus.PENDING}&refund_is_active=true'
+        )
+        self._assert_only_primary_attendee(response)
+
+    def test_filter_by_donation_status(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(f'/api/attendees/?donation_status={VerificationStatus.PENDING}')
+        self._assert_only_primary_attendee(response)
+
+    def test_filter_by_discount_name(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/attendees/?discount_name=Early Bird')
+        self._assert_only_primary_attendee(response)
 
 
 class NestedResourceTests(AttendeeAPITestCase):

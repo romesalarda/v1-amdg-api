@@ -5,6 +5,8 @@ Provides comprehensive filtering capabilities for attendee search and queries,
 including advanced search by personal information.
 """
 import django_filters
+from django.contrib.contenttypes.models import ContentType
+from django.db import models
 from django.db.models import Q
 from apps.attendee.models import (
     Attendee, AttendeeGuardian, AttendeeAction,
@@ -19,7 +21,14 @@ from apps.attendee.models import (
 )
 from apps.common.models import VerificationStatus
 from apps.events.models import EventQuestion, EventQuestionAnswer, EventQuestionOption, EventQuestionTypeChoices
-from apps.products.models import Order, OrderItem, OrderStatusChoices
+from apps.products.models import Order, OrderItem, OrderStatusChoices, ProductVariant
+
+
+PAYMENT_TARGET_CHOICES = (
+    ('booking', 'Booking'),
+    ('order', 'Order'),
+    ('ticket', 'Ticket'),
+)
 
 
 class AttendeeFilterSet(django_filters.FilterSet):
@@ -121,6 +130,30 @@ class AttendeeFilterSet(django_filters.FilterSet):
     order_reference_id = django_filters.CharFilter(method='filter_order_reference_id', label='Search by order reference ID')
     has_completed_orders = django_filters.BooleanFilter(method='filter_has_completed_orders', label='Has at least one completed order')
     has_pending_orders = django_filters.BooleanFilter(method='filter_has_pending_orders', label='Has pending or processing orders')
+
+    # Payment filters
+    has_payments = django_filters.BooleanFilter(method='filter_has_payments', label='Has any payments')
+    payment_id = django_filters.UUIDFilter(method='filter_payment_id', label='Filter by payment UUID')
+    payment_reference = django_filters.CharFilter(method='filter_payment_reference', label='Filter by payment reference')
+    bank_transfer_reference = django_filters.CharFilter(method='filter_bank_transfer_reference', label='Filter by bank transfer reference')
+    payment_status = django_filters.ChoiceFilter(method='filter_payment_status', choices=[], label='Filter by payment status')
+    payment_target = django_filters.ChoiceFilter(method='filter_payment_target', choices=PAYMENT_TARGET_CHOICES, label='Payment target type')
+    payment_method_type = django_filters.ChoiceFilter(method='filter_payment_method_type', choices=[], label='Filter by payment method type')
+    payment_method_title = django_filters.CharFilter(method='filter_payment_method_title', label='Filter by payment method title')
+
+    # Refund filters
+    has_refunds = django_filters.BooleanFilter(method='filter_has_refunds', label='Has any refunds')
+    refund_status = django_filters.ChoiceFilter(method='filter_refund_status', choices=VerificationStatus.choices, label='Filter by refund verification status')
+    refund_is_active = django_filters.BooleanFilter(method='filter_refund_is_active', label='Filter by active refund requests')
+
+    # Donation filters
+    has_donations = django_filters.BooleanFilter(method='filter_has_donations', label='Has any donations')
+    donation_status = django_filters.ChoiceFilter(method='filter_donation_status', choices=VerificationStatus.choices, label='Filter by donation verification status')
+
+    # Discount filters (actual transaction-linked usage)
+    has_discounts_used = django_filters.BooleanFilter(method='filter_has_discounts_used', label='Has discounts used in transactions')
+    discount_id = django_filters.UUIDFilter(method='filter_discount_id', label='Filter by discount UUID')
+    discount_name = django_filters.CharFilter(method='filter_discount_name', label='Filter by discount name')
     
     class Meta:
         model = Attendee
@@ -129,6 +162,63 @@ class AttendeeFilterSet(django_filters.FilterSet):
             'relationship_to_user': ['exact'],
             'gender': ['exact', 'icontains'],
         }
+
+    @property
+    def payment_status_choices(self):
+        from apps.payments.models import PaymentStatusChoices
+        return PaymentStatusChoices.choices
+
+    @property
+    def payment_method_type_choices(self):
+        from apps.payments.models import PaymentMethodTypeChoices
+        return PaymentMethodTypeChoices.choices
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.filters['payment_status'].extra['choices'] = self.payment_status_choices
+        self.filters['payment_method_type'].extra['choices'] = self.payment_method_type_choices
+
+    def _booking_payment_attendee_ids(self, payment_queryset):
+        """Return attendee ids whose booking is targeted by the supplied payments."""
+        from apps.bookings.models import Booking
+
+        booking_ct = ContentType.objects.get_for_model(Booking)
+        booking_ids = payment_queryset.filter(target_type=booking_ct).values_list('target_id', flat=True)
+        return Attendee.objects.filter(booking_id__in=booking_ids).values_list('id', flat=True)
+
+    def _filter_attendees_by_payment_queryset(self, queryset, payment_queryset, targets=None):
+        """Filter attendees by payment queryset across booking, order, and ticket payment paths."""
+        selected_targets = set(targets or {'booking', 'order', 'ticket'})
+        criteria = Q()
+
+        if 'ticket' in selected_targets:
+            criteria |= Q(tickets__payment__in=payment_queryset)
+        if 'order' in selected_targets:
+            criteria |= Q(orders__payment__in=payment_queryset)
+        if 'booking' in selected_targets:
+            criteria |= Q(id__in=self._booking_payment_attendee_ids(payment_queryset))
+
+        if not criteria.children:
+            return queryset.none()
+
+        return queryset.filter(criteria).distinct()
+
+    def _filter_attendees_by_discount_queryset(self, queryset, discount_queryset):
+        """Filter attendees by discounts linked to booking package or product variant transactions."""
+        from apps.bookings.models import BookingPackage
+
+        booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+        product_variant_ct = ContentType.objects.get_for_model(ProductVariant)
+
+        booking_package_ids = discount_queryset.filter(target_type=booking_package_ct).values_list('target_id', flat=True)
+        product_variant_ids = discount_queryset.filter(target_type=product_variant_ct).values_list('target_id', flat=True)
+
+        criteria = (
+            Q(tickets__package_id__in=booking_package_ids) |
+            Q(orders__booking_package_id__in=booking_package_ids) |
+            Q(orders__order_items__product_variant_id__in=product_variant_ids)
+        )
+        return queryset.filter(criteria).distinct()
     
     def filter_search(self, queryset, name, value):
         """Search across name, email, phone, and display ID."""
@@ -412,6 +502,127 @@ class AttendeeFilterSet(django_filters.FilterSet):
                 Q(orders__status=OrderStatusChoices.PROCESSING)
             ).distinct()
 
+    # Payment filter methods
+    def filter_has_payments(self, queryset, name, value):
+        """Filter attendees with any linked payments."""
+        from apps.payments.models import Payment
+
+        matched = self._filter_attendees_by_payment_queryset(queryset, Payment.objects.all())
+        if value:
+            return matched
+        return queryset.exclude(id__in=matched.values_list('id', flat=True)).distinct()
+
+    def filter_payment_id(self, queryset, name, value):
+        """Filter attendees by payment UUID."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(payment_id=value))
+
+    def filter_payment_reference(self, queryset, name, value):
+        """Filter attendees by payment reference."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(payment_reference__icontains=value))
+
+    def filter_bank_transfer_reference(self, queryset, name, value):
+        """Filter attendees by bank transfer reference."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(bank_transfer_reference__icontains=value))
+
+    def filter_payment_status(self, queryset, name, value):
+        """Filter attendees by payment status."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(status=value))
+
+    def filter_payment_target(self, queryset, name, value):
+        """Filter attendees by payment target type without exposing GenericFK internals."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.all(), targets={value})
+
+    def filter_payment_method_type(self, queryset, name, value):
+        """Filter attendees by payment method type."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(method__method_type=value))
+
+    def filter_payment_method_title(self, queryset, name, value):
+        """Filter attendees by payment method title."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(method__title__icontains=value))
+
+    # Refund filter methods
+    def filter_has_refunds(self, queryset, name, value):
+        """Filter attendees with any refunds linked to their payments."""
+        from apps.payments.models import Payment
+
+        matched = self._filter_attendees_by_payment_queryset(
+            queryset,
+            Payment.objects.filter(refund_requests__isnull=False).distinct()
+        )
+        if value:
+            return matched
+        return queryset.exclude(id__in=matched.values_list('id', flat=True)).distinct()
+
+    def filter_refund_status(self, queryset, name, value):
+        """Filter attendees by refund verification status."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(
+            queryset,
+            Payment.objects.filter(refund_requests__verification_status=value).distinct()
+        )
+
+    def filter_refund_is_active(self, queryset, name, value):
+        """Filter attendees by active/inactive refund requests."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(
+            queryset,
+            Payment.objects.filter(refund_requests__is_active=value).distinct()
+        )
+
+    # Donation filter methods
+    def filter_has_donations(self, queryset, name, value):
+        """Filter attendees with any donations linked to their payments."""
+        from apps.payments.models import Payment
+
+        matched = self._filter_attendees_by_payment_queryset(
+            queryset,
+            Payment.objects.filter(donations__isnull=False).distinct()
+        )
+        if value:
+            return matched
+        return queryset.exclude(id__in=matched.values_list('id', flat=True)).distinct()
+
+    def filter_donation_status(self, queryset, name, value):
+        """Filter attendees by donation verification status."""
+        from apps.payments.models import Payment
+        return self._filter_attendees_by_payment_queryset(
+            queryset,
+            Payment.objects.filter(donations__verification_status=value).distinct()
+        )
+
+    # Discount filter methods
+    def filter_has_discounts_used(self, queryset, name, value):
+        """Filter attendees that used transaction-linked discounts."""
+        from apps.payments.models import Discount
+
+        matched = self._filter_attendees_by_discount_queryset(queryset, Discount.objects.all())
+        if value:
+            return matched
+        return queryset.exclude(id__in=matched.values_list('id', flat=True)).distinct()
+
+    def filter_discount_id(self, queryset, name, value):
+        """Filter attendees by discount UUID used in transaction-linked entities."""
+        from apps.payments.models import Discount
+        return self._filter_attendees_by_discount_queryset(
+            queryset,
+            Discount.objects.filter(discount_id=value)
+        )
+
+    def filter_discount_name(self, queryset, name, value):
+        """Filter attendees by discount name used in transaction-linked entities."""
+        from apps.payments.models import Discount
+        return self._filter_attendees_by_discount_queryset(
+            queryset,
+            Discount.objects.filter(name__icontains=value)
+        )
+
 
 class AttendeeGuardianFilterSet(django_filters.FilterSet):
     """FilterSet for AttendeeGuardian."""
@@ -653,7 +864,3 @@ class AttendeeOrganisationFilterSet(django_filters.FilterSet):
         model = AttendeeOrganisation
         fields = ['attendee', 'organisation']
 
-
-# Import models for filter methods
-from django.db import models
-from apps.attendee.models.groups import HumanRelationshipChoices
