@@ -35,7 +35,10 @@ from apps.organisations.models import (
     UserOrganisationMembership, OrganisationAcceptanceCode, OrganisationInvite,
     InvolvedEventOrganisation, InvolvedOrganisationRoleChoices,
     EventSponsor, EventSponsorPackage,
-    Leader
+    Leader, LeaderLocationType, LocationLeaderInvite
+)
+from apps.locations.models import (
+    CountryLocation, ClusterLocation, ChapterLocation, AreaLocation,
 )
 
 User = get_user_model()
@@ -915,26 +918,53 @@ class EventSponsorPackageCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 # ============================================================================
-# LEADER SERIALIZERS (Generic FK handling for locations and organisations)
+# LEADER SERIALIZERS
 # ============================================================================
 
+
+LOCATION_MODEL_BY_TYPE = {
+    LeaderLocationType.COUNTRY: CountryLocation,
+    LeaderLocationType.CLUSTER: ClusterLocation,
+    LeaderLocationType.CHAPTER: ChapterLocation,
+    LeaderLocationType.AREA: AreaLocation,
+}
+
+
+def _resolve_location(location_type: str, location_id: int):
+    model = LOCATION_MODEL_BY_TYPE.get(location_type)
+    if not model:
+        return None
+    return model.objects.filter(pk=location_id).first()
+
+
+def _user_is_eligible_leader_for_org(*, user, organisation) -> bool:
+    if OrganisationControl.objects.filter(organisation=organisation, user=user).exists():
+        return True
+    return UserOrganisationMembership.objects.filter(
+        organisation=organisation,
+        user=user,
+        verified_at__isnull=False,
+    ).exists()
+
+
 class LeaderListSerializer(serializers.ModelSerializer):
-    """List serializer for Leader with organisation grouping."""
-    
+    """List serializer for Leader with typed location fields."""
+
     _links = serializers.SerializerMethodField()
     user_name = serializers.CharField(source='user.username', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     organisation_name = serializers.CharField(source='organisation.title', read_only=True)
     added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
-    authority_object_name = serializers.SerializerMethodField(help_text="Name of the authority object (country, cluster, chapter, area, or organisation)")
-    authority_type = serializers.SerializerMethodField(help_text="Type of authority")
-    
+    location_name = serializers.SerializerMethodField(help_text="Name of the assigned location")
+    location_type = serializers.SerializerMethodField(help_text="Type of location (country, cluster, chapter, area)")
+    location_id = serializers.SerializerMethodField(help_text="ID of the location")
+
     class Meta:
         model = Leader
         fields = (
-            'id', 'user', 'user_name', 'user_email', 
+            'id', 'user', 'user_name', 'user_email',
             'organisation', 'organisation_name',
-            'authority_type', 'authority_object_name', 
+            'location_type', 'location_id', 'location_name',
             'notes', 'added_by', 'added_by_name',
             'added_at', 'updated_at', '_links'
         )
@@ -943,135 +973,329 @@ class LeaderListSerializer(serializers.ModelSerializer):
             'added_at': {'default': None},
             'updated_at': {'default': None},
         }
-    
+
     @extend_schema_field(OpenApiTypes.STR)
-    def get_authority_object_name(self, obj) -> str:
-        """Return the name of the authority object."""
-        if obj.authority_object:
-            return str(obj.authority_object)
+    def get_location_name(self, obj) -> str:
+        if obj.location_name:
+            return obj.location_name
         return "Unknown"
-    
+
     @extend_schema_field(OpenApiTypes.STR)
-    def get_authority_type(self, obj) -> str:
-        """Return the type of authority (country, cluster, chapter, area, organisation)."""
-        if obj.target_type:
-            return obj.target_type.model
-        return "unknown"
-    
+    def get_location_type(self, obj) -> str:
+        return obj.location_type or "unknown"
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_location_id(self, obj) -> Optional[int]:
+        return obj.location_id
+
     @extend_schema_field({
         'type': 'object',
         'properties': {
             'self': {'type': 'string', 'format': 'uri'},
             'user': {'type': 'string', 'format': 'uri'},
             'organisation': {'type': 'string', 'format': 'uri'},
-            'authority_object': {'type': 'string', 'format': 'uri'},
+            'location': {'type': 'string', 'format': 'uri'},
         }
     })
     def get__links(self, obj) -> Dict[str, str]:
         request = self.context.get('request')
         if not request:
             return {}
-        
+
         links = {
             'self': request.build_absolute_uri(f"/api/organisations/leaders/{obj.id}/"),
             'user': request.build_absolute_uri(f"/api/users/{obj.user.id}/"),
         }
-        
-        # Add link to organisation
+
         if obj.organisation:
             links['organisation'] = request.build_absolute_uri(
                 f"/api/organisations/list/{obj.organisation.id}/"
             )
-        
-        # Add link to authority object based on type
+
         if obj.authority_object and obj.target_type:
-            model_name = obj.target_type.model
-            if model_name == 'organisation':
-                links['authority_object'] = request.build_absolute_uri(
-                    f"/api/organisations/list/{obj.target_id}/"
-                )
-            elif model_name == 'countrylocation':
-                links['authority_object'] = request.build_absolute_uri(
-                    f"/api/locations/countries/{obj.target_id}/"
-                )
-            elif model_name == 'clusterlocation':
-                links['authority_object'] = request.build_absolute_uri(
-                    f"/api/locations/clusters/{obj.target_id}/"
-                )
-            elif model_name == 'chapterlocation':
-                links['authority_object'] = request.build_absolute_uri(
-                    f"/api/locations/chapters/{obj.target_id}/"
-                )
-            elif model_name == 'arealocation':
-                links['authority_object'] = request.build_absolute_uri(
-                    f"/api/locations/areas/{obj.target_id}/"
-                )
-        
+            if obj.location_type == LeaderLocationType.COUNTRY:
+                links['location'] = request.build_absolute_uri(f"/api/locations/countries/{obj.location_id}/")
+            elif obj.location_type == LeaderLocationType.CLUSTER:
+                links['location'] = request.build_absolute_uri(f"/api/locations/clusters/{obj.location_id}/")
+            elif obj.location_type == LeaderLocationType.CHAPTER:
+                links['location'] = request.build_absolute_uri(f"/api/locations/chapters/{obj.location_id}/")
+            elif obj.location_type == LeaderLocationType.AREA:
+                links['location'] = request.build_absolute_uri(f"/api/locations/areas/{obj.location_id}/")
+
         return links
 
 
 class LeaderDetailSerializer(LeaderListSerializer):
     """Detailed serializer for Leader."""
-    
+
     class Meta(LeaderListSerializer.Meta):
         fields = LeaderListSerializer.Meta.fields
 
 
 class LeaderCreateUpdateSerializer(serializers.ModelSerializer):
-    """Create/Update serializer for Leader with organisation required."""
-    
+    """Create/Update serializer for Leader with typed location fields."""
+
     organisation = serializers.PrimaryKeyRelatedField(
         queryset=Organisation.objects.all(),
         required=True,
-        help_text="The organisation this leader belongs to (required for grouping)"
+        help_text="The organisation this leader belongs to",
     )
-    target_type = serializers.CharField(write_only=True, required=False, help_text="Internal use only - do not set manually")
-    target_id = serializers.IntegerField(write_only=True, required=False, help_text="Internal use only - do not set manually")
-    
+    location_type = serializers.ChoiceField(
+        choices=LeaderLocationType.choices,
+        required=False,
+        help_text="Type of location this leader is assigned to",
+    )
+    location_id = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        min_value=1,
+        help_text="Numeric ID of the location this leader is assigned to",
+    )
+    target_type = serializers.CharField(write_only=True, required=False, help_text="Deprecated compatibility field")
+    target_id = serializers.IntegerField(write_only=True, required=False, help_text="Deprecated compatibility field")
+
     class Meta:
         model = Leader
-        fields = ('user', 'organisation', 'target_type', 'target_id', 'notes')
-    
+        fields = (
+            'user', 'organisation', 'location_type', 'location_id',
+            'target_type', 'target_id', 'notes',
+        )
+
     def validate(self, attrs):
-        """Validate leader assignment and require organisation."""
         user = attrs.get('user')
         organisation = attrs.get('organisation')
-        
+
         if not organisation:
             raise serializers.ValidationError({
                 "organisation": "Organisation is required for all leaders."
             })
-        
-        # If target_type and target_id are provided, validate the generic FK
-        target_type = attrs.get('target_type')
-        target_id = attrs.get('target_id')
-        
-        if target_type and target_id:
-            # Check for existing leadership
-            if Leader.objects.filter(
-                user=user,
-                target_type=target_type,
-                target_id=target_id
-            ).exclude(pk=self.instance.pk if self.instance else None).exists():
-                raise serializers.ValidationError({
-                    "user": "This user is already a leader of this location/organisation."
-                })
-        
-        return attrs
-    
-    def create(self, validated_data):
-        """Create leader with organisation."""
+
         request = self.context.get('request')
-        
-        if request and request.user.is_authenticated:
-            validated_data['added_by'] = request.user
-        
-        return super().create(validated_data)
-    
-    def update(self, instance, validated_data):
-        """Update leader (target cannot be changed after creation)."""
-        # Remove target fields to prevent changes
+        if request and request.user and request.user.is_authenticated:
+            if not (request.user.is_superuser or request.user.is_staff):
+                if not OrganisationControl.objects.filter(
+                    organisation=organisation,
+                    user=request.user,
+                ).exists():
+                    raise serializers.ValidationError({
+                        "organisation": "You must control this organisation to assign leaders."
+                    })
+
+        if not _user_is_eligible_leader_for_org(user=user, organisation=organisation):
+            raise serializers.ValidationError({
+                "user": "User must be a verified member or controller of this organisation."
+            })
+
+        location_type = attrs.get('location_type')
+        location_id = attrs.get('location_id')
+
+        legacy_target_type = attrs.get('target_type')
+        legacy_target_id = attrs.get('target_id')
+        if (not location_type or not location_id) and legacy_target_type and legacy_target_id:
+            mapped = Leader._model_name_to_location_type(str(legacy_target_type).lower())
+            if mapped:
+                location_type = mapped
+                location_id = legacy_target_id
+                attrs['location_type'] = location_type
+                attrs['location_id'] = location_id
+
+        if not self.instance and (not location_type or not location_id):
+            raise serializers.ValidationError({
+                "location_type": "location_type is required.",
+                "location_id": "location_id is required.",
+            })
+
+        if location_type and location_id:
+            location_obj = _resolve_location(location_type, location_id)
+            if not location_obj:
+                raise serializers.ValidationError({
+                    "location_id": "Location not found for the provided location_type.",
+                })
+
+            existing = Leader.filter_by_location(
+                Leader.objects.filter(user=user, organisation=organisation),
+                location_type,
+                location_id,
+            ).exclude(pk=self.instance.pk if self.instance else None)
+            if existing.exists():
+                raise serializers.ValidationError({
+                    "user": "This user is already a leader for this location in this organisation."
+                })
+
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        location_type = validated_data.pop('location_type', None)
+        location_id = validated_data.pop('location_id', None)
         validated_data.pop('target_type', None)
         validated_data.pop('target_id', None)
-        
+
+        if not location_type or not location_id:
+            raise serializers.ValidationError("location_type and location_id are required.")
+
+        leader = Leader(**validated_data)
+        leader.set_location_target(location_type, location_id)
+
+        if request and request.user.is_authenticated:
+            leader.added_by = request.user
+
+        leader.full_clean()
+        leader.save()
+        return leader
+
+    def update(self, instance, validated_data):
+        # Target location cannot be changed after creation.
+        validated_data.pop('location_type', None)
+        validated_data.pop('location_id', None)
+        validated_data.pop('target_type', None)
+        validated_data.pop('target_id', None)
         return super().update(instance, validated_data)
+
+
+# ============================================================================
+# LOCATION LEADER INVITE SERIALIZERS
+# ============================================================================
+
+
+class LocationLeaderInviteListSerializer(serializers.ModelSerializer):
+    """List serializer for location leader invites."""
+
+    _links = serializers.SerializerMethodField()
+    organisation_name = serializers.CharField(source='organisation.title', read_only=True)
+    target_user_name = serializers.CharField(source='target_user.username', read_only=True, allow_null=True)
+    target_user_email = serializers.EmailField(source='target_user.email', read_only=True, allow_null=True)
+    invited_by_name = serializers.CharField(source='invited_by.username', read_only=True, allow_null=True)
+    is_valid = serializers.BooleanField(read_only=True)
+    location_name = serializers.SerializerMethodField(help_text="Name of location")
+
+    class Meta:
+        model = LocationLeaderInvite
+        fields = (
+            'id', 'organisation', 'organisation_name',
+            'target_user', 'target_user_name', 'target_user_email',
+            'invited_by', 'invited_by_name',
+            'location_type', 'location_id', 'location_name',
+            'notes', 'accepted', 'accepted_at', 'is_active', 'is_valid',
+            'expires_at', 'added_at', '_links'
+        )
+        read_only_fields = ('id', 'accepted', 'accepted_at', 'added_at')
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_location_name(self, obj) -> str:
+        location = _resolve_location(obj.location_type, obj.location_id)
+        if not location:
+            return "Unknown"
+        return str(location)
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'organisation': {'type': 'string', 'format': 'uri'},
+            'target_user': {'type': 'string', 'format': 'uri'},
+            'accept': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+
+        links = {
+            'self': request.build_absolute_uri(f"/api/organisations/leader-invites/{obj.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+        }
+
+        if obj.target_user:
+            links['target_user'] = request.build_absolute_uri(f"/api/users/{obj.target_user.id}/")
+
+        if obj.is_valid and not obj.accepted:
+            links['accept'] = request.build_absolute_uri(
+                f"/api/organisations/leader-invites/{obj.id}/accept/"
+            )
+
+        return links
+
+
+class LocationLeaderInviteDetailSerializer(LocationLeaderInviteListSerializer):
+    """Detailed serializer for location leader invites."""
+
+    class Meta(LocationLeaderInviteListSerializer.Meta):
+        fields = LocationLeaderInviteListSerializer.Meta.fields
+
+
+class LocationLeaderInviteCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/update serializer for location leader invites."""
+
+    class Meta:
+        model = LocationLeaderInvite
+        fields = (
+            'organisation', 'target_user', 'location_type',
+            'location_id', 'notes', 'expires_at', 'is_active',
+        )
+
+    def validate_expires_at(self, value):
+        if value and value < timezone.now():
+            raise serializers.ValidationError("Expiry date must be in the future.")
+        return value
+
+    def validate(self, attrs):
+        organisation = attrs.get('organisation')
+        target_user = attrs.get('target_user')
+        location_type = attrs.get('location_type')
+        location_id = attrs.get('location_id')
+
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            if not (request.user.is_superuser or request.user.is_staff):
+                if not OrganisationControl.objects.filter(
+                    organisation=organisation,
+                    user=request.user,
+                ).exists():
+                    raise serializers.ValidationError({
+                        "organisation": "You must control this organisation to invite leaders."
+                    })
+
+        if not _resolve_location(location_type, location_id):
+            raise serializers.ValidationError({
+                "location_id": "Location not found for the provided location_type."
+            })
+
+        if not _user_is_eligible_leader_for_org(user=target_user, organisation=organisation):
+            raise serializers.ValidationError({
+                "target_user": "User must be a verified member or controller of this organisation."
+            })
+
+        existing_leader = Leader.filter_by_location(
+            Leader.objects.filter(user=target_user, organisation=organisation),
+            location_type,
+            location_id,
+        )
+        if existing_leader.exists():
+            raise serializers.ValidationError({
+                "target_user": "This user is already a leader for this location in this organisation."
+            })
+
+        existing_invite = LocationLeaderInvite.objects.filter(
+            organisation=organisation,
+            target_user=target_user,
+            location_type=location_type,
+            location_id=location_id,
+            is_active=True,
+            accepted=False,
+        )
+        if self.instance:
+            existing_invite = existing_invite.exclude(pk=self.instance.pk)
+        if existing_invite.exists():
+            raise serializers.ValidationError({
+                "target_user": "An active invite already exists for this user and location."
+            })
+
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            validated_data['invited_by'] = request.user
+        return super().create(validated_data)

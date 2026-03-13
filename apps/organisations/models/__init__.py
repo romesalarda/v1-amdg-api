@@ -1,4 +1,4 @@
-from .authority import Leader
+from .authority import Leader, LeaderLocationType, LocationLeaderInvite
 from .organisation import (
     Organisation, OrganisationContact, OrganisationControl, 
     InvolvedOrganisationRoleChoices, InvolvedEventOrganisation,
@@ -7,7 +7,8 @@ from .organisation import (
 from .sponsors import EventSponsor, EventSponsorPackage
 
 __all__ = [
-    'Leader', 'Organisation', 'OrganisationContact', 'OrganisationControl', 
+    'Leader', 'LeaderLocationType', 'LocationLeaderInvite',
+    'Organisation', 'OrganisationContact', 'OrganisationControl', 
     'InvolvedOrganisationRoleChoices', 'InvolvedEventOrganisation',
     'EventSponsor', 'EventSponsorPackage',
     'OrganisationAcceptanceCode', 'OrganisationInvite', 'UserOrganisationMembership'

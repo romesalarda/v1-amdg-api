@@ -30,7 +30,7 @@ from apps.organisations.models import (
     UserOrganisationMembership, OrganisationAcceptanceCode, OrganisationInvite,
     InvolvedEventOrganisation, InvolvedOrganisationRoleChoices,
     EventSponsor, EventSponsorPackage,
-    Leader
+    Leader, LeaderLocationType, LocationLeaderInvite
 )
 
 
@@ -632,41 +632,34 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
 
 
 class LeaderFilterSet(filters.FilterSet):
-    """
-    Filterset for Leader model supporting multiple authority types.
-    
-    Supports filtering by:
-    - User
-    - Organisation (via organisation field)
-    - Authority type (country, cluster, chapter, area, organisation)
-    - Authority ID (the specific location/organisation being led)
-    """
-    
+    """Filterset for typed location leaders."""
+
     user = filters.NumberFilter(
         field_name='user',
         help_text="Filter by user ID"
     )
-    
+
     organisation = filters.NumberFilter(
         field_name='organisation',
-        help_text="Filter by organisation ID (leaders belong to)"
+        help_text="Filter by organisation ID"
     )
-    
-    authority_type = filters.CharFilter(
-        method='filter_authority_type',
-        help_text="Filter by authority type (countrylocation, clusterlocation, chapterlocation, arealocation, organisation)"
+
+    location_type = filters.ChoiceFilter(
+        choices=LeaderLocationType.choices,
+        method='filter_location_type',
+        help_text="Filter by location type"
     )
-    
-    authority_id = filters.NumberFilter(
-        method='filter_authority_id',
-        help_text="Filter by authority object ID (use with authority_type)"
+
+    location_id = filters.NumberFilter(
+        method='filter_location_id',
+        help_text="Filter by location ID"
     )
-    
+
     added_by = filters.NumberFilter(
         field_name='added_by',
         help_text="Filter by who added the leader"
     )
-    
+
     added_after = filters.DateTimeFilter(
         field_name='added_at',
         lookup_expr='gte',
@@ -677,38 +670,82 @@ class LeaderFilterSet(filters.FilterSet):
         lookup_expr='lte',
         help_text="Filter leaders added before this date"
     )
-    
+
     class Meta:
         model = Leader
         fields = ['user', 'organisation', 'added_by']
-    
-    def filter_authority_type(self, queryset, name, value):
-        """Filter leaders by authority type."""
-        from django.contrib.contenttypes.models import ContentType
-        
+
+    def filter_location_type(self, queryset, name, value):
         if not value:
             return queryset
-        
-        # Map friendly names to model names
-        type_map = {
-            'country': 'countrylocation',
-            'cluster': 'clusterlocation',
-            'chapter': 'chapterlocation',
-            'area': 'arealocation',
-            'organisation': 'organisation',
-        }
-        
-        model_name = type_map.get(value.lower(), value.lower())
-        
+
+        model_name = Leader._location_type_to_model_name(value)
+        if not model_name:
+            return queryset.none()
+
+        from django.contrib.contenttypes.models import ContentType
+
         try:
             ct = ContentType.objects.get(model=model_name)
-            return queryset.filter(target_type=ct)
         except ContentType.DoesNotExist:
             return queryset.none()
-    
-    def filter_authority_id(self, queryset, name, value):
-        """Filter leaders by authority object ID."""
+        return queryset.filter(target_type=ct)
+
+    def filter_location_id(self, queryset, name, value):
         if not value:
             return queryset
-        
         return queryset.filter(target_id=value)
+
+
+class LocationLeaderInviteFilterSet(filters.FilterSet):
+    """Filterset for location leader invites."""
+
+    organisation = filters.NumberFilter(
+        field_name='organisation',
+        help_text="Filter by organisation ID"
+    )
+
+    target_user = filters.NumberFilter(
+        field_name='target_user',
+        help_text="Filter by target user ID"
+    )
+
+    location_type = filters.ChoiceFilter(
+        choices=LeaderLocationType.choices,
+        field_name='location_type',
+        help_text="Filter by location type"
+    )
+
+    location_id = filters.NumberFilter(
+        field_name='location_id',
+        help_text="Filter by location ID"
+    )
+
+    accepted = filters.BooleanFilter(
+        field_name='accepted',
+        help_text="Filter by accepted status"
+    )
+
+    is_active = filters.BooleanFilter(
+        field_name='is_active',
+        help_text="Filter by active status"
+    )
+
+    is_valid = filters.BooleanFilter(
+        method='filter_is_valid',
+        help_text="Filter by current invite validity"
+    )
+
+    class Meta:
+        model = LocationLeaderInvite
+        fields = ['organisation', 'target_user', 'location_type', 'location_id', 'accepted', 'is_active']
+
+    def filter_is_valid(self, queryset, name, value):
+        now = timezone.now()
+        valid_filter = models.Q(is_active=True, accepted=False) & (
+            models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=now)
+        )
+
+        if value:
+            return queryset.filter(valid_filter)
+        return queryset.exclude(valid_filter)

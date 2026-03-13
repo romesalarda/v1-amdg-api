@@ -210,26 +210,25 @@ class CountryLocationViewSet(viewsets.ModelViewSet):
                 )
         
         # Check for existing leadership
-        country_ct = ContentType.objects.get_for_model(CountryLocation)
-        if Leader.objects.filter(
-            user=user,
-            target_type=country_ct,
-            target_id=country.id
+        if Leader.filter_by_location(
+            Leader.objects.filter(user=user, organisation=organisation),
+            LeaderLocationType.COUNTRY,
+            country.id,
         ).exists():
             return Response(
-                {'error': 'This user is already a leader of this country.'},
+                {'error': 'This user is already a leader of this country for this organisation.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Create the leader
-        leader = Leader.objects.create(
+        leader = Leader(
             user=user,
             organisation=organisation,
-            target_type=country_ct,
-            target_id=country.id,
             notes=notes,
-            added_by=request.user
+            added_by=request.user,
         )
+        leader.set_location_target(LeaderLocationType.COUNTRY, country.id)
+        leader.save()
         
         return Response(
             {
@@ -292,14 +291,12 @@ class CountryLocationViewSet(viewsets.ModelViewSet):
             )
         
         # Find the leader
-        country_ct = ContentType.objects.get_for_model(CountryLocation)
-        try:
-            leader = Leader.objects.get(
-                user=user,
-                target_type=country_ct,
-                target_id=country.id
-            )
-        except Leader.DoesNotExist:
+        leader = Leader.filter_by_location(
+            Leader.objects.filter(user=user),
+            LeaderLocationType.COUNTRY,
+            country.id,
+        ).first()
+        if not leader:
             return Response(
                 {'error': 'This user is not a leader of this country.'},
                 status=status.HTTP_404_NOT_FOUND
@@ -437,11 +434,16 @@ class ClusterLocationViewSet(viewsets.ModelViewSet):
             if not OrganisationControl.objects.filter(organisation=organisation, user=request.user).exists():
                 return Response({'error': 'You must be a controller of the specified organisation to add leaders.'}, status=status.HTTP_403_FORBIDDEN)
         
-        cluster_ct = ContentType.objects.get_for_model(ClusterLocation)
-        if Leader.objects.filter(user=user, target_type=cluster_ct, target_id=cluster.id).exists():
-            return Response({'error': 'This user is already a leader of this cluster.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        leader = Leader.objects.create(user=user, organisation=organisation, target_type=cluster_ct, target_id=cluster.id, notes=notes, added_by=request.user)
+        if Leader.filter_by_location(
+            Leader.objects.filter(user=user, organisation=organisation),
+            LeaderLocationType.CLUSTER,
+            cluster.id,
+        ).exists():
+            return Response({'error': 'This user is already a leader of this cluster for this organisation.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        leader = Leader(user=user, organisation=organisation, notes=notes, added_by=request.user)
+        leader.set_location_target(LeaderLocationType.CLUSTER, cluster.id)
+        leader.save()
         return Response({'message': 'Leader added successfully.', 'leader_id': leader.id, 'user': user.email, 'cluster': str(cluster), 'organisation': organisation.title}, status=status.HTTP_201_CREATED)
     
     @extend_schema(
@@ -470,10 +472,12 @@ class ClusterLocationViewSet(viewsets.ModelViewSet):
         except User.DoesNotExist:
             return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
         
-        cluster_ct = ContentType.objects.get_for_model(ClusterLocation)
-        try:
-            leader = Leader.objects.get(user=user, target_type=cluster_ct, target_id=cluster.id)
-        except Leader.DoesNotExist:
+        leader = Leader.filter_by_location(
+            Leader.objects.filter(user=user),
+            LeaderLocationType.CLUSTER,
+            cluster.id,
+        ).first()
+        if not leader:
             return Response({'error': 'This user is not a leader of this cluster.'}, status=status.HTTP_404_NOT_FOUND)
         
         if not request.user.is_superuser and not request.user.is_staff:
@@ -589,11 +593,16 @@ class ChapterLocationViewSet(viewsets.ModelViewSet):
             if not OrganisationControl.objects.filter(organisation=organisation, user=request.user).exists():
                 return Response({'error': 'You must be a controller of the specified organisation to add leaders.'}, status=status.HTTP_403_FORBIDDEN)
         
-        chapter_ct = ContentType.objects.get_for_model(ChapterLocation)
-        if Leader.objects.filter(user=user, target_type=chapter_ct, target_id=chapter.id).exists():
-            return Response({'error': 'This user is already a leader of this chapter.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        leader = Leader.objects.create(user=user, organisation=organisation, target_type=chapter_ct, target_id=chapter.id, notes=notes, added_by=request.user)
+        if Leader.filter_by_location(
+            Leader.objects.filter(user=user, organisation=organisation),
+            LeaderLocationType.CHAPTER,
+            chapter.id,
+        ).exists():
+            return Response({'error': 'This user is already a leader of this chapter for this organisation.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        leader = Leader(user=user, organisation=organisation, notes=notes, added_by=request.user)
+        leader.set_location_target(LeaderLocationType.CHAPTER, chapter.id)
+        leader.save()
         return Response({'message': 'Leader added successfully.', 'leader_id': leader.id, 'user': user.email, 'chapter': str(chapter), 'organisation': organisation.title}, status=status.HTTP_201_CREATED)
     
     @extend_schema(
@@ -622,10 +631,12 @@ class ChapterLocationViewSet(viewsets.ModelViewSet):
         except User.DoesNotExist:
             return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
         
-        chapter_ct = ContentType.objects.get_for_model(ChapterLocation)
-        try:
-            leader = Leader.objects.get(user=user, target_type=chapter_ct, target_id=chapter.id)
-        except Leader.DoesNotExist:
+        leader = Leader.filter_by_location(
+            Leader.objects.filter(user=user),
+            LeaderLocationType.CHAPTER,
+            chapter.id,
+        ).first()
+        if not leader:
             return Response({'error': 'This user is not a leader of this chapter.'}, status=status.HTTP_404_NOT_FOUND)
         
         if not request.user.is_superuser and not request.user.is_staff:
@@ -743,11 +754,16 @@ class AreaLocationViewSet(viewsets.ModelViewSet):
             if not OrganisationControl.objects.filter(organisation=organisation, user=request.user).exists():
                 return Response({'error': 'You must be a controller of the specified organisation to add leaders.'}, status=status.HTTP_403_FORBIDDEN)
         
-        area_ct = ContentType.objects.get_for_model(AreaLocation)
-        if Leader.objects.filter(user=user, target_type=area_ct, target_id=area.area_id).exists():
-            return Response({'error': 'This user is already a leader of this area.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        leader = Leader.objects.create(user=user, organisation=organisation, target_type=area_ct, target_id=area.id, notes=notes, added_by=request.user)
+        if Leader.filter_by_location(
+            Leader.objects.filter(user=user, organisation=organisation),
+            LeaderLocationType.AREA,
+            area.id,
+        ).exists():
+            return Response({'error': 'This user is already a leader of this area for this organisation.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        leader = Leader(user=user, organisation=organisation, notes=notes, added_by=request.user)
+        leader.set_location_target(LeaderLocationType.AREA, area.id)
+        leader.save()
         return Response({'message': 'Leader added successfully.', 'leader_id': leader.id, 'user': user.email, 'area': str(area), 'organisation': organisation.title}, status=status.HTTP_201_CREATED)
     
     @extend_schema(
@@ -776,10 +792,12 @@ class AreaLocationViewSet(viewsets.ModelViewSet):
         except User.DoesNotExist:
             return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
         
-        area_ct = ContentType.objects.get_for_model(AreaLocation)
-        try:
-            leader = Leader.objects.get(user=user, target_type=area_ct, target_id=area.id)
-        except Leader.DoesNotExist:
+        leader = Leader.filter_by_location(
+            Leader.objects.filter(user=user),
+            LeaderLocationType.AREA,
+            area.id,
+        ).first()
+        if not leader:
             return Response({'error': 'This user is not a leader of this area.'}, status=status.HTTP_404_NOT_FOUND)
         
         if not request.user.is_superuser and not request.user.is_staff:

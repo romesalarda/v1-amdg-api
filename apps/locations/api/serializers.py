@@ -177,11 +177,13 @@ class ClusterLocationDetailSerializer(ClusterLocationListSerializer):
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_leaders(self, obj) -> list:
         """Return basic leader info with HATEOAS links."""
-        from apps.organisations.models import Leader
-        from django.contrib.contenttypes.models import ContentType
-        
-        ct = ContentType.objects.get_for_model(obj)
-        leaders = Leader.objects.filter(target_type=ct, target_id=obj.id).select_related('user')[:5]
+        from apps.organisations.models import Leader, LeaderLocationType
+
+        leaders = Leader.filter_by_location(
+            Leader.objects.all(),
+            LeaderLocationType.CLUSTER,
+            obj.id,
+        ).select_related('user')[:5]
         
         request = self.context.get('request')
         result = []
@@ -224,11 +226,13 @@ class CountryLocationDetailSerializer(CountryLocationListSerializer):
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_leaders(self, obj) -> list:
         """Return leaders for this country location."""
-        from django.contrib.contenttypes.models import ContentType
-        from apps.organisations.models import Leader
-        
-        ct = ContentType.objects.get_for_model(obj)
-        leaders = Leader.objects.filter(target_type=ct, target_id=obj.id).select_related('user')[:5]
+        from apps.organisations.models import Leader, LeaderLocationType
+
+        leaders = Leader.filter_by_location(
+            Leader.objects.all(),
+            LeaderLocationType.COUNTRY,
+            obj.id,
+        ).select_related('user')[:5]
         
         request = self.context.get('request')
         result = []
@@ -341,11 +345,13 @@ class ClusterLocationDetailSerializer(ClusterLocationListSerializer):
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_leaders(self, obj) -> list:
         """Return leaders for this cluster location."""
-        from django.contrib.contenttypes.models import ContentType
-        from apps.organisations.models import Leader
-        
-        ct = ContentType.objects.get_for_model(obj)
-        leaders = Leader.objects.filter(target_type=ct, target_id=obj.id).select_related('user')[:5]
+        from apps.organisations.models import Leader, LeaderLocationType
+
+        leaders = Leader.filter_by_location(
+            Leader.objects.all(),
+            LeaderLocationType.CLUSTER,
+            obj.id,
+        ).select_related('user')[:5]
         
         request = self.context.get('request')
         result = []
@@ -448,11 +454,13 @@ class ChapterLocationDetailSerializer(ChapterLocationListSerializer):
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_leaders(self, obj) -> list:
         """Return leaders for this chapter location."""
-        from django.contrib.contenttypes.models import ContentType
-        from apps.organisations.models import Leader
-        
-        ct = ContentType.objects.get_for_model(obj)
-        leaders = Leader.objects.filter(target_type=ct, target_id=obj.id).select_related('user')[:5]
+        from apps.organisations.models import Leader, LeaderLocationType
+
+        leaders = Leader.filter_by_location(
+            Leader.objects.all(),
+            LeaderLocationType.CHAPTER,
+            obj.id,
+        ).select_related('user')[:5]
         
         request = self.context.get('request')
         result = []
@@ -571,11 +579,13 @@ class AreaLocationDetailSerializer(AreaLocationListSerializer):
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_leaders(self, obj) -> list:
         """Return leaders for this area location."""
-        from django.contrib.contenttypes.models import ContentType
-        from apps.organisations.models import Leader
-        
-        ct = ContentType.objects.get_for_model(obj)
-        leaders = Leader.objects.filter(target_type=ct, target_id=obj.id).select_related('user')[:5]
+        from apps.organisations.models import Leader, LeaderLocationType
+
+        leaders = Leader.filter_by_location(
+            Leader.objects.all(),
+            LeaderLocationType.AREA,
+            obj.id,
+        ).select_related('user')[:5]
         
         request = self.context.get('request')
         result = []

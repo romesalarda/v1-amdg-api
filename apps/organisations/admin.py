@@ -3,7 +3,8 @@ from django.utils.html import format_html
 from .models import (
     Organisation, OrganisationContact, OrganisationControl, Leader,
     InvolvedEventOrganisation, EventSponsor, EventSponsorPackage,
-    UserOrganisationMembership, OrganisationInvite, OrganisationAcceptanceCode
+    UserOrganisationMembership, OrganisationInvite, OrganisationAcceptanceCode,
+    LocationLeaderInvite,
 )
 
 
@@ -97,26 +98,34 @@ class OrganisationControlAdmin(admin.ModelAdmin):
 
 @admin.register(Leader)
 class LeaderAdmin(admin.ModelAdmin):
-    list_display = ('user', 'organisation', 'get_authority_object', 'target_type', 'added_by', 'added_at')
+    list_display = ('user', 'organisation', 'location_type_display', 'location_id_display', 'get_location_object', 'added_by', 'added_at')
     list_filter = ('target_type', 'organisation', 'added_at')
     search_fields = ('user__email', 'user__first_name', 'user__last_name', 'organisation__title', 'notes')
-    readonly_fields = ('added_at', 'updated_at')
+    readonly_fields = ('added_at', 'updated_at', 'location_type_display', 'location_id_display')
     autocomplete_fields = ('user', 'organisation', 'added_by')
     list_select_related = ('user', 'organisation', 'added_by', 'target_type')
-    
+
     fieldsets = (
         ('Leadership Information', {
-            'fields': ('user', 'organisation', 'target_type', 'target_id', 'notes')
+            'fields': ('user', 'organisation', 'target_type', 'target_id', 'location_type_display', 'location_id_display', 'notes')
         }),
         ('Metadata', {
             'fields': ('added_by', 'added_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
-    
-    def get_authority_object(self, obj):
+
+    def location_type_display(self, obj):
+        return obj.location_type or '-'
+    location_type_display.short_description = 'Location Type'
+
+    def location_id_display(self, obj):
+        return obj.location_id
+    location_id_display.short_description = 'Location ID'
+
+    def get_location_object(self, obj):
         return str(obj.authority_object) if obj.authority_object else '-'
-    get_authority_object.short_description = 'Authority Object'
+    get_location_object.short_description = 'Location Object'
 
 
 @admin.register(InvolvedEventOrganisation)
@@ -271,3 +280,39 @@ class OrganisationAcceptanceCodeAdmin(admin.ModelAdmin):
         return obj.is_single_use
     is_single_use_display.short_description = 'Single Use'
     is_single_use_display.boolean = True
+
+
+@admin.register(LocationLeaderInvite)
+class LocationLeaderInviteAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'organisation', 'target_user', 'location_type', 'location_id',
+        'invited_by', 'accepted', 'is_active', 'is_valid_status', 'added_at', 'expires_at'
+    )
+    list_filter = ('location_type', 'accepted', 'is_active', 'added_at', 'expires_at')
+    search_fields = (
+        'organisation__title', 'target_user__email', 'target_user__first_name',
+        'target_user__last_name', 'invited_by__email',
+    )
+    readonly_fields = ('id', 'added_at', 'accepted_at', 'is_valid_status')
+    autocomplete_fields = ('organisation', 'target_user', 'invited_by')
+
+    fieldsets = (
+        ('Invite Information', {
+            'fields': ('id', 'organisation', 'target_user', 'invited_by')
+        }),
+        ('Location Target', {
+            'fields': ('location_type', 'location_id', 'notes')
+        }),
+        ('Status', {
+            'fields': ('accepted', 'accepted_at', 'is_active', 'is_valid_status', 'expires_at')
+        }),
+        ('Metadata', {
+            'fields': ('added_at',),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def is_valid_status(self, obj):
+        return obj.is_valid
+    is_valid_status.short_description = 'Is Valid'
+    is_valid_status.boolean = True
