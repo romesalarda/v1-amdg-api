@@ -83,7 +83,7 @@ class Payment(PayableModel):
         null=True,
         blank=True
     )
-    target_id = models.PositiveIntegerField(null=True, blank=True)
+    target_id = models.CharField(max_length=255, null=True, blank=True)
     target = GenericForeignKey('target_type', 'target_id')
     
     created_at = models.DateTimeField(auto_now_add=True)

@@ -22,6 +22,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
@@ -29,6 +30,7 @@ from djmoney.money import Money
 from djmoney.contrib.django_rest_framework import MoneyField
 from decimal import Decimal
 from typing import Dict, Any, Optional
+from uuid import UUID
 
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
@@ -265,30 +267,79 @@ class PaymentDetailSerializer(PaymentListSerializer):
 class PaymentCreateSerializer(serializers.ModelSerializer):
     """Create serializer for Payment with validation.
     
-    Note: target_type and target_id should only be set internally by the system,
-    not via external API calls. They are marked write_only for internal use only.
+    Supports frontend-safe target selection fields while preserving temporary
+    backward compatibility for legacy target_type + target_id payloads.
     """
     
+    TARGET_CHOICES = (
+        ('booking', 'Booking'),
+        ('order', 'Order'),
+        ('ticket', 'Ticket'),
+        ('none', 'None'),
+    )
+
+    TARGET_MODEL_CONFIG = {
+        'booking': ('apps.bookings.models', 'Booking', None),
+        'order': ('apps.products.models', 'Order', 'order_id'),
+        'ticket': ('apps.bookings.models', 'Ticket', 'ticket_id'),
+    }
+
     base_amount = MoneyField(max_digits=10, decimal_places=2)
-    # Target fields for internal use only - not exposed in API responses
+    # Frontend-safe target fields.
+    target = serializers.ChoiceField(
+        choices=TARGET_CHOICES,
+        write_only=True,
+        required=False,
+        allow_null=True,
+        help_text="Payment target type: booking, order, ticket, or none."
+    )
+    target_id = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        allow_blank=False,
+        help_text="Target identifier (UUID or numeric ID)."
+    )
+    # Legacy target fields for backward compatibility.
     target_type = serializers.PrimaryKeyRelatedField(
         queryset=ContentType.objects.all(),
         write_only=True,
         required=False,
-        allow_null=True
-    )
-    target_id = serializers.IntegerField(
-        write_only=True,
-        required=False,
-        allow_null=True
+        allow_null=True,
+        help_text="Deprecated: internal ContentType ID. Use 'target' instead."
     )
     
     class Meta:
         model = Payment
         fields = (
             'user', 'event', 'method', 'base_amount', 'base_amount_currency', 'description',
-            'target_type', 'target_id', 'metadata'
+            'target', 'target_id', 'target_type', 'metadata'
         )
+
+    def _get_model_class_for_target(self, target: str):
+        """Resolve model class and UUID field name for a target alias."""
+        import_string, class_name, uuid_field = self.TARGET_MODEL_CONFIG[target]
+        module = __import__(import_string, fromlist=[class_name])
+        return getattr(module, class_name), uuid_field
+
+    def _resolve_target_object(self, model_class, target_identifier: str, uuid_field: Optional[str] = None):
+        """Resolve target by UUID first (if configured), then numeric PK fallback."""
+        identifier = str(target_identifier).strip()
+        queryset = model_class.objects.all()
+
+        if uuid_field:
+            try:
+                UUID(identifier)
+                return queryset.get(**{uuid_field: identifier})
+            except ValueError:
+                pass
+            except model_class.DoesNotExist:
+                pass
+
+        if identifier.isdigit():
+            return queryset.get(pk=int(identifier))
+
+        return queryset.get(pk=identifier)
     
     def validate_base_amount(self, value):
         """Ensure amount is positive."""
@@ -314,24 +365,68 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
                 'method': "Payment method does not belong to the selected event."
             })
         
-        # Validate target if provided
+        # Validate and normalize target payload.
+        target = attrs.get('target')
         target_type = attrs.get('target_type')
-        target_id = attrs.get('target_id')
-        
-        if (target_type and not target_id) or (target_id and not target_type):
-            raise serializers.ValidationError(
-                "Both target_type and target_id must be provided together."
-            )
-        
-        if target_type and target_id:
+        target_identifier = attrs.get('target_id')
+
+        if target and target_type:
+            raise serializers.ValidationError({
+                'target': "Provide either 'target' or legacy 'target_type', not both."
+            })
+
+        if target == 'none':
+            if target_identifier:
+                raise serializers.ValidationError({'target_id': "target_id must be empty when target is 'none'."})
+            attrs['target_type'] = None
+            attrs['target_id'] = None
+            attrs.pop('target', None)
+            return attrs
+
+        if target:
+            if not target_identifier:
+                raise serializers.ValidationError({'target_id': "target_id is required when target is provided."})
+
+            model_class, uuid_field = self._get_model_class_for_target(target)
             try:
-                model_class = target_type.model_class()
-                target_obj = model_class.objects.get(pk=target_id)
-                attrs['_target_obj'] = target_obj  # Store for later use
+                target_obj = self._resolve_target_object(model_class, target_identifier, uuid_field=uuid_field)
             except model_class.DoesNotExist:
                 raise serializers.ValidationError({
-                    'target_id': f"Target object with id {target_id} does not exist."
+                    'target_id': f"Target object '{target}' with identifier '{target_identifier}' does not exist."
                 })
+
+            attrs['target_type'] = ContentType.objects.get_for_model(model_class)
+            attrs['target_id'] = str(target_obj.pk)
+            attrs['_target_obj'] = target_obj
+            attrs.pop('target', None)
+            return attrs
+
+        if target_identifier and not target_type:
+            raise serializers.ValidationError(
+                "Both legacy target_type and target_id must be provided together."
+            )
+
+        if target_type and not target_identifier:
+            raise serializers.ValidationError(
+                "Both legacy target_type and target_id must be provided together."
+            )
+
+        if target_type and target_identifier:
+            model_class = target_type.model_class()
+            if model_class is None:
+                raise serializers.ValidationError({
+                    'target_type': "Unsupported target_type provided."
+                })
+            try:
+                target_obj = self._resolve_target_object(model_class, target_identifier)
+                attrs['_target_obj'] = target_obj
+                attrs['target_id'] = str(target_obj.pk)
+            except ObjectDoesNotExist:
+                raise serializers.ValidationError({
+                    'target_id': f"Target object with identifier {target_identifier} does not exist."
+                })
+
+        attrs.pop('target', None)
         
         return attrs
     

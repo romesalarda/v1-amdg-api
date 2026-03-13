@@ -178,9 +178,13 @@ class PaymentViewSet(viewsets.ModelViewSet):
         payment_user = serializer.validated_data.get('user')
         
         # Non-admins can only create payments for themselves
-        if not (user.is_superuser or user.is_staff) and payment_user != user:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("You can only create payments for yourself.")
+        # if not (user.is_superuser or user.is_staff) and payment_user != user:
+        #     from rest_framework.exceptions import PermissionDenied
+        #     raise PermissionDenied("You can only create payments for yourself.")
+
+        print(serializer.validated_data)
+
+        self.check_permissions(self.request)
         
         serializer.save()
     

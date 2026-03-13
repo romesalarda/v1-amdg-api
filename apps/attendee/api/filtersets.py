@@ -184,7 +184,7 @@ class AttendeeFilterSet(django_filters.FilterSet):
 
         booking_ct = ContentType.objects.get_for_model(Booking)
         booking_ids = payment_queryset.filter(target_type=booking_ct).values_list('target_id', flat=True)
-        return Attendee.objects.filter(booking_id__in=booking_ids).values_list('id', flat=True)
+        return Attendee.objects.filter(booking_id__in=list(booking_ids)).values_list('id', flat=True)
 
     def _filter_attendees_by_payment_queryset(self, queryset, payment_queryset, targets=None):
         """Filter attendees by payment queryset across booking, order, and ticket payment paths."""

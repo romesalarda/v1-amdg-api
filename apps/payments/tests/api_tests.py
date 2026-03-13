@@ -10,6 +10,7 @@ Version: 1.0.0
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
 from django.utils import timezone
 from djmoney.money import Money
@@ -23,6 +24,8 @@ from apps.payments.models import (
 )
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
+from apps.bookings.models import Booking
+from apps.products.models import Order
 
 User = get_user_model()
 
@@ -111,6 +114,18 @@ class PaymentAPITestCase(APITestCase):
             base_amount=Money(100, 'GBP'),
             status=PaymentStatusChoices.COMPLETED
         )
+
+        self.booking = Booking.objects.create(
+            event=self.event,
+            made_by=self.regular_user,
+        )
+
+        self.order = Order.objects.create(
+            customer=self.regular_user,
+            created_by=self.admin_user,
+            total_amount=Money(25, 'GBP'),
+            status='draft',
+        )
         
         self.client = APIClient()
     
@@ -174,6 +189,109 @@ class PaymentAPITestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Payment.objects.count(), 2)
+
+    def test_create_payment_with_booking_target(self):
+        """Test creating a payment with safe booking target fields."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-list')
+        data = {
+            'user': self.regular_user.id,
+            'event': self.event.id,
+            'method': self.payment_method.id,
+            'base_amount': '50.00',
+            'base_amount_currency': 'GBP',
+            'target': 'booking',
+            'target_id': str(self.booking.id),
+        }
+
+        response = self.client.post(url, data)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        payment = Payment.objects.latest('created_at')
+        self.assertEqual(payment.target_type.model, 'booking')
+        self.assertEqual(payment.target_id, str(self.booking.pk))
+
+    def test_create_payment_with_order_uuid_target(self):
+        """Test creating a payment with UUID target_id that resolves to internal PK."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-list')
+        data = {
+            'user': self.regular_user.id,
+            'event': self.event.id,
+            'method': self.payment_method.id,
+            'base_amount': '60.00',
+            'base_amount_currency': 'GBP',
+            'target': 'order',
+            'target_id': str(self.order.order_id),
+        }
+
+        response = self.client.post(url, data)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        payment = Payment.objects.latest('created_at')
+        self.assertEqual(payment.target_type.model, 'order')
+        self.assertEqual(payment.target_id, str(self.order.pk))
+
+    def test_create_payment_with_none_target(self):
+        """Test creating a payment with explicit no-target payload."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-list')
+        data = {
+            'user': self.regular_user.id,
+            'event': self.event.id,
+            'method': self.payment_method.id,
+            'base_amount': '35.00',
+            'base_amount_currency': 'GBP',
+            'target': 'none',
+        }
+
+        response = self.client.post(url, data)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        payment = Payment.objects.latest('created_at')
+        self.assertIsNone(payment.target_type)
+        self.assertIsNone(payment.target_id)
+
+    def test_create_payment_rejects_unknown_target(self):
+        """Test validation error for unsupported target aliases."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-list')
+        data = {
+            'user': self.regular_user.id,
+            'event': self.event.id,
+            'method': self.payment_method.id,
+            'base_amount': '35.00',
+            'base_amount_currency': 'GBP',
+            'target': 'donation',
+            'target_id': '1',
+        }
+
+        response = self.client.post(url, data)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('target', response.data)
+
+    def test_create_payment_legacy_target_fields_still_supported(self):
+        """Test backward compatibility for legacy target_type + target_id payloads."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-list')
+        booking_ct = ContentType.objects.get_for_model(Booking)
+        data = {
+            'user': self.regular_user.id,
+            'event': self.event.id,
+            'method': self.payment_method.id,
+            'base_amount': '50.00',
+            'base_amount_currency': 'GBP',
+            'target_type': booking_ct.id,
+            'target_id': str(self.booking.id),
+        }
+
+        response = self.client.post(url, data)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        payment = Payment.objects.latest('created_at')
+        self.assertEqual(payment.target_type_id, booking_ct.id)
+        self.assertEqual(payment.target_id, str(self.booking.pk))
     
     def test_filter_payments_by_status(self):
         """Test filtering payments by status."""

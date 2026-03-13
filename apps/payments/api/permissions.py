@@ -16,6 +16,7 @@ Version: 1.0.0
 from rest_framework import permissions
 from django.contrib.auth import get_user_model
 from typing import Any
+from uuid import UUID
 
 from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
 
@@ -83,7 +84,6 @@ class IsAdministrativeStaff(permissions.BasePermission):
         # Django superusers and staff always have access
         if request.user.is_superuser or request.user.is_staff:
             return True
-        
         # Get the event from the object
         event = self._get_event_from_object(obj)
         if not event:
@@ -241,7 +241,7 @@ class IsPaymentOwnerOrAdministrative(permissions.BasePermission):
         admin_check = IsAdministrativeStaff()
         if admin_check.has_object_permission(request, view, obj):
             return True
-        
+                    
         return False
 
 
@@ -353,15 +353,21 @@ class IsAdministrativeStaffOnly(permissions.BasePermission):
         if request.user.is_superuser or request.user.is_staff:
             return True
         
-        # For discount create/update actions, validate event access BEFORE allowing operation
+        # For create/update actions with target binding, validate event access BEFORE allowing operation.
         if view.action in ['create', 'update', 'partial_update']:
-            # Extract target information from request data
+            # Extract target information from request data.
+            target_alias = request.data.get('target')
             target_type_id = request.data.get('target_type')
             target_id = request.data.get('target_id')
             
-            if target_type_id and target_id:
-                # Validate that the target object's event matches user's event access
-                if not self._validate_event_access_for_target(request.user, target_type_id, target_id):
+            if target_id and (target_alias or target_type_id):
+                # Validate that the target object's event matches user's event access.
+                if not self._validate_event_access_for_target(
+                    request.user,
+                    target_id=target_id,
+                    target_type_id=target_type_id,
+                    target_alias=target_alias,
+                ):
                     return False
         
         # Check for administrative event role
@@ -378,42 +384,84 @@ class IsAdministrativeStaffOnly(permissions.BasePermission):
         admin_check = IsAdministrativeStaff()
         return admin_check.has_object_permission(request, view, obj)
     
-    def _validate_event_access_for_target(self, user, target_type_id, target_id) -> bool:
+    def _validate_event_access_for_target(self, user, target_id, target_type_id=None, target_alias=None) -> bool:
         """Validate user has administrative access to the target object's event.
         
         Args:
             user: The user making the request
-            target_type_id: ContentType ID of the target object
-            target_id: ID of the target object
+            target_id: Identifier for target object (UUID or numeric ID)
+            target_type_id: Legacy ContentType ID of the target object
+            target_alias: New target alias (booking, order, ticket)
             
         Returns:
             bool: True if user has access, False otherwise
         """
         from django.contrib.contenttypes.models import ContentType
-        from apps.bookings.models import BookingPackage
+        from apps.bookings.models import BookingPackage, Booking, Ticket
+        from apps.products.models import Order
+
+        def resolve_by_identifier(model_class, identifier, uuid_field=None):
+            value = str(identifier).strip()
+            queryset = model_class.objects.all()
+
+            if uuid_field:
+                try:
+                    UUID(value)
+                    return queryset.get(**{uuid_field: value})
+                except ValueError:
+                    pass
+                except model_class.DoesNotExist:
+                    pass
+
+            if value.isdigit():
+                return queryset.get(pk=int(value))
+
+            return queryset.get(pk=value)
+
+        target_alias_map = {
+            'booking': (Booking, None),
+            'order': (Order, 'order_id'),
+            'ticket': (Ticket, 'ticket_id'),
+            'none': (None, None),
+        }
         
         try:
-            content_type = ContentType.objects.get(pk=target_type_id)
-            model_class = content_type.model_class()
-            target_obj = model_class.objects.select_related('event').get(pk=target_id)
-            
-            # Extract event from target object
+            if target_alias:
+                alias = str(target_alias).lower().strip()
+                model_class, uuid_field = target_alias_map.get(alias, (None, None))
+                if alias == 'none':
+                    return True
+                if not model_class:
+                    return False
+                target_obj = resolve_by_identifier(model_class, target_id, uuid_field=uuid_field)
+            else:
+                content_type = ContentType.objects.get(pk=target_type_id)
+                model_class = content_type.model_class()
+                if model_class is None:
+                    return False
+                # BookingPackage legacy flow for discounts remains supported.
+                target_obj = resolve_by_identifier(model_class, target_id)
+
+            event = None
             if isinstance(target_obj, BookingPackage):
                 event = target_obj.event
-                
-                # Check if user has ADMINISTRATIVE role for this event
-                has_access = EventRoleAssignment.objects.filter(
-                    user=user,
-                    event=event,
-                    role__category=EventRoleCategoryChoices.ADMINISTRATIVE
-                ).exists()
-                
-                return has_access
-            
-            # For other target types, deny access (only superusers/staff can create)
+            elif hasattr(target_obj, 'event') and target_obj.event is not None:
+                event = target_obj.event
+            elif hasattr(target_obj, 'attendee') and target_obj.attendee is not None:
+                event = getattr(target_obj.attendee, 'event', None)
+
+            if not event:
+                return False
+
+            return EventRoleAssignment.objects.filter(
+                user=user,
+                event=event,
+                role__category=EventRoleCategoryChoices.ADMINISTRATIVE
+            ).exists()
+
+        except (ContentType.DoesNotExist, ValueError, TypeError):
             return False
-            
-        except (ContentType.DoesNotExist, model_class.DoesNotExist):
+        except Exception:
             return False
 
 

@@ -142,7 +142,7 @@ class PaymentFilterSet(filters.FilterSet):
         field_name='target_type__id',
         help_text="Filter by target content type ID"
     )
-    target_id = filters.NumberFilter(
+    target_id = filters.CharFilter(
         field_name='target_id',
         help_text="Filter by target object ID"
     )
