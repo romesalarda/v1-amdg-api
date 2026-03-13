@@ -403,6 +403,181 @@ class EventStaffAPITest(BaseEventAPITestCase):
         response = self.client.get(f'/api/event/staff/?event={self.event.id}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
+    def test_remove_staff_action_deletes_non_creator_staff(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(
+            f'/api/event/list/{self.event.event_id}/remove-staff/?staff_id={self.staff_member.staff_id}'
+        )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(EventStaff.objects.filter(staff_id=self.staff_member.staff_id).exists())
+
+    def test_remove_staff_action_blocks_event_creator_removal(self):
+        creator_staff = EventStaff.objects.create(
+            event=self.event,
+            user=self.user,
+            assigned_by=self.user,
+            notes='Event creator'
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(
+            f'/api/event/list/{self.event.event_id}/remove-staff/?staff_id={creator_staff.staff_id}'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+        self.assertTrue(EventStaff.objects.filter(staff_id=creator_staff.staff_id).exists())
+
+    def test_remove_staff_action_blocks_event_creator_removal_for_superuser(self):
+        creator_staff = EventStaff.objects.create(
+            event=self.event,
+            user=self.user,
+            assigned_by=self.user,
+            notes='Event creator'
+        )
+        superuser = User.objects.create_superuser(
+            username='superuser1',
+            email='super1@example.com',
+            password='testpass123'
+        )
+
+        self.client.force_authenticate(user=superuser)
+        response = self.client.delete(
+            f'/api/event/list/{self.event.event_id}/remove-staff/?staff_id={creator_staff.staff_id}'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+        self.assertTrue(EventStaff.objects.filter(staff_id=creator_staff.staff_id).exists())
+
+    def test_event_staff_destroy_blocks_event_creator_removal(self):
+        creator_staff = EventStaff.objects.create(
+            event=self.event,
+            user=self.user,
+            assigned_by=self.user,
+            notes='Event creator'
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(f'/api/event/staff/{creator_staff.staff_id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+        self.assertTrue(EventStaff.objects.filter(staff_id=creator_staff.staff_id).exists())
+
+
+class EventCreatorAssignmentImmutabilityAPITest(BaseEventAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.permission = EventPermission.objects.create(
+            name='Can Manage Staff',
+            code='can_manage_staff',
+            category=EventPermissionCategoryChoices.STAFF_MANAGEMENT
+        )
+        self.role = EventRole.objects.create(
+            name='Coordinator',
+            code='COORDINATOR',
+            category=EventRoleCategoryChoices.COORDINATOR
+        )
+
+    def test_permission_assignment_create_blocks_event_creator(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post('/api/event/permission-assignments/', {
+            'event': self.event.id,
+            'user': self.user.id,
+            'permission': self.permission.id,
+            'read_only': True,
+            'allow_update': False,
+            'allow_delete': False,
+            'allow_create': False,
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+
+    def test_permission_assignment_update_blocks_event_creator_target(self):
+        assignment = EventPermissionAssignment.objects.create(
+            event=self.event,
+            user=self.staff_user,
+            permission=self.permission,
+            assigned_by=self.user,
+            read_only=True,
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(
+            f'/api/event/permission-assignments/{assignment.id}/',
+            {'user': self.user.id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.user_id, self.staff_user.id)
+
+    def test_permission_assignment_destroy_blocks_event_creator(self):
+        assignment = EventPermissionAssignment.objects.create(
+            event=self.event,
+            user=self.user,
+            permission=self.permission,
+            assigned_by=self.user,
+            read_only=True,
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(f'/api/event/permission-assignments/{assignment.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+        self.assertTrue(EventPermissionAssignment.objects.filter(id=assignment.id).exists())
+
+    def test_role_assignment_create_blocks_event_creator(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post('/api/event/role-assignments/', {
+            'event': self.event.id,
+            'user': self.user.id,
+            'role': self.role.id,
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+
+    def test_role_assignment_update_blocks_event_creator_target(self):
+        assignment = EventRoleAssignment.objects.create(
+            event=self.event,
+            user=self.staff_user,
+            role=self.role,
+            assigned_by=self.user,
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(
+            f'/api/event/role-assignments/{assignment.id}/',
+            {'user': self.user.id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.user_id, self.staff_user.id)
+
+    def test_role_assignment_destroy_blocks_event_creator(self):
+        assignment = EventRoleAssignment.objects.create(
+            event=self.event,
+            user=self.user,
+            role=self.role,
+            assigned_by=self.user,
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(f'/api/event/role-assignments/{assignment.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['detail'], 'Event creator access is immutable')
+        self.assertTrue(EventRoleAssignment.objects.filter(id=assignment.id).exists())
+
 
 class EventReviewAPITest(BaseEventAPITestCase):
     def setUp(self):

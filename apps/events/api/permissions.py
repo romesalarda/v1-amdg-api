@@ -333,3 +333,21 @@ class HasGeneralPermission(HasEventPermission):
     Checks for GENERAL category permissions.
     """
     permission_category = 'GENERAL'
+
+
+class CannotTargetEventCreator(permissions.BasePermission):
+    """
+    Prevents write operations on assignment objects that target the event's creator.
+    Applies to EventStaff, EventPermissionAssignment, and EventRoleAssignment.
+    Safe methods are always allowed.
+    """
+    message = "Event creator access is immutable"
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        user_id = getattr(obj, 'user_id', None)
+        event = getattr(obj, 'event', None)
+        if user_id and event and user_id == event.created_by_id:
+            return False
+        return True

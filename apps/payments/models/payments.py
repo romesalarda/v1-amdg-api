@@ -36,6 +36,7 @@ ALLOWED_STATUS_TRANSITIONS = {
         PaymentStatusChoices.PENDING,
     ],
     PaymentStatusChoices.PENDING: [
+        PaymentStatusChoices.DRAFTING,
         PaymentStatusChoices.COMPLETED,
         PaymentStatusChoices.FAILED,
         PaymentStatusChoices.CANCELLED,

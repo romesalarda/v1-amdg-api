@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Prefetch
 from django.contrib.contenttypes.models import ContentType
@@ -53,7 +54,9 @@ from apps.events.api.pagination import StandardPagination
 
 from apps.events.api.permissions import (
     IsEventOwnerOrStaffMember,
+    CannotTargetEventCreator,
 )
+
 
 @extend_schema_view(
     list=extend_schema(
@@ -448,6 +451,12 @@ class EventViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Staff member not found for this event"},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+        if staff_member.user_id == event.created_by_id:
+            return Response(
+                {"detail": CannotTargetEventCreator.message},
+                status=status.HTTP_403_FORBIDDEN
             )
         
         staff_member.delete()
@@ -3263,12 +3272,16 @@ class EventPermissionAssignmentViewSet(viewsets.ModelViewSet):
         'event', 'user', 'permission', 'assigned_by'
     ).all()
     serializer_class = EventPermissionAssignmentSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['event', 'user', 'permission', 'event__event_id']
-    
+
     def perform_create(self, serializer):
+        event = serializer.validated_data.get('event')
+        user = serializer.validated_data.get('user')
+        if event and user and user.id == event.created_by_id:
+            raise PermissionDenied(CannotTargetEventCreator.message)
         serializer.save(assigned_by=self.request.user)
 
 
@@ -3413,12 +3426,16 @@ class EventRoleAssignmentViewSet(viewsets.ModelViewSet):
         'event', 'user', 'role', 'assigned_by'
     ).all()
     serializer_class = EventRoleAssignmentSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['event', 'user', 'role', 'event__event_id']
-    
+
     def perform_create(self, serializer):
+        event = serializer.validated_data.get('event')
+        user = serializer.validated_data.get('user')
+        if event and user and user.id == event.created_by_id:
+            raise PermissionDenied(CannotTargetEventCreator.message)
         serializer.save(assigned_by=self.request.user)
 
 
@@ -3489,16 +3506,22 @@ class EventStaffViewSet(viewsets.ModelViewSet):
         'event', 'user', 'assigned_by'
     ).prefetch_related('availabilities').all()
     serializer_class = EventStaffSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['event', 'user', 'event__event_id']
-    
+
     def perform_create(self, serializer):
         serializer.save(assigned_by=self.request.user)
 
     def perform_destroy(self, instance):
         super().perform_destroy(instance)
+
+        # also remove admin roles
+        EventRoleAssignment.objects.filter(
+            event=instance.event,
+            user=instance.user
+        ).delete()
 
         # also remove admin roles
         EventRoleAssignment.objects.filter(
