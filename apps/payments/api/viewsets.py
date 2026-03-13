@@ -373,6 +373,9 @@ class PaymentViewSet(viewsets.ModelViewSet):
         
         target = payment.target
         target_type = type(target).__name__
+
+        if target_type is None:
+            target_type = "External Payment"
         
         try:
             # Transition payment to completed
@@ -1072,6 +1075,20 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
         
         refund_request.mark_verified(request.user)
+        refund_request.payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
+
+        PaymentHistoryAction.objects.create(
+            payment=refund_request.payment,
+            action='REFUND_VERIFIED',
+            description=f'Refund verified with {refund_request.amount} for payment {refund_request.payment.payment_reference}',
+            metadata={
+                'verified_by_id': request.user.id,
+                'requested_by': request.user.username,
+                'bank_reference': refund_request.payment.bank_transfer_reference,
+            },
+            notes="Refund request marked as verified and payment marked as pending refund.",
+            performed_by=request.user
+        )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
         return Response(serializer.data)
@@ -1095,6 +1112,20 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
         
         refund_request.mark_processed(request.user)
+        refund_request.payment.transition_to(PaymentStatusChoices.REFUNDED)
+
+        PaymentHistoryAction.objects.create(
+                payment=refund_request.payment,
+                action='REFUND_FULLY_PROCESSED',
+                description=f'Refund fully processed with {refund_request.amount} for payment {refund_request.payment.payment_reference}',
+                metadata={
+                    'processed_by_id': request.user.id,
+                    'requested_by': request.user.username,
+                    'bank_reference': refund_request.payment.bank_transfer_reference,
+                },
+                notes="Refund request marked as processed and payment marked as refunded.",
+                performed_by=request.user
+            )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
         return Response(serializer.data)
@@ -1118,6 +1149,20 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
         
         refund_request.mark_rejected(request.user)
+        refund_request.payment.transition_to(PaymentStatusChoices.COMPLETED)    
+
+        PaymentHistoryAction.objects.create(
+            payment=refund_request.payment,
+            action='REFUND_REJECTED',
+            description=f'Refund rejected with {refund_request.amount} for payment {refund_request.payment.payment_reference}',
+            metadata={
+                'rejected_by_id': request.user.id,
+                'requested_by': request.user.username,
+                'bank_reference': refund_request.payment.bank_transfer_reference,
+            },
+            notes="Refund request marked as rejected and payment marked as completed.",
+            performed_by=request.user
+        )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
         return Response(serializer.data)

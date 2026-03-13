@@ -203,6 +203,7 @@ class Payment(PayableModel):
             )
         
         self.status = new_status
+        self.save(update_fields=['status', 'updated_at'])
     
     def prepare_stripe_metadata(self) -> dict:
         """

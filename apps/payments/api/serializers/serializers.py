@@ -155,6 +155,7 @@ class PaymentListSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.username', read_only=True)
     event_name = serializers.CharField(source='event.name', read_only=True)
     method_title = serializers.CharField(source='method.title', read_only=True, allow_null=True)
+    method = serializers.SlugRelatedField(slug_field='method_id', read_only=True)
     amount = serializers.SerializerMethodField(help_text="Final modified payment amount")
     created_at = serializers.DateTimeField(read_only=True)
     
@@ -915,7 +916,7 @@ class RefundRequestDetailSerializer(RefundRequestListSerializer):
         fields = RefundRequestListSerializer.Meta.fields + (
             'reason', 'metadata', 'processed_at', 'processed_by', 'processed_by_name',
             'verified_updated_at', 'verified_by', 'verified_by_name',
-            'is_partial', 'is_full', 'associations'
+            'is_partial', 'is_full', 'associations', 'reason'
         )
 
 
@@ -923,10 +924,11 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
     """Create serializer for RefundRequest with validation."""
     
     amount = MoneyField(max_digits=10, decimal_places=2)
+    payment = serializers.SlugRelatedField(slug_field='payment_id', queryset=Payment.objects.all())
     
     class Meta:
         model = RefundRequest
-        fields = ('payment', 'amount', 'reason')
+        fields = ('payment', 'amount', 'amount_currency', 'reason')
     
     def validate_payment(self, value):
         """Ensure payment is completed and eligible for refund."""

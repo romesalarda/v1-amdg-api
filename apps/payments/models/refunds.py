@@ -76,10 +76,10 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
         ]
 
     def __str__(self):
-        return f"RefundRequest({self.id}) - {self.status}"
+        return f"RefundRequest({self.id}) - {self.verification_status}"
     
     def __repr__(self):
-        return f"<RefundRequest id={self.id} status={self.status} amount={self.amount}>"
+        return f"<RefundRequest id={self.id} status={self.verification_status} amount={self.amount}>"
     
     def save(self, *args, **kwargs):
         self.clean()

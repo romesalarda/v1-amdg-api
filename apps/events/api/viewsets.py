@@ -228,6 +228,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 EventStatusChoices.DRAFTING,
                 EventStatusChoices.PUBLISHED,
                 EventStatusChoices.OPEN,
+                EventStatusChoices.POSTPONED,
                 EventStatusChoices.IN_PROGRESS,
                 EventStatusChoices.COMPLETED
             ])

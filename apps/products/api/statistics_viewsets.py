@@ -204,12 +204,6 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
     serializer_class = ProductOverviewStatisticsSerializer  # Default serializer
     queryset = None  # Statistics viewset doesn't use queryset
     
-    def get_queryset(self):
-        # Statistics viewset doesn't use querysets, but this is required for schema generation
-        if getattr(self, 'swagger_fake_view', False):
-            return None
-        return None
-    
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
         filters = {

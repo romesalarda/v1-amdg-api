@@ -10,6 +10,9 @@ class EventPermissionCategoryChoices(models.TextChoices):
     PRODUCT_MANAGEMENT = 'PRODUCT_MANAGEMENT', 'Product Management Permissions'
     CONTENT_MANAGEMENT = 'CONTENT_MANAGEMENT', 'Content Management Permissions'
     STAFF_MANAGEMENT = 'STAFF_MANAGEMENT', 'Staff Management Permissions'
+    PAYMENT_MANAGEMENT = 'PAYMENT_MANAGEMENT', 'Payment Management Permissions'
+    BOOKING_MANAGEMENT = 'BOOKING_MANAGEMENT', 'Booking Management Permissions'
+    RESOURCE_MANAGEMENT = 'RESOURCE_MANAGEMENT', 'Resource Management Permissions'
     REPORTING = 'REPORTING', 'Reporting Permissions'
 
 class EventPermission(models.Model):

@@ -177,6 +177,48 @@ class EventAPITest(BaseEventAPITestCase):
         response = self.client.put(f'/api/event/list/{self.event.event_id}/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['title'], 'Updated Conference')
+
+    def test_partial_update_event_status_back_to_drafting(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(
+            f'/api/event/list/{self.event.event_id}/',
+            {'status': EventStatusChoices.DRAFTING},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, EventStatusChoices.DRAFTING)
+
+    def test_partial_update_postponed_event_status_to_published(self):
+        self.client.force_authenticate(user=self.user)
+        self.event.status = EventStatusChoices.POSTPONED
+        self.event.save(update_fields=['status'])
+
+        response = self.client.patch(
+            f'/api/event/list/{self.event.event_id}/',
+            {'status': EventStatusChoices.PUBLISHED},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, EventStatusChoices.PUBLISHED)
+
+    def test_partial_update_postponed_event_status_to_open(self):
+        self.client.force_authenticate(user=self.user)
+        self.event.status = EventStatusChoices.POSTPONED
+        self.event.save(update_fields=['status'])
+
+        response = self.client.patch(
+            f'/api/event/list/{self.event.event_id}/',
+            {'status': EventStatusChoices.OPEN},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, EventStatusChoices.OPEN)
     
     def test_filter_events_by_status(self):
         response = self.client.get(f'/api/event/list/?status={EventStatusChoices.PUBLISHED}')
