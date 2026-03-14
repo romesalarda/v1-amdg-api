@@ -654,10 +654,12 @@ class FamilyGroupFilterSet(django_filters.FilterSet):
     
     family_name = django_filters.CharFilter(lookup_expr='icontains')
     created_by = django_filters.NumberFilter(field_name='created_by__id')
+    event = django_filters.UUIDFilter(field_name='event__event_id')
+    organisation = django_filters.NumberFilter(field_name='organisation__id')
     
     class Meta:
         model = FamilyGroup
-        fields = ['family_name', 'created_by']
+        fields = ['family_name', 'created_by', 'event', 'organisation']
 
 
 class FamilyAttendeeFilterSet(django_filters.FilterSet):
@@ -665,12 +667,14 @@ class FamilyAttendeeFilterSet(django_filters.FilterSet):
     
     family_group = django_filters.NumberFilter(field_name='family_group__id')
     attendee = django_filters.UUIDFilter(field_name='attendee__attendee_id')
+    event = django_filters.UUIDFilter(field_name='family_group__event__event_id')
+    organisation = django_filters.NumberFilter(field_name='family_group__organisation__id')
     relationship = django_filters.ChoiceFilter(choices=HumanRelationshipChoices.choices)
     is_primary_guardian = django_filters.BooleanFilter()
     
     class Meta:
         model = FamilyAttendee
-        fields = ['family_group', 'attendee', 'relationship', 'is_primary_guardian']
+        fields = ['family_group', 'attendee', 'event', 'organisation', 'relationship', 'is_primary_guardian']
 
 
 class AttendeeMessageFilterSet(django_filters.FilterSet):

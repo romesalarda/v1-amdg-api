@@ -59,7 +59,7 @@ from .filtersets import (
 from .permissions import (
     IsAttendeeOwnerOrStaff, IsAttendeeOwnerOrReadOnly,
     IsEventStaffOrReadOnly, CanManageAttendeePersonalInfo,
-    CanAccessMessages, IsStaffOrReadOnly
+    CanAccessMessages, IsStaffOrReadOnly, CanAccessFamilyInfo
 )
 
 
@@ -337,12 +337,29 @@ class AttendeeGuardianViewSet(viewsets.ModelViewSet):
     
     queryset = AttendeeGuardian.objects.select_related('user', 'attendee').all()
     serializer_class = AttendeeGuardianSerializer
-    permission_classes = [IsAttendeeOwnerOrStaff]
+    permission_classes = [CanManageAttendeePersonalInfo]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = AttendeeGuardianFilterSet
     ordering_fields = ['added_at']
     ordering = ['-added_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if user.is_anonymous:
+            return queryset.none()
+
+        if user.is_superuser or user.is_staff:
+            return queryset
+
+        return queryset.filter(
+            Q(user=user) |
+            Q(attendee__user=user) |
+            Q(attendee__guardians__user=user) |
+            Q(attendee__event__staff_members__user=user)
+        ).distinct()
 
 
 # ============================================================================
@@ -459,13 +476,30 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
     """
     
     queryset = FamilyGroup.objects.prefetch_related('family_attendees__attendee').all()
-    permission_classes = [IsAttendeeOwnerOrStaff]
+    permission_classes = [CanAccessFamilyInfo]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = FamilyGroupFilterSet
     search_fields = ['family_name']
     ordering_fields = ['created_at', 'family_name']
     ordering = ['-created_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if user.is_anonymous:
+            return queryset.none()
+
+        if user.is_superuser or user.is_staff:
+            return queryset
+
+        return queryset.filter(
+            Q(created_by=user) |
+            Q(family_attendees__attendee__user=user) |
+            Q(family_attendees__attendee__guardians__user=user) |
+            Q(family_attendees__attendee__event__staff_members__user=user)
+        ).distinct()
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -550,12 +584,29 @@ class FamilyAttendeeViewSet(viewsets.ModelViewSet):
     
     queryset = FamilyAttendee.objects.select_related('family_group', 'attendee').all()
     serializer_class = FamilyAttendeeSerializer
-    permission_classes = [IsAttendeeOwnerOrStaff]
+    permission_classes = [CanAccessFamilyInfo]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = FamilyAttendeeFilterSet
     ordering_fields = ['added_at']
     ordering = ['-added_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if user.is_anonymous:
+            return queryset.none()
+
+        if user.is_superuser or user.is_staff:
+            return queryset
+
+        return queryset.filter(
+            Q(family_group__created_by=user) |
+            Q(attendee__user=user) |
+            Q(attendee__guardians__user=user) |
+            Q(attendee__event__staff_members__user=user)
+        ).distinct()
 
 
 # ============================================================================

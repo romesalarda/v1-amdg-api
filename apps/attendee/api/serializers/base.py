@@ -212,6 +212,7 @@ class AttendeeGuardianSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.get_full_name', read_only=True, allow_null=True)
     attendee_name = serializers.CharField(source='attendee.full_name', read_only=True)
     relationship_display = serializers.CharField(source='get_relationship_display', read_only=True)
+    attendee = serializers.SlugRelatedField(slug_field='attendee_id', queryset=Attendee.objects.all(), write_only=True)
     
     class Meta:
         model = AttendeeGuardian
@@ -303,6 +304,10 @@ class AttendeeActionSerializer(serializers.ModelSerializer):
 # FAMILY GROUP SERIALIZERS
 # ============================================================================
 
+def get_family_group_qs():
+    from apps.events.models import Event
+    return Event.objects.all()
+
 class FamilyGroupListSerializer(serializers.ModelSerializer):
     """List serializer for FamilyGroup."""
     
@@ -311,11 +316,12 @@ class FamilyGroupListSerializer(serializers.ModelSerializer):
         source='created_by.get_full_name', read_only=True, allow_null=True
     )
     member_count = serializers.SerializerMethodField()
-    
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=get_family_group_qs())
+
     class Meta:
         model = FamilyGroup
         fields = (
-            'id', 'family_name', 'created_by', 'created_by_name',
+            'id', 'family_name', 'organisation', 'event', 'created_by', 'created_by_name',
             'member_count', 'created_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
@@ -339,8 +345,8 @@ class FamilyGroupListSerializer(serializers.ModelSerializer):
             return {}
         
         links = {
-            'self': request.build_absolute_uri(f"/api/attendee/family-groups/{obj.id}/"),
-            'members': request.build_absolute_uri(f"/api/attendee/family-groups/{obj.id}/members/")
+            'self': request.build_absolute_uri(f"/api/family-groups/{obj.id}/"),
+            'members': request.build_absolute_uri(f"/api/family-groups/{obj.id}/members/")
         }
         
         if obj.created_by:
@@ -349,12 +355,13 @@ class FamilyGroupListSerializer(serializers.ModelSerializer):
         return links
 
 
+
 class FamilyGroupDetailSerializer(FamilyGroupListSerializer):
     """Detailed serializer for FamilyGroup with member details."""
     
     from apps.attendee.api.serializers.personal import FamilyAttendeeSerializer
     members = serializers.SerializerMethodField()
-    
+
     class Meta(FamilyGroupListSerializer.Meta):
         fields = FamilyGroupListSerializer.Meta.fields + ('members',)
     
@@ -368,13 +375,39 @@ class FamilyGroupDetailSerializer(FamilyGroupListSerializer):
         members = obj.family_attendees.all()
         return FamilyAttendeeSerializer(members, many=True, context=self.context).data
 
-
 class FamilyGroupCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating FamilyGroup."""
     
     class Meta:
         model = FamilyGroup
-        fields = ('family_name',)
+        fields = ('family_name', 'organisation', 'event')
+
+    def validate(self, attrs):
+        event = attrs.get('event', self.instance.event if self.instance else None)
+        organisation = attrs.get('organisation', self.instance.organisation if self.instance else None)
+
+        if event and not organisation:
+            organisation = event.organisation
+            attrs['organisation'] = organisation
+
+        if not event:
+            raise serializers.ValidationError({'event': 'Family group event is required.'})
+
+        if not organisation:
+            raise serializers.ValidationError({'organisation': 'Family group organisation is required.'})
+
+        if event.organisation_id != organisation.id:
+            raise serializers.ValidationError({
+                'organisation': 'Organisation must match the event organisation.'
+            })
+
+        if self.instance and 'event' in attrs and attrs['event'].id != self.instance.event_id:
+            raise serializers.ValidationError({'event': 'Event cannot be changed once the family group is created.'})
+
+        if self.instance and 'organisation' in attrs and attrs['organisation'].id != self.instance.organisation_id:
+            raise serializers.ValidationError({'organisation': 'Organisation cannot be changed once the family group is created.'})
+
+        return attrs
     
     def create(self, validated_data):
         """Create family group and set created_by from request user."""

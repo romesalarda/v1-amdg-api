@@ -244,3 +244,56 @@ class IsStaffOrReadOnly(permissions.BasePermission):
             return True
         
         return request.user and (request.user.is_staff or request.user.is_superuser)
+
+
+class CanAccessFamilyInfo(permissions.BasePermission):
+    """
+    Permission for family group and family membership visibility.
+
+    - Superusers/staff have full access
+    - Family creators can access their own groups
+    - Attendee owners, guardians, and event staff can access related family records
+    """
+
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated
+
+    def has_object_permission(self, request, view, obj):
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        family_group = getattr(obj, 'family_group', obj)
+        attendees_qs = None
+
+        if hasattr(family_group, 'created_by') and family_group.created_by == request.user:
+            return True
+
+        if getattr(family_group, 'event', None):
+            from apps.events.models import EventStaff
+            if EventStaff.objects.filter(event=family_group.event, user=request.user).exists():
+                return True
+
+        if hasattr(family_group, 'family_attendees'):
+            attendees_qs = family_group.family_attendees.select_related('attendee').all()
+        elif hasattr(obj, 'attendee'):
+            attendees_qs = [obj]
+
+        if attendees_qs is None:
+            return False
+
+        from apps.events.models import EventStaff
+        for membership in attendees_qs:
+            attendee = getattr(membership, 'attendee', None)
+            if not attendee:
+                continue
+
+            if attendee.user == request.user:
+                return True
+
+            if AttendeeGuardian.objects.filter(attendee=attendee, user=request.user).exists():
+                return True
+
+            if attendee.event and EventStaff.objects.filter(event=attendee.event, user=request.user).exists():
+                return True
+
+        return False

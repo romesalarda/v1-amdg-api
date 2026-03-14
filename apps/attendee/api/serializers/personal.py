@@ -720,6 +720,10 @@ class FamilyAttendeeSerializer(serializers.ModelSerializer):
     """Serializer for FamilyAttendee."""
     
     _links = serializers.SerializerMethodField()
+    attendee = serializers.SlugRelatedField(
+        slug_field='attendee_id',
+        queryset=Attendee.objects.all()
+    )
     attendee_name = serializers.CharField(source='attendee.full_name', read_only=True)
     family_name = serializers.CharField(source='family_group.family_name', read_only=True)
     relationship_display = serializers.CharField(source='get_relationship_display', read_only=True)
@@ -762,6 +766,16 @@ class FamilyAttendeeSerializer(serializers.ModelSerializer):
         attendee = attrs.get('attendee', self.instance.attendee if self.instance else None)
         
         if family_group and attendee:
+            if family_group.event_id and attendee.event_id != family_group.event_id:
+                raise serializers.ValidationError(
+                    "Family membership is restricted to attendees in the same event."
+                )
+
+            if family_group.organisation_id and attendee.event and attendee.event.organisation_id != family_group.organisation_id:
+                raise serializers.ValidationError(
+                    "Family membership organisation does not match attendee event organisation."
+                )
+
             queryset = FamilyAttendee.objects.filter(
                 family_group=family_group,
                 attendee=attendee
