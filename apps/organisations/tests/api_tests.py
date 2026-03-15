@@ -710,8 +710,8 @@ class EventSponsorAPITest(TestCase):
         data = {
             'name': 'Gold Sponsor',
             'description': 'Premium sponsor',
-            'organisation': self.sponsor_org.id,
-            'event': self.event.id
+            'organisation_id': str(self.sponsor_org.organisation_id),
+            'event_id': str(self.event.event_id)
         }
         response = self.client.post(url, data, format='json')
         
@@ -727,20 +727,21 @@ class EventSponsorAPITest(TestCase):
             event=self.event,
             added_by=self.admin_user
         )
-        EventSponsorPackage.objects.create(
-            sponsor=sponsor,
+        package = EventSponsorPackage.objects.create(
             event=self.event,
             package_name='Platinum Package',
             base_amount=10000.00
         )
+        sponsor.package = package
+        sponsor.save(update_fields=['package'])
         
         self.client.force_authenticate(user=self.admin_user)
-        url = reverse('organisations:eventsponsor-detail', kwargs={'pk': sponsor.id})
+        url = reverse('organisations:eventsponsor-detail', kwargs={'sponsor_id': sponsor.sponsor_id})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('packages', response.data)
-        self.assertEqual(len(response.data['packages']), 1)
+        self.assertIn('package', response.data)
+        self.assertIsNotNone(response.data['package'])
     
     def test_sponsor_packages_nested_action(self):
         """Test accessing sponsor packages via nested action."""
@@ -750,15 +751,16 @@ class EventSponsorAPITest(TestCase):
             event=self.event,
             added_by=self.admin_user
         )
-        EventSponsorPackage.objects.create(
-            sponsor=sponsor,
+        package = EventSponsorPackage.objects.create(
             event=self.event,
             package_name='Silver Package',
             base_amount=5000.00
         )
+        sponsor.package = package
+        sponsor.save(update_fields=['package'])
         
         self.client.force_authenticate(user=self.admin_user)
-        url = reverse('organisations:eventsponsor-packages', kwargs={'pk': sponsor.id})
+        url = reverse('organisations:eventsponsor-packages', kwargs={'sponsor_id': sponsor.sponsor_id})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -812,8 +814,7 @@ class EventSponsorPackageAPITest(TestCase):
         self.client.force_authenticate(user=self.admin_user)
         url = reverse('organisations:sponsorpackage-list')
         data = {
-            'sponsor': self.sponsor.id,
-            'event': self.event.id,
+            'event_id': str(self.event.event_id),
             'package_name': 'Gold Package',
             'package_description': 'Premium benefits',
             'base_amount': 7500.00,
@@ -830,8 +831,7 @@ class EventSponsorPackageAPITest(TestCase):
         self.client.force_authenticate(user=self.admin_user)
         url = reverse('organisations:sponsorpackage-list')
         data = {
-            'sponsor': self.sponsor.id,
-            'event': self.event.id,
+            'event_id': str(self.event.event_id),
             'package_name': 'Early Bird',
             'base_amount': 5000.00,
             'percentage_modifier': -10.00  # 10% discount
@@ -846,14 +846,13 @@ class EventSponsorPackageAPITest(TestCase):
     def test_package_detail_with_payment_info(self):
         """Test retrieving package with payment info."""
         package = EventSponsorPackage.objects.create(
-            sponsor=self.sponsor,
             event=self.event,
             package_name='Diamond Package',
             base_amount=15000.00
         )
         
         self.client.force_authenticate(user=self.admin_user)
-        url = reverse('organisations:sponsorpackage-detail', kwargs={'pk': package.id})
+        url = reverse('organisations:sponsorpackage-detail', kwargs={'package_id': package.package_id})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)

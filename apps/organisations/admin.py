@@ -161,7 +161,7 @@ class EventSponsorAdmin(admin.ModelAdmin):
     search_fields = ('name', 'organisation__title', 'event__title', 'event__display_code', 'description')
     readonly_fields = ('added_at', 'updated_at')
     autocomplete_fields = ('organisation', 'event')
-    inlines = [EventSponsorPackageInline]
+    inlines = []
     
     fieldsets = (
         ('Sponsor Information', {
@@ -176,15 +176,15 @@ class EventSponsorAdmin(admin.ModelAdmin):
 
 @admin.register(EventSponsorPackage)
 class EventSponsorPackageAdmin(admin.ModelAdmin):
-    list_display = ('package_name', 'sponsor', 'event', 'base_amount', 'added_at')
+    list_display = ('package_name', 'event', 'base_amount', 'added_at')
     list_filter = ('added_at', 'updated_at', 'base_amount')
     search_fields = ('package_name', 'sponsor__name', 'event__title', 'package_description')
     readonly_fields = ('added_at', 'updated_at')
-    autocomplete_fields = ('sponsor', 'event')
+    autocomplete_fields = ('event',)
     
     fieldsets = (
         ('Package Information', {
-            'fields': ('package_name', 'package_description', 'sponsor', 'event')
+            'fields': ('package_name', 'package_description', 'event')
         }),
         ('Payment Details', {
             'fields': ('base_amount', 'percentage_modifier')

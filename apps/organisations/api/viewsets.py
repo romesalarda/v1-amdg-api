@@ -636,8 +636,8 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
     """ViewSet for EventSponsor CRUD operations."""
     
     queryset = EventSponsor.objects.select_related(
-        'organisation', 'event', 'added_by'
-    ).prefetch_related('sponsorship_packages')
+        'organisation', 'event', 'added_by', 'reviewed_by', 'package'
+    )
     permission_classes = [permissions.IsAuthenticated, IsOrganisationControllerOrEventAdmin]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -645,6 +645,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'added_at']
     ordering = ['-added_at']
+    lookup_field = 'sponsor_id'
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -662,9 +663,9 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['get'])
     def packages(self, request, pk=None):
-        """Get all packages for a sponsor."""
+        """Get package selected by the sponsor, if any."""
         sponsor = self.get_object()
-        packages = sponsor.sponsorship_packages.all()
+        packages = [sponsor.package] if sponsor.package else []
         serializer = EventSponsorPackageListSerializer(
             packages, many=True, context={'request': request}
         )
@@ -711,7 +712,7 @@ class EventSponsorPackageViewSet(viewsets.ModelViewSet):
     """ViewSet for EventSponsorPackage with PayableModel support."""
     
     queryset = EventSponsorPackage.objects.select_related(
-        'sponsor', 'event'
+        'event'
     )
     permission_classes = [permissions.IsAuthenticated, IsOrganisationControllerOrEventAdmin]
     pagination_class = StandardPagination
@@ -720,6 +721,7 @@ class EventSponsorPackageViewSet(viewsets.ModelViewSet):
     search_fields = ['package_name', 'package_description']
     ordering_fields = ['package_name', 'added_at', 'base_amount']
     ordering = ['-added_at']
+    lookup_field = 'package_id'
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""

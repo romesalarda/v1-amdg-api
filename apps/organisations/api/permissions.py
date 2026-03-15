@@ -128,6 +128,11 @@ class IsOrganisationControllerOrEventAdmin(permissions.BasePermission):
         if request.user.is_superuser or request.user.is_staff:
             return True
         
+        # Check if user has administrative role in related event first.
+        event = self._get_event_from_object(obj)
+        if event and self._user_has_administrative_role(request.user, event):
+            return True
+
         # Get the organisation from the object
         organisation = self._get_organisation_from_object(obj)
         if not organisation:
@@ -139,11 +144,6 @@ class IsOrganisationControllerOrEventAdmin(permissions.BasePermission):
             user=request.user
         ).exists():
             return True
-        
-        # Check if user has administrative role in related event
-        event = self._get_event_from_object(obj)
-        if event:
-            return self._user_has_administrative_role(request.user, event)
         
         return False
     

@@ -764,6 +764,8 @@ class EventSponsorTest(TestCase):
         self.assertEqual(sponsor.name, 'Platinum Sponsor')
         self.assertEqual(sponsor.organisation, self.organisation)
         self.assertEqual(sponsor.event, self.event)
+        self.assertIsNotNone(sponsor.sponsor_id)
+        self.assertEqual(sponsor.approval_status, 'PENDING')
         self.assertEqual(str(sponsor), 'Platinum Sponsor')
 
 
@@ -807,7 +809,6 @@ class EventSponsorPackageTest(TestCase):
     def test_create_sponsor_package(self):
         """Test creating a sponsor package."""
         package = EventSponsorPackage.objects.create(
-            sponsor=self.sponsor,
             event=self.event,
             package_name='Gold Package',
             package_description='Premium sponsorship benefits',
@@ -815,14 +816,13 @@ class EventSponsorPackageTest(TestCase):
         )
         
         self.assertEqual(package.package_name, 'Gold Package')
-        self.assertEqual(package.sponsor, self.sponsor)
         self.assertEqual(package.event, self.event)
+        self.assertIsNotNone(package.package_id)
         self.assertEqual(package.base_amount.amount, Money(5000.00, 'GBP').amount)
     
     def test_sponsor_package_with_percentage_modifier(self):
         """Test sponsor package with percentage modifier."""
         package = EventSponsorPackage.objects.create(
-            sponsor=self.sponsor,
             event=self.event,
             package_name='Early Bird Gold',
             base_amount=5000.00,
@@ -1031,12 +1031,13 @@ class OrganisationWorkflowIntegrationTest(TestCase):
             added_by=self.admin
         )
         
-        EventSponsorPackage.objects.create(
-            sponsor=sponsor,
+        package = EventSponsorPackage.objects.create(
             event=event,
             package_name='Bronze Package',
             base_amount=1000.00
         )
+        sponsor.package = package
+        sponsor.save(update_fields=['package'])
         
         # Verify everything is connected
         self.assertEqual(org.memberships.count(), 2)

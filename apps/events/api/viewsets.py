@@ -56,6 +56,15 @@ from apps.events.api.permissions import (
     IsEventOwnerOrStaffMember,
     CannotTargetEventCreator,
 )
+from apps.organisations.models import EventSponsor, EventSponsorPackage, OrganisationControl
+from apps.organisations.api.serializers import (
+    EventSponsorListSerializer,
+    EventSponsorDetailSerializer,
+    EventSponsorCreateUpdateSerializer,
+    EventSponsorPackageListSerializer,
+    EventSponsorPackageDetailSerializer,
+    EventSponsorPackageCreateUpdateSerializer,
+)
 
 
 @extend_schema_view(
@@ -331,6 +340,239 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         serializer = EventSettingsSerializer(event_settings)
+        return Response(serializer.data)
+
+    def _is_event_admin(self, user, event) -> bool:
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_staff or user.is_superuser:
+            return True
+        return EventRoleAssignment.objects.filter(
+            user=user,
+            event=event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).exists()
+
+    def _can_manage_sponsor_for_organisation(self, user, event, organisation) -> bool:
+        if self._is_event_admin(user, event):
+            return True
+        return OrganisationControl.objects.filter(
+            user=user,
+            organisation=organisation,
+        ).exists()
+
+    @extend_schema(
+        summary="Event Sponsors",
+        description="List sponsors for an event or create a sponsor for the event.",
+        tags=["Events", "Event Sponsors"],
+    )
+    @action(detail=True, methods=['get', 'post'], url_path='sponsors', permission_classes=[permissions.IsAuthenticated])
+    def sponsors(self, request, event_id=None):
+        event = self.get_object()
+        queryset = EventSponsor.objects.select_related(
+            'organisation', 'event', 'package', 'added_by', 'reviewed_by'
+        ).filter(event=event)
+
+        if request.method == 'GET':
+            page = self.paginate_queryset(queryset)
+            serializer = EventSponsorListSerializer(
+                page if page is not None else queryset,
+                many=True,
+                context={'request': request},
+            )
+            if page is not None:
+                return self.get_paginated_response(serializer.data)
+            return Response(serializer.data)
+
+        serializer = EventSponsorCreateUpdateSerializer(
+            data=request.data,
+            context={'request': request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        organisation = serializer.validated_data.get('organisation')
+        if not organisation:
+            return Response({'organisation_id': ['This field is required.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not self._can_manage_sponsor_for_organisation(request.user, event, organisation):
+            return Response(
+                {'detail': "You don't have permission to create a sponsor for this organisation."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if serializer.validated_data.get('event') != event:
+            return Response(
+                {'event_id': ['Event in payload must match URL event_id.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        sponsor = serializer.save()
+        return Response(
+            EventSponsorDetailSerializer(sponsor, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        summary="Event Sponsor Detail",
+        description="Retrieve, update, or delete a sponsor within an event context.",
+        tags=["Events", "Event Sponsors"],
+    )
+    @action(
+        detail=True,
+        methods=['get', 'patch', 'delete'],
+        url_path='sponsors/(?P<sponsor_id>[^/.]+)',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def sponsor_detail(self, request, event_id=None, sponsor_id=None):
+        event = self.get_object()
+        sponsor = get_object_or_404(
+            EventSponsor.objects.select_related('organisation', 'event', 'package', 'added_by', 'reviewed_by'),
+            sponsor_id=sponsor_id,
+            event=event,
+        )
+
+        if request.method == 'GET':
+            serializer = EventSponsorDetailSerializer(sponsor, context={'request': request})
+            return Response(serializer.data)
+
+        if not self._can_manage_sponsor_for_organisation(request.user, event, sponsor.organisation):
+            return Response(
+                {'detail': "You don't have permission to manage this sponsor."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if request.method == 'DELETE':
+            sponsor.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        serializer = EventSponsorCreateUpdateSerializer(
+            sponsor,
+            data=request.data,
+            partial=True,
+            context={'request': request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        payload_event = serializer.validated_data.get('event')
+        if payload_event and payload_event != event:
+            return Response(
+                {'event_id': ['Event in payload must match URL event_id.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        sponsor = serializer.save()
+        return Response(EventSponsorDetailSerializer(sponsor, context={'request': request}).data)
+
+    @extend_schema(
+        summary="Event Sponsorship Packages",
+        description="List or create sponsor packages for an event.",
+        tags=["Events", "Sponsorship Packages"],
+    )
+    @action(detail=True, methods=['get', 'post'], url_path='sponsorship-packages', permission_classes=[permissions.IsAuthenticated])
+    def sponsorship_packages(self, request, event_id=None):
+        event = self.get_object()
+
+        if request.method == 'GET':
+            queryset = EventSponsorPackage.objects.select_related('event').filter(event=event)
+            page = self.paginate_queryset(queryset)
+            serializer = EventSponsorPackageListSerializer(
+                page if page is not None else queryset,
+                many=True,
+                context={'request': request},
+            )
+            if page is not None:
+                return self.get_paginated_response(serializer.data)
+            return Response(serializer.data)
+
+        if not self._is_event_admin(request.user, event):
+            return Response(
+                {'detail': "Only event admins can create sponsorship packages."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = EventSponsorPackageCreateUpdateSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        if serializer.validated_data.get('event') != event:
+            return Response(
+                {'event_id': ['Event in payload must match URL event_id.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        package = serializer.save()
+        return Response(
+            EventSponsorPackageDetailSerializer(package, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        summary="Event Sponsorship Package Detail",
+        description="Retrieve, update, or delete a sponsorship package for an event.",
+        tags=["Events", "Sponsorship Packages"],
+    )
+    @action(
+        detail=True,
+        methods=['get', 'patch', 'delete'],
+        url_path='sponsorship-packages/(?P<package_id>[^/.]+)',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def sponsorship_package_detail(self, request, event_id=None, package_id=None):
+        event = self.get_object()
+        package = get_object_or_404(
+            EventSponsorPackage.objects.select_related('event'),
+            package_id=package_id,
+            event=event,
+        )
+
+        if request.method == 'GET':
+            serializer = EventSponsorPackageDetailSerializer(package, context={'request': request})
+            return Response(serializer.data)
+
+        if not self._is_event_admin(request.user, event):
+            return Response(
+                {'detail': "Only event admins can modify sponsorship packages."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if request.method == 'DELETE':
+            if package.payment is not None:
+                return Response(
+                    {'detail': 'Cannot delete a package that already has an associated payment.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            package.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        serializer = EventSponsorPackageCreateUpdateSerializer(
+            package,
+            data=request.data,
+            partial=True,
+            context={'request': request},
+        )
+        serializer.is_valid(raise_exception=True)
+        payload_event = serializer.validated_data.get('event')
+        if payload_event and payload_event != event:
+            return Response(
+                {'event_id': ['Event in payload must match URL event_id.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        package = serializer.save()
+        return Response(EventSponsorPackageDetailSerializer(package, context={'request': request}).data)
+
+    @extend_schema(
+        summary="Public Event Sponsors",
+        description="List approved sponsors visible on the event landing page.",
+        tags=["Events", "Event Sponsors"],
+    )
+    @action(detail=True, methods=['get'], url_path='public-sponsors', permission_classes=[permissions.AllowAny])
+    def public_sponsors(self, request, event_id=None):
+        event = self.get_object()
+        queryset = EventSponsor.objects.select_related('organisation', 'event', 'package').filter(
+            event=event,
+            approval_status='APPROVED',
+            show_on_landing=True,
+        )
+        serializer = EventSponsorListSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(

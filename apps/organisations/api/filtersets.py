@@ -33,6 +33,8 @@ from apps.organisations.models import (
     Leader, LeaderLocationType, LocationLeaderInvite
 )
 
+from apps.common.models.verification import VerificationStatus as OrganisationSponsorVerificationStatus
+
 
 class OrganisationFilterSet(filters.FilterSet):
     """
@@ -510,20 +512,42 @@ class EventSponsorFilterSet(filters.FilterSet):
         method='filter_search',
         help_text="Search in sponsor name and description"
     )
-    
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+
+    organisation_id = filters.UUIDFilter(
+        field_name='organisation__organisation_id',
+        help_text="Filter by organisation UUID"
     )
-    
-    event = filters.NumberFilter(
-        field_name='event',
-        help_text="Filter by event ID"
+
+    event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text="Filter by event UUID"
+    )
+
+    package_id = filters.UUIDFilter(
+        field_name='package__package_id',
+        help_text="Filter by selected package UUID"
+    )
+
+
+    chapter_location_id = filters.UUIDFilter(  
+        field_name='chapter_location__id',
+        help_text="Filter by chapter location UUID"
     )
     
     added_by = filters.NumberFilter(
         field_name='added_by',
         help_text="Filter by who added the sponsor"
+    )
+
+    verification_status = filters.ChoiceFilter(
+        field_name='verification_status',
+        choices=OrganisationSponsorVerificationStatus.choices,
+        help_text="Filter by verification status"
+    )
+
+    processed = filters.BooleanFilter(
+        method='filter_processed',
+        help_text="Filter by whether sponsorship has been processed"
     )
     
     added_after = filters.DateTimeFilter(
@@ -539,7 +563,7 @@ class EventSponsorFilterSet(filters.FilterSet):
     
     class Meta:
         model = EventSponsor
-        fields = ['organisation', 'event', 'added_by']
+        fields = ['organisation_id', 'event_id', 'package_id', 'added_by']
     
     def filter_search(self, queryset, name, value):
         """Search in name and description."""
@@ -548,6 +572,13 @@ class EventSponsorFilterSet(filters.FilterSet):
         return queryset.filter(
             Q(name__icontains=value) | Q(description__icontains=value)
         )
+    
+    def filter_processed(self, queryset, name, value):
+        """Filter by whether sponsorship has been processed."""
+        if value:
+            return queryset.filter(processed_at__isnull=False)
+        return queryset
+
 
 
 class EventSponsorPackageFilterSet(filters.FilterSet):
@@ -565,15 +596,10 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
         method='filter_search',
         help_text="Search in package name and description"
     )
-    
-    sponsor = filters.NumberFilter(
-        field_name='sponsor',
-        help_text="Filter by sponsor ID"
-    )
-    
-    event = filters.NumberFilter(
-        field_name='event',
-        help_text="Filter by event ID"
+
+    event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text="Filter by event UUID"
     )
     
     min_amount = filters.NumberFilter(
@@ -605,7 +631,7 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
     
     class Meta:
         model = EventSponsorPackage
-        fields = ['sponsor', 'event']
+        fields = ['event_id']
     
     def filter_search(self, queryset, name, value):
         """Search in package name and description."""
