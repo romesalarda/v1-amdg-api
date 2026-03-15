@@ -145,6 +145,12 @@ class EventRevenueOverviewSerializer(BaseStatisticsSerializer):
         decimal_places=2,
         help_text="Revenue from donations"
     )
+    sponsor_revenue = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        help_text="Revenue from sponsorship payments"
+    )
     breakdown = serializers.ListField(
         child=serializers.DictField(),
         help_text="Revenue breakdown by source"
@@ -353,6 +359,33 @@ class BookingPackagePerformanceSerializer(BaseStatisticsSerializer):
         )
 
 
+class SponsorPackagePerformanceSerializer(BaseStatisticsSerializer):
+    """Serializer for sponsorship package performance statistics."""
+
+    packages = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="List of sponsorship packages with utilization and revenue data"
+    )
+    total_packages = serializers.IntegerField()
+    total_sponsors = serializers.IntegerField()
+    status_summary = serializers.DictField()
+    total_completed_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_refunded_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_net_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+    def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        distribution = [
+            {'label': item.get('package_name', 'Unknown'), 'value': item.get('sponsors_count', 0)}
+            for item in data.get('packages', [])
+        ]
+        return formatters.format_bar_chart(
+            data=distribution,
+            title='Sponsorship Package Utilization',
+            x_axis_label='Package',
+            y_axis_label='Sponsors'
+        )
+
+
 class OverviewStatisticsSerializer(BaseStatisticsSerializer):
     """Serializer for comprehensive overview statistics (dashboard)."""
     
@@ -366,6 +399,10 @@ class OverviewStatisticsSerializer(BaseStatisticsSerializer):
     average_capacity_utilization = serializers.FloatField()
     average_rating = serializers.FloatField(required=False, allow_null=True)
     total_reviews = serializers.IntegerField()
+    sponsorship = serializers.DictField(
+        required=False,
+        help_text="Sponsorship metrics including package utilization and revenue"
+    )
     recent_trends = serializers.DictField(
         help_text="Recent activity trends",
         required=False

@@ -587,6 +587,7 @@ class RevenueOverviewTest(EventStatisticsBaseTestCase):
         self.assertIn('booking_revenue', data)
         self.assertIn('product_revenue', data)
         self.assertIn('donation_revenue', data)
+        self.assertIn('sponsor_revenue', data)
         self.assertIn('breakdown', data)
         
         # Verify numeric values
@@ -599,7 +600,8 @@ class RevenueOverviewTest(EventStatisticsBaseTestCase):
         # Total should be sum of parts
         product = Decimal(str(data['product_revenue']))
         donation = Decimal(str(data['donation_revenue']))
-        self.assertEqual(total, booking + product + donation)
+        sponsor = Decimal(str(data['sponsor_revenue']))
+        self.assertEqual(total, booking + product + donation + sponsor)
     
     def test_revenue_overview_echarts(self):
         """Test revenue overview returns ECharts pie chart."""

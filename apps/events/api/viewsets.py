@@ -370,7 +370,7 @@ class EventViewSet(viewsets.ModelViewSet):
     def sponsors(self, request, event_id=None):
         event = self.get_object()
         queryset = EventSponsor.objects.select_related(
-            'organisation', 'event', 'package', 'added_by', 'reviewed_by'
+            'organisation', 'event', 'package', 'added_by', 'verified_by', 'processed_by'
         ).filter(event=event)
 
         if request.method == 'GET':
@@ -384,8 +384,11 @@ class EventViewSet(viewsets.ModelViewSet):
                 return self.get_paginated_response(serializer.data)
             return Response(serializer.data)
 
+        payload = request.data.copy()
+        payload.setdefault('event', event.id)
+
         serializer = EventSponsorCreateUpdateSerializer(
-            data=request.data,
+            data=payload,
             context={'request': request},
         )
         serializer.is_valid(raise_exception=True)
@@ -426,7 +429,7 @@ class EventViewSet(viewsets.ModelViewSet):
     def sponsor_detail(self, request, event_id=None, sponsor_id=None):
         event = self.get_object()
         sponsor = get_object_or_404(
-            EventSponsor.objects.select_related('organisation', 'event', 'package', 'added_by', 'reviewed_by'),
+            EventSponsor.objects.select_related('organisation', 'event', 'package', 'added_by', 'verified_by', 'processed_by'),
             sponsor_id=sponsor_id,
             event=event,
         )
@@ -445,9 +448,12 @@ class EventViewSet(viewsets.ModelViewSet):
             sponsor.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
+        payload = request.data.copy()
+        payload.setdefault('event', event.id)
+
         serializer = EventSponsorCreateUpdateSerializer(
             sponsor,
-            data=request.data,
+            data=payload,
             partial=True,
             context={'request': request},
         )
@@ -462,6 +468,62 @@ class EventViewSet(viewsets.ModelViewSet):
 
         sponsor = serializer.save()
         return Response(EventSponsorDetailSerializer(sponsor, context={'request': request}).data)
+
+    @extend_schema(
+        summary="Approve Event Sponsor",
+        description="Mark a sponsor as verified. Event admin permissions required.",
+        tags=["Events", "Event Sponsors"],
+    )
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='sponsors/(?P<sponsor_id>[^/.]+)/approve',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def approve_sponsor(self, request, event_id=None, sponsor_id=None):
+        event = self.get_object()
+        if not self._is_event_admin(request.user, event):
+            return Response(
+                {'detail': "Only event admins can approve sponsors."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        sponsor = get_object_or_404(
+            EventSponsor.objects.select_related('organisation', 'event', 'package', 'added_by', 'verified_by', 'processed_by'),
+            sponsor_id=sponsor_id,
+            event=event,
+        )
+        sponsor.mark_verified(verifier=request.user)
+        serializer = EventSponsorDetailSerializer(sponsor, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Reject Event Sponsor",
+        description="Mark a sponsor as rejected. Event admin permissions required.",
+        tags=["Events", "Event Sponsors"],
+    )
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='sponsors/(?P<sponsor_id>[^/.]+)/reject',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def reject_sponsor(self, request, event_id=None, sponsor_id=None):
+        event = self.get_object()
+        if not self._is_event_admin(request.user, event):
+            return Response(
+                {'detail': "Only event admins can reject sponsors."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        sponsor = get_object_or_404(
+            EventSponsor.objects.select_related('organisation', 'event', 'package', 'added_by', 'verified_by', 'processed_by'),
+            sponsor_id=sponsor_id,
+            event=event,
+        )
+        sponsor.mark_rejected(verifier=request.user)
+        serializer = EventSponsorDetailSerializer(sponsor, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Event Sponsorship Packages",
@@ -490,7 +552,9 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        serializer = EventSponsorPackageCreateUpdateSerializer(data=request.data, context={'request': request})
+        payload = request.data.copy()
+        payload.setdefault('event', event.id)
+        serializer = EventSponsorPackageCreateUpdateSerializer(data=payload, context={'request': request})
         serializer.is_valid(raise_exception=True)
         if serializer.validated_data.get('event') != event:
             return Response(
@@ -542,9 +606,12 @@ class EventViewSet(viewsets.ModelViewSet):
             package.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
+        payload = request.data.copy()
+        payload.setdefault('event', event.id)
+
         serializer = EventSponsorPackageCreateUpdateSerializer(
             package,
-            data=request.data,
+            data=payload,
             partial=True,
             context={'request': request},
         )

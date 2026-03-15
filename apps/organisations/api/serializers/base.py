@@ -701,15 +701,21 @@ class EventSponsorListSerializer(serializers.ModelSerializer):
     event_name = serializers.CharField(source='event.title', read_only=True)
     added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
     packages_count = serializers.SerializerMethodField()
+    package_id = serializers.UUIDField(source='package.package_id', read_only=True, allow_null=True)
+    package_name = serializers.CharField(source='package.package_name', read_only=True, allow_null=True)
+    can_edit = serializers.SerializerMethodField()
+    can_approve = serializers.SerializerMethodField()
     
     class Meta:
         model = EventSponsor
         fields = (
-            'id', 'name', 'description', 'organisation', 'organisation_name',
+            'id', 'sponsor_id', 'name', 'description', 'organisation', 'organisation_name',
             'event', 'event_name', 'added_by', 'added_by_name',
-            'packages_count', 'added_at', 'updated_at', '_links'
+            'package', 'package_id', 'package_name',
+            'verification_status', 'is_pending', 'is_verified', 'is_rejected', 'is_processed',
+            'can_edit', 'can_approve', 'packages_count', 'added_at', 'updated_at', '_links'
         )
-        read_only_fields = ('id', 'added_at', 'updated_at')
+        read_only_fields = ('id', 'sponsor_id', 'added_at', 'updated_at')
         extra_kwargs = {
             'added_at': {'default': None},
             'updated_at': {'default': None},
@@ -717,7 +723,39 @@ class EventSponsorListSerializer(serializers.ModelSerializer):
     
     @extend_schema_field(OpenApiTypes.INT)
     def get_packages_count(self, obj) -> int:
-        return obj.sponsorship_packages.count()
+        return 1 if obj.package_id else 0
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_can_edit(self, obj) -> bool:
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        if OrganisationControl.objects.filter(organisation=obj.organisation, user=request.user).exists():
+            return True
+
+        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+        return EventRoleAssignment.objects.filter(
+            user=request.user,
+            event=obj.event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).exists()
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_can_approve(self, obj) -> bool:
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+        return EventRoleAssignment.objects.filter(
+            user=request.user,
+            event=obj.event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).exists()
     
     @extend_schema_field({
         'type': 'object',
@@ -734,10 +772,10 @@ class EventSponsorListSerializer(serializers.ModelSerializer):
             return {}
         
         return {
-            'self': request.build_absolute_uri(f"/api/organisations/sponsors/{obj.id}/"),
+            'self': request.build_absolute_uri(f"/api/organisations/sponsors/{obj.sponsor_id}/"),
             'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
             'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
-            'packages': request.build_absolute_uri(f"/api/organisations/sponsors/{obj.id}/packages/"),
+            'packages': request.build_absolute_uri(f"/api/organisations/sponsors/{obj.sponsor_id}/packages/"),
         }
 
 
@@ -751,14 +789,18 @@ class EventSponsorDetailSerializer(EventSponsorListSerializer):
     
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_packages(self, obj) -> list:
-        """Return summary of sponsorship packages."""
-        packages = obj.sponsorship_packages.all()[:10]
+        """Return selected package summary, if any."""
+        if not obj.package:
+            return []
+
         return [{
-            'id': pkg.id,
-            'package_name': pkg.package_name,
-            'base_amount': str(pkg.base_amount),
-            'modified_amount': str(pkg.modified_amount),
-        } for pkg in packages]
+            'id': obj.package.id,
+            'package_id': str(obj.package.package_id),
+            'package_name': obj.package.package_name,
+            'tier': obj.package.tier,
+            'base_amount': str(obj.package.base_amount),
+            'modified_amount': str(obj.package.modified_amount),
+        }]
 
 
 class EventSponsorCreateUpdateSerializer(serializers.ModelSerializer):
@@ -766,7 +808,7 @@ class EventSponsorCreateUpdateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = EventSponsor
-        fields = ('name', 'description', 'organisation', 'event')
+        fields = ('name', 'description', 'organisation', 'event', 'package', 'chapter_location')
     
     def validate_name(self, value):
         """Validate name is not empty."""
@@ -781,6 +823,17 @@ class EventSponsorCreateUpdateSerializer(serializers.ModelSerializer):
             validated_data['added_by'] = request.user
         return super().create(validated_data)
 
+    def validate(self, attrs):
+        event = attrs.get('event') or getattr(self.instance, 'event', None)
+        package = attrs.get('package') if 'package' in attrs else getattr(self.instance, 'package', None)
+
+        if package and event and package.event_id != event.id:
+            raise serializers.ValidationError({
+                'package': "Selected package must belong to the same event.",
+            })
+
+        return attrs
+
 
 # ============================================================================
 # EVENT SPONSOR PACKAGE SERIALIZERS
@@ -790,21 +843,22 @@ class EventSponsorPackageListSerializer(serializers.ModelSerializer):
     """List serializer for EventSponsorPackage with PayableModel support."""
     
     _links = serializers.SerializerMethodField()
-    sponsor_name = serializers.CharField(source='sponsor.name', read_only=True)
     event_name = serializers.CharField(source='event.title', read_only=True)
     base_amount = MoneyField(max_digits=14, decimal_places=2, read_only=True)
     modified_amount = serializers.SerializerMethodField(help_text="Amount after percentage modifier")
     has_payment = serializers.SerializerMethodField()
+    sponsors_count = serializers.SerializerMethodField()
     
     class Meta:
         model = EventSponsorPackage
         fields = (
-            'id', 'sponsor', 'sponsor_name', 'event', 'event_name',
+            'id', 'package_id', 'event', 'event_name',
             'package_name', 'package_description', 'base_amount',
-            'percentage_modifier', 'modified_amount', 'has_payment',
+            'percentage_modifier', 'modified_amount', 'active', 'tier',
+            'has_payment', 'sponsors_count',
             'added_at', 'updated_at', '_links'
         )
-        read_only_fields = ('id', 'added_at', 'updated_at')
+        read_only_fields = ('id', 'package_id', 'added_at', 'updated_at')
         extra_kwargs = {
             'added_at': {'default': None},
             'updated_at': {'default': None},
@@ -818,6 +872,10 @@ class EventSponsorPackageListSerializer(serializers.ModelSerializer):
     def get_has_payment(self, obj) -> bool:
         """Check if package has associated payment."""
         return obj.payment is not None
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_sponsors_count(self, obj) -> int:
+        return obj.sponsors.count()
     
     @extend_schema_field({
         'type': 'object',
@@ -834,8 +892,7 @@ class EventSponsorPackageListSerializer(serializers.ModelSerializer):
             return {}
         
         links = {
-            'self': request.build_absolute_uri(f"/api/organisations/sponsor-packages/{obj.id}/"),
-            'sponsor': request.build_absolute_uri(f"/api/organisations/sponsors/{obj.sponsor.id}/"),
+            'self': request.build_absolute_uri(f"/api/organisations/sponsor-packages/{obj.package_id}/"),
             'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
         }
         
@@ -886,8 +943,8 @@ class EventSponsorPackageCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventSponsorPackage
         fields = (
-            'sponsor', 'event', 'package_name', 'package_description',
-            'base_amount', 'percentage_modifier'
+            'event', 'package_name', 'package_description',
+            'base_amount', 'percentage_modifier', 'active', 'tier'
         )
     
     def validate_base_amount(self, value):
@@ -905,14 +962,32 @@ class EventSponsorPackageCreateUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, attrs):
-        """Ensure sponsor and event match."""
-        sponsor = attrs.get('sponsor')
+        """Validate package uniqueness constraints with partial updates."""
         event = attrs.get('event')
-        
-        if sponsor and event and sponsor.event != event:
-            raise serializers.ValidationError({
-                'event': "Event must match the sponsor's event."
-            })
+
+        if not event and self.instance:
+            event = self.instance.event
+
+        tier = attrs.get('tier', getattr(self.instance, 'tier', None))
+        package_name = attrs.get('package_name', getattr(self.instance, 'package_name', None))
+
+        if event and tier is not None:
+            qs = EventSponsorPackage.objects.filter(event=event, tier=tier)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError({
+                    'tier': "A package with this tier already exists for the event.",
+                })
+
+        if event and package_name:
+            qs = EventSponsorPackage.objects.filter(event=event, package_name=package_name)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError({
+                    'package_name': "A package with this name already exists for the event.",
+                })
         
         return attrs
 
@@ -940,6 +1015,9 @@ def _resolve_location(location_type: str, location_id: int):
 def _user_is_eligible_leader_for_org(*, user, organisation) -> bool:
     if OrganisationControl.objects.filter(organisation=organisation, user=user).exists():
         return True
+    if not user:
+        raise ValueError("User must be provided for eligibility check.")
+    
     return UserOrganisationMembership.objects.filter(
         organisation=organisation,
         user=user,

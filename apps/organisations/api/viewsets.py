@@ -636,7 +636,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
     """ViewSet for EventSponsor CRUD operations."""
     
     queryset = EventSponsor.objects.select_related(
-        'organisation', 'event', 'added_by', 'reviewed_by', 'package'
+        'organisation', 'event', 'added_by', 'verified_by', 'processed_by', 'package'
     )
     permission_classes = [permissions.IsAuthenticated, IsOrganisationControllerOrEventAdmin]
     pagination_class = StandardPagination
@@ -662,7 +662,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
         tags=["Event Sponsors"],
     )
     @action(detail=True, methods=['get'])
-    def packages(self, request, pk=None):
+    def packages(self, request, sponsor_id=None):
         """Get package selected by the sponsor, if any."""
         sponsor = self.get_object()
         packages = [sponsor.package] if sponsor.package else []

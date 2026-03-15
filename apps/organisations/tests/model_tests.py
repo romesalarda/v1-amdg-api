@@ -765,7 +765,7 @@ class EventSponsorTest(TestCase):
         self.assertEqual(sponsor.organisation, self.organisation)
         self.assertEqual(sponsor.event, self.event)
         self.assertIsNotNone(sponsor.sponsor_id)
-        self.assertEqual(sponsor.approval_status, 'PENDING')
+        self.assertEqual(sponsor.verification_status, 'pending')
         self.assertEqual(str(sponsor), 'Platinum Sponsor')
 
 

@@ -21,6 +21,7 @@ from django.db.models import (
     Case, When, IntegerField, FloatField
 )
 from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, Coalesce
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from datetime import date, timedelta
 from typing import Optional, Dict, List, Any
@@ -31,6 +32,7 @@ from apps.bookings.models import Booking, BookingPackage
 from apps.attendee.models import Attendee
 from apps.products.models import Product
 from apps.payments.models import Payment, PaymentStatusChoices
+from apps.organisations.models import EventSponsor, EventSponsorPackage
 
 
 # ============================================================================
@@ -340,6 +342,13 @@ def calculate_revenue_overview(
         event_queryset = event_queryset.filter(start_datetime__date__lte=date_to)
     
     event_ids = list(event_queryset.values_list('id', flat=True))
+
+    sponsor_stats = calculate_sponsorship_package_performance(
+        event_id=event_id,
+        event_type_id=event_type_id,
+        organization_id=organization_id,
+        limit=100,
+    )
     
     # All revenue from completed payments (covers bookings, products, etc.)
     total_payment_revenue = Payment.objects.filter(
@@ -363,12 +372,14 @@ def calculate_revenue_overview(
         total=Coalesce(Sum('amount'), Decimal('0.00'))
     )['total']
     
-    total_revenue = booking_revenue + product_revenue + donation_revenue
+    sponsor_revenue = Decimal(str(sponsor_stats.get('total_completed_revenue', 0.0)))
+    total_revenue = booking_revenue + product_revenue + donation_revenue + sponsor_revenue
     
     breakdown_list = [
         {'source': 'Bookings', 'value': float(booking_revenue)},
         {'source': 'Products', 'value': float(product_revenue)},
-        {'source': 'Donations', 'value': float(donation_revenue)}
+        {'source': 'Donations', 'value': float(donation_revenue)},
+        {'source': 'Sponsorships', 'value': float(sponsor_revenue)},
     ]
     
     return {
@@ -376,9 +387,86 @@ def calculate_revenue_overview(
         'booking_revenue': float(booking_revenue),
         'product_revenue': float(product_revenue),
         'donation_revenue': float(donation_revenue),
+        'sponsor_revenue': float(sponsor_revenue),
         'breakdown': breakdown_list,
         'revenue_breakdown': breakdown_list,  # Alias for backwards compatibility
         'event_count': len(event_ids)
+    }
+
+
+def calculate_sponsorship_package_performance(
+    event_id: Optional[str] = None,
+    event_type_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """Calculate sponsorship package utilization, status and revenue metrics."""
+    event_queryset = _get_base_queryset(
+        event_id=event_id,
+        event_type_id=event_type_id,
+        organization_id=organization_id,
+        include_deleted=False,
+    )
+    event_ids = list(event_queryset.values_list('id', flat=True))
+
+    package_qs = EventSponsorPackage.objects.filter(event_id__in=event_ids).select_related('event')
+    payment_ct = ContentType.objects.get_for_model(EventSponsorPackage)
+
+    packages = []
+    total_completed_revenue = Decimal('0.00')
+    total_refunded = Decimal('0.00')
+
+    for pkg in package_qs.order_by('tier', 'package_name')[:limit]:
+        status_counts = pkg.sponsors.values('verification_status').annotate(count=Count('id'))
+        counts = {item['verification_status']: item['count'] for item in status_counts}
+
+        payment_qs = Payment.objects.filter(target_type=payment_ct, target_id=pkg.id)
+        completed_amount = payment_qs.filter(status=PaymentStatusChoices.COMPLETED).aggregate(
+            total=Coalesce(Sum('base_amount'), Decimal('0.00'))
+        )['total']
+        refunded_amount = payment_qs.filter(status=PaymentStatusChoices.REFUNDED).aggregate(
+            total=Coalesce(Sum('base_amount'), Decimal('0.00'))
+        )['total']
+
+        total_completed_revenue += completed_amount
+        total_refunded += refunded_amount
+
+        packages.append({
+            'package_id': str(pkg.package_id),
+            'package_name': pkg.package_name,
+            'event_id': str(pkg.event.event_id),
+            'event_title': pkg.event.title,
+            'tier': pkg.tier,
+            'active': pkg.active,
+            'sponsors_count': pkg.sponsors.count(),
+            'status_counts': {
+                'pending': counts.get('pending', 0),
+                'verified': counts.get('verified', 0),
+                'rejected': counts.get('rejected', 0),
+                'processed': counts.get('processed', 0),
+            },
+            'completed_revenue': float(completed_amount),
+            'refunded_revenue': float(refunded_amount),
+            'net_revenue': float(completed_amount - refunded_amount),
+        })
+
+    total_sponsors = EventSponsor.objects.filter(event_id__in=event_ids).count()
+    status_totals = EventSponsor.objects.filter(event_id__in=event_ids).values('verification_status').annotate(count=Count('id'))
+    status_summary = {item['verification_status']: item['count'] for item in status_totals}
+
+    return {
+        'packages': packages,
+        'total_packages': package_qs.count(),
+        'total_sponsors': total_sponsors,
+        'status_summary': {
+            'pending': status_summary.get('pending', 0),
+            'verified': status_summary.get('verified', 0),
+            'rejected': status_summary.get('rejected', 0),
+            'processed': status_summary.get('processed', 0),
+        },
+        'total_completed_revenue': float(total_completed_revenue),
+        'total_refunded_revenue': float(total_refunded),
+        'total_net_revenue': float(total_completed_revenue - total_refunded),
     }
 
 
@@ -1015,6 +1103,13 @@ def calculate_overview_statistics(
         average_rating = reviews.aggregate(avg=Avg('rating'))['avg'] or 0.0
     else:
         average_rating = 0.0
+
+    sponsor_stats = calculate_sponsorship_package_performance(
+        event_id=event_id,
+        event_type_id=event_type_id,
+        organization_id=organization_id,
+        limit=10,
+    )
     
     return {
         'total_events': total_events,
@@ -1027,6 +1122,15 @@ def calculate_overview_statistics(
         'average_capacity_utilization': float(average_capacity_utilization),
         'average_rating': float(average_rating),
         'total_reviews': total_reviews,
+        'sponsorship': {
+            'total_packages': sponsor_stats.get('total_packages', 0),
+            'total_sponsors': sponsor_stats.get('total_sponsors', 0),
+            'status_summary': sponsor_stats.get('status_summary', {}),
+            'total_completed_revenue': sponsor_stats.get('total_completed_revenue', 0.0),
+            'total_refunded_revenue': sponsor_stats.get('total_refunded_revenue', 0.0),
+            'total_net_revenue': sponsor_stats.get('total_net_revenue', 0.0),
+            'packages': sponsor_stats.get('packages', []),
+        },
         'status_summary': status_summary,
         'upcoming_30_days': upcoming_30_days,
         'generated_at': timezone.now().isoformat()

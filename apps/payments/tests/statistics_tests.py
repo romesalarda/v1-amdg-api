@@ -1044,6 +1044,7 @@ class OverviewStatsTests(PaymentStatisticsBaseTestCase):
         self.assertIn('discounts', result)
         self.assertIn('refunds', result)
         self.assertIn('donations', result)
+        self.assertIn('sponsors', result)
     
     def test_overview_structure(self):
         """Test that overview has correct structure."""
@@ -1065,6 +1066,10 @@ class OverviewStatsTests(PaymentStatisticsBaseTestCase):
         
         # Check donations section
         self.assertIn('total', result['donations'])
+
+        # Check sponsors section
+        self.assertIn('total_packages', result['sponsors'])
+        self.assertIn('total_payments', result['sponsors'])
     
     def test_overview_with_event_filter(self):
         """Test overview with event filter."""
@@ -1115,6 +1120,7 @@ class PaymentStatisticsAPITests(PaymentStatisticsBaseTestCase):
         self.assertEqual(response.status_code, http_status.HTTP_200_OK)
         self.assertIn('payments', response.data)
         self.assertIn('revenue', response.data)
+        self.assertIn('sponsors', response.data)
     
     def test_overview_endpoint_echarts_format(self):
         """Test overview endpoint with echarts format."""
@@ -1142,6 +1148,16 @@ class PaymentStatisticsAPITests(PaymentStatisticsBaseTestCase):
         self.assertEqual(response.status_code, http_status.HTTP_200_OK)
         self.assertIn('total_revenue', response.data)
         self.assertIn('net_revenue', response.data)
+
+    def test_sponsor_packages_endpoint(self):
+        """Test sponsor package payment status endpoint."""
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/payments/statistics/sponsor-packages/')
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        self.assertIn('total_packages', response.data)
+        self.assertIn('total_payments', response.data)
+        self.assertIn('distribution', response.data)
     
     def test_filter_metadata_in_response(self):
         """Test that filter metadata is included in responses."""

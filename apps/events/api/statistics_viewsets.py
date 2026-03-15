@@ -25,6 +25,7 @@ from apps.events.api.serializers.statistics import (
     ReviewStatisticsSerializer,
     StaffAllocationSerializer,
     BookingPackagePerformanceSerializer,
+    SponsorPackagePerformanceSerializer,
     OverviewStatisticsSerializer,
 )
 
@@ -32,7 +33,7 @@ from apps.events.api.serializers.statistics import (
 # Common OpenAPI parameters
 EVENT_ID_PARAM = OpenApiParameter(
     name='event_id',
-    type=OpenApiTypes.INT,
+    type=OpenApiTypes.STR,
     location=OpenApiParameter.QUERY,
     description='Filter by specific event ID',
     required=False
@@ -609,4 +610,28 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         data = self._add_filter_metadata(data, request)
         
         serializer = BookingPackagePerformanceSerializer(data, context={'request': request})
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary='Get sponsorship package performance',
+        description='Returns sponsorship package utilization, sponsor status counts, and sponsor-linked revenue metrics.',
+        parameters=[
+            EVENT_ID_PARAM,
+            EVENT_TYPE_PARAM,
+            ORGANIZATION_PARAM,
+            LIMIT_PARAM,
+            FORMAT_PARAM,
+        ],
+        responses={200: SponsorPackagePerformanceSerializer}
+    )
+    @action(detail=False, methods=['get'], url_path='sponsor-packages')
+    def sponsor_packages(self, request):
+        """Get sponsorship package performance."""
+        filters = self._get_common_filters(request)
+        limit = int(request.query_params.get('limit', 10))
+
+        data = statistics.calculate_sponsorship_package_performance(limit=limit, **filters)
+        data = self._add_filter_metadata(data, request)
+
+        serializer = SponsorPackagePerformanceSerializer(data, context={'request': request})
         return Response(serializer.data)

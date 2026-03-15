@@ -52,18 +52,18 @@ class IsOrganisationController(permissions.BasePermission):
     
     def has_object_permission(self, request, view, obj) -> bool:
         """Check if user has control over the organisation."""
+        print(f"Checking IsOrganisationController for user {request.user} on object {obj}")
         if not request.user or not request.user.is_authenticated:
             return False
         
         # Django superusers and staff always have access
         if request.user.is_superuser or request.user.is_staff:
             return True
-        
         # Get the organisation from the object
         organisation = self._get_organisation_from_object(obj)
         if not organisation:
             return False
-        
+                
         # Check if user has control over this organisation
         return OrganisationControl.objects.filter(
             organisation=organisation,
@@ -85,8 +85,7 @@ class IsOrganisationController(permissions.BasePermission):
             return obj.organisation
         elif isinstance(obj, Leader):
             # Leader uses generic FK, check if it points to an organisation
-            if obj.target_type and obj.target_type.model == 'organisation':
-                return obj.authority_object
+            return obj.organisation
         
         return None
 

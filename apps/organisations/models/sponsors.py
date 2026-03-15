@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 
 from apps.payments.mixins import PayableModel
@@ -13,6 +14,7 @@ class EventSponsor(RequiresVerificationModel):
     '''
     Represents an organisation sponsoring an event, with details about the sponsorship package and location.
     '''
+    sponsor_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
     organisation = models.ForeignKey('organisations.Organisation', on_delete=models.CASCADE, related_name='sponsored_events')
@@ -25,9 +27,20 @@ class EventSponsor(RequiresVerificationModel):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('event', 'organisation', 'chapter_location', 'package')
+        constraints = [
+            models.UniqueConstraint(
+                fields=('event', 'organisation', 'chapter_location'),
+                name='unique_event_sponsor_per_org_location',
+            ),
+        ]
         verbose_name = "Event Sponsor"
         verbose_name_plural = "Event Sponsors"
+
+    def clean(self):
+        if self.package and self.package.event_id != self.event_id:
+            raise ValidationError({
+                'package': "Selected package must belong to the same event as the sponsor.",
+            })
     
     def __str__(self):
         return self.name
@@ -36,6 +49,7 @@ class EventSponsorPackage(PayableModel):
     '''
     Represents a sponsorship package for an event, detailing the benefits and requirements for sponsors.
     '''
+    package_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='sponsorship_packages')
     package_name = models.CharField(max_length=200)
     package_description = models.TextField(blank=True, null=True)
@@ -46,7 +60,16 @@ class EventSponsorPackage(PayableModel):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('event', 'package_name')
+        constraints = [
+            models.UniqueConstraint(
+                fields=('event', 'package_name'),
+                name='unique_sponsor_package_name_per_event',
+            ),
+            models.UniqueConstraint(
+                fields=('event', 'tier'),
+                name='unique_sponsor_package_tier_per_event',
+            ),
+        ]
         ordering = ['tier']
         verbose_name = "Event Sponsor Package"
         verbose_name_plural = "Event Sponsor Packages"

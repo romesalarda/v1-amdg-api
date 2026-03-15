@@ -453,6 +453,27 @@ class PaymentRevenueBreakdownSerializer(BasePaymentStatisticsSerializer):
         )
 
 
+class SponsorPackagePaymentStatusSerializer(BasePaymentStatisticsSerializer):
+    """Serializer for sponsor package payment status statistics."""
+    total_packages = serializers.IntegerField()
+    total_payments = serializers.IntegerField()
+    total_amount = serializers.FloatField()
+    distribution = serializers.ListField(child=serializers.DictField())
+    packages = serializers.ListField(child=serializers.DictField())
+
+    def format_for_echarts(self, representation: Dict[str, Any], instance: Dict[str, Any]) -> Dict[str, Any]:
+        distribution = instance.get('distribution', [])
+        chart_data = [
+            {'label': item.get('status', 'UNKNOWN'), 'value': item.get('count', 0)}
+            for item in distribution
+        ]
+        return formatters.format_pie_chart(
+            data=chart_data,
+            title='Sponsor Package Payment Status',
+            subtitle=f"Total Payments: {instance.get('total_payments', 0)}"
+        )
+
+
 # ============================================================================
 # COMBINED OVERVIEW SERIALIZER
 # ============================================================================
@@ -464,6 +485,7 @@ class PaymentOverviewStatsSerializer(BasePaymentStatisticsSerializer):
     discounts = serializers.DictField()
     refunds = serializers.DictField()
     donations = serializers.DictField()
+    sponsors = serializers.DictField(required=False)
     
     def format_for_echarts(self, representation: Dict[str, Any], instance: Dict[str, Any]) -> Dict[str, Any]:
         """

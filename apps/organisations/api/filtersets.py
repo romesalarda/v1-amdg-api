@@ -529,9 +529,9 @@ class EventSponsorFilterSet(filters.FilterSet):
     )
 
 
-    chapter_location_id = filters.UUIDFilter(  
+    chapter_location_id = filters.NumberFilter(
         field_name='chapter_location__id',
-        help_text="Filter by chapter location UUID"
+        help_text="Filter by chapter location ID"
     )
     
     added_by = filters.NumberFilter(
@@ -577,7 +577,7 @@ class EventSponsorFilterSet(filters.FilterSet):
         """Filter by whether sponsorship has been processed."""
         if value:
             return queryset.filter(processed_at__isnull=False)
-        return queryset
+        return queryset.filter(processed_at__isnull=True)
 
 
 
@@ -602,6 +602,16 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
         help_text="Filter by event UUID"
     )
     
+    tier = filters.NumberFilter(
+        field_name='tier',
+        help_text="Filter by package tier"
+    )
+
+    active = filters.BooleanFilter(
+        field_name='active',
+        help_text="Filter active/inactive sponsorship packages"
+    )
+
     min_amount = filters.NumberFilter(
         field_name='base_amount',
         lookup_expr='gte',
@@ -631,7 +641,7 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
     
     class Meta:
         model = EventSponsorPackage
-        fields = ['event_id']
+        fields = ['event_id', 'tier', 'active']
     
     def filter_search(self, queryset, name, value):
         """Search in package name and description."""

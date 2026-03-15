@@ -27,6 +27,7 @@ from apps.payments.models.discounts import Discount, DiscountRule
 from apps.payments.models.refunds import RefundRequest
 from apps.payments.models.donations import Donation
 from apps.products.models.orders import Order
+from apps.organisations.models import EventSponsorPackage
 
 
 # ============================================================================
@@ -1008,6 +1009,75 @@ def calculate_revenue_breakdown(
     }
 
 
+def calculate_sponsor_package_payment_status(
+    event_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Calculate sponsor package payment status and revenue metrics."""
+    package_qs = EventSponsorPackage.objects.all().select_related('event')
+    if event_id:
+        package_qs = package_qs.filter(event__event_id=event_id)
+
+    # Payment.target_id is a CharField (GenericForeignKey), so package IDs
+    # must be compared as strings to avoid DB type mismatch errors.
+    package_ids = list(package_qs.values_list('id', flat=True))
+    package_id_strings = [str(package_id) for package_id in package_ids]
+
+    payment_ct = ContentType.objects.get_for_model(EventSponsorPackage)
+    payment_qs = Payment.objects.filter(
+        target_type=payment_ct,
+        target_id__in=package_id_strings,
+    )
+
+    distribution = []
+    total_amount = Decimal('0.00')
+    total_count = 0
+
+    status_counts = payment_qs.values('status').annotate(
+        count=Count('id'),
+        amount=Coalesce(Sum('base_amount'), Decimal('0.00')),
+    )
+    for item in status_counts:
+        amount = item['amount']
+        total_amount += amount
+        total_count += item['count']
+        distribution.append({
+            'status': item['status'],
+            'count': item['count'],
+            'amount': float(amount),
+        })
+
+    package_rows = []
+    for pkg in package_qs.order_by('tier', 'package_name'):
+        pkg_payments = payment_qs.filter(target_id=str(pkg.id))
+        completed_amount = pkg_payments.filter(status=PaymentStatusChoices.COMPLETED).aggregate(
+            total=Coalesce(Sum('base_amount'), Decimal('0.00'))
+        )['total']
+        refunded_amount = pkg_payments.filter(status=PaymentStatusChoices.REFUNDED).aggregate(
+            total=Coalesce(Sum('base_amount'), Decimal('0.00'))
+        )['total']
+
+        package_rows.append({
+            'package_id': str(pkg.package_id),
+            'package_name': pkg.package_name,
+            'event_id': str(pkg.event.event_id),
+            'event_title': pkg.event.title,
+            'tier': pkg.tier,
+            'active': pkg.active,
+            'payment_count': pkg_payments.count(),
+            'completed_revenue': float(completed_amount),
+            'refunded_revenue': float(refunded_amount),
+            'net_revenue': float(completed_amount - refunded_amount),
+        })
+
+    return {
+        'total_packages': package_qs.count(),
+        'total_payments': total_count,
+        'total_amount': float(total_amount),
+        'distribution': distribution,
+        'packages': package_rows,
+    }
+
+
 # ============================================================================
 # COMBINED OVERVIEW
 # ============================================================================
@@ -1040,6 +1110,8 @@ def calculate_overview_stats(
     
     # Donation summary
     donation_stats = calculate_donation_stats(event_id)
+
+    sponsor_package_stats = calculate_sponsor_package_payment_status(event_id)
     
     return {
         'payments': {
@@ -1067,5 +1139,12 @@ def calculate_overview_stats(
             'total': donation_stats['total_donations'],
             'total_amount': donation_stats['total_amount'],
             'average_amount': donation_stats['average_amount']
+        },
+        'sponsors': {
+            'total_packages': sponsor_package_stats['total_packages'],
+            'total_payments': sponsor_package_stats['total_payments'],
+            'total_amount': sponsor_package_stats['total_amount'],
+            'distribution': sponsor_package_stats['distribution'],
+            'packages': sponsor_package_stats['packages'],
         }
     }

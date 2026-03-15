@@ -51,6 +51,7 @@ from apps.payments.api.serializers.statistics import (
     PaymentRevenueTrendsSerializer,
     RevenueByMethodSerializer,
     PaymentRevenueBreakdownSerializer,
+    SponsorPackagePaymentStatusSerializer,
     PaymentOverviewStatsSerializer,
 )
 
@@ -290,6 +291,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
             'revenue-trends': 'Revenue trends over time',
             'revenue-by-method': 'Revenue breakdown by payment method',
             'revenue-breakdown': 'Detailed revenue breakdown with refunds',
+            'sponsor-packages': 'Sponsor package payment status and revenue metrics',
         }
         
         return Response({
@@ -791,4 +793,25 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         self._add_filter_metadata(data, request)
         
         serializer = PaymentRevenueBreakdownSerializer(data, context={'request': request})
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Sponsor package payment status",
+        description="Payment status distribution and revenue totals for sponsor packages.",
+        parameters=[EVENT_ID_PARAM, FORMAT_PARAM],
+        responses={200: SponsorPackagePaymentStatusSerializer},
+        tags=["Payment Statistics"],
+    )
+    @action(detail=False, methods=['get'], url_path='sponsor-packages')
+    def sponsor_packages(self, request):
+        """Get sponsor package payment status metrics."""
+        self._check_global_access(request)
+
+        filters = self._get_common_filters(request)
+        data = statistics.calculate_sponsor_package_payment_status(
+            event_id=filters.get('event_id')
+        )
+        self._add_filter_metadata(data, request)
+
+        serializer = SponsorPackagePaymentStatusSerializer(data, context={'request': request})
         return Response(serializer.data)
