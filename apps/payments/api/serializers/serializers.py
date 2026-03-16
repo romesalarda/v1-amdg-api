@@ -275,6 +275,8 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         ('booking', 'Booking'),
         ('order', 'Order'),
         ('ticket', 'Ticket'),
+        ('donation', 'Donation'),
+        ('sponsorship', 'Sponsorship'),
         ('none', 'None'),
     )
 
@@ -282,6 +284,8 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         'booking': ('apps.bookings.models', 'Booking', None),
         'order': ('apps.products.models', 'Order', 'order_id'),
         'ticket': ('apps.bookings.models', 'Ticket', 'ticket_id'),
+        'donation': ('apps.payments.models', 'Donation', 'donation_id'),
+        'sponsorship': ('apps.organisations.models', 'Sponsorship', 'sponsor_id'),
     }
 
     base_amount = MoneyField(max_digits=10, decimal_places=2)

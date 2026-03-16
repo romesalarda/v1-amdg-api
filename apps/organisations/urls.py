@@ -22,6 +22,7 @@ from apps.organisations.api.viewsets import (
     LeaderViewSet,
     LocationLeaderInviteViewSet,
 )
+from apps.organisations.api.statistics_viewsets import OrganisationStatisticsViewSet
 
 app_name = 'organisations'
 
@@ -40,6 +41,7 @@ router.register(r'sponsors', EventSponsorViewSet, basename='eventsponsor')
 router.register(r'sponsor-packages', EventSponsorPackageViewSet, basename='sponsorpackage')
 router.register(r'leaders', LeaderViewSet, basename='leader')
 router.register(r'leader-invites', LocationLeaderInviteViewSet, basename='locationleaderinvite')
+router.register(r'statistics', OrganisationStatisticsViewSet, basename='organisationstatistics')
 
 urlpatterns = [
     path('organisations/', include(router.urls)),

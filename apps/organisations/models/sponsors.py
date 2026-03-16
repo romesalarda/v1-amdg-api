@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 
 from apps.payments.mixins import PayableModel
 from apps.common.models import RequiresVerificationModel
-from apps.locations.models import ChapterLocation
+from apps.locations.models import ChapterLocation, AreaLocation
 
 import uuid
 
@@ -76,3 +76,32 @@ class EventSponsorPackage(PayableModel):
     
     def __str__(self):
         return f"{self.package_name} - {self.event.title}"
+    
+class EventSponsorInvite(models.Model):
+    '''
+    Represents an invitation sent to a potential sponsor for an event, allowing them to accept or decline the sponsorship opportunity.
+    '''
+    invite_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='sponsor_invites')
+    email = models.EmailField()
+    token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    organisation = models.ForeignKey('organisations.Organisation', on_delete=models.SET_NULL, related_name='sponsor_invites', null=True, blank=True)
+    chapter_location = models.ForeignKey(ChapterLocation, on_delete=models.SET_NULL, null=True, related_name='sponsor_invites', blank=True)
+    accepted = models.BooleanField(default=False)
+    declined = models.BooleanField(default=False)
+    
+    sent_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=('event', 'email'),
+                name='unique_sponsor_invite_per_event_email',
+            ),
+        ]
+        verbose_name = "Event Sponsor Invite"
+        verbose_name_plural = "Event Sponsor Invites"
+
+    def __str__(self):
+        return f"Invite for {self.email} to sponsor {self.event.title}"

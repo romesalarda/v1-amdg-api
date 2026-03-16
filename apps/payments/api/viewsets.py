@@ -182,8 +182,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
         #     from rest_framework.exceptions import PermissionDenied
         #     raise PermissionDenied("You can only create payments for yourself.")
 
-        print(serializer.validated_data)
-
         self.check_permissions(self.request)
         
         serializer.save()
