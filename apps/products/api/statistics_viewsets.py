@@ -27,6 +27,7 @@ from django.utils import timezone
 from datetime import datetime
 
 from apps.products import statistics
+from apps.products.models import Product
 from apps.products.api.serializers.statistics import (
     ProductOverviewSerializer,
     CategoryDistributionSerializer,
@@ -202,7 +203,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
 
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ProductOverviewStatisticsSerializer  # Default serializer
-    queryset = None  # Statistics viewset doesn't use queryset
+    queryset = Product.objects.none()  # Schema generation model hint
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""

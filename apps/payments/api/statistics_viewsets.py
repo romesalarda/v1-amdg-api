@@ -33,6 +33,7 @@ from datetime import datetime, date
 import uuid
 
 from apps.payments import statistics
+from apps.payments.models import Payment
 from apps.payments.api.serializers.statistics import (
     PaymentStatusDistributionSerializer,
     PaymentMethodDistributionSerializer,
@@ -160,7 +161,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
     
     permission_classes = [IsAuthenticated]
     serializer_class = PaymentOverviewStatsSerializer  # Default serializer
-    queryset = None  # Statistics viewset doesn't use queryset
+    queryset = Payment.objects.none()  # Schema generation model hint
     
     def _check_global_access(self, request):
         """

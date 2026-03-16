@@ -853,7 +853,7 @@ class EventSponsorPackageListSerializer(serializers.ModelSerializer):
         model = EventSponsorPackage
         fields = (
             'id', 'package_id', 'event', 'event_name',
-            'package_name', 'package_description', 'base_amount',
+            'package_name', 'package_description', 'base_amount', 'base_amount_currency',
             'percentage_modifier', 'modified_amount', 'active', 'tier',
             'has_payment', 'sponsors_count',
             'added_at', 'updated_at', '_links'

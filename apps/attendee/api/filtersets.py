@@ -22,6 +22,7 @@ from apps.attendee.models import (
 from apps.common.models import VerificationStatus
 from apps.events.models import EventQuestion, EventQuestionAnswer, EventQuestionOption, EventQuestionTypeChoices
 from apps.products.models import Order, OrderItem, OrderStatusChoices, ProductVariant
+from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
 
 
 PAYMENT_TARGET_CHOICES = (
@@ -136,9 +137,17 @@ class AttendeeFilterSet(django_filters.FilterSet):
     payment_id = django_filters.UUIDFilter(method='filter_payment_id', label='Filter by payment UUID')
     payment_reference = django_filters.CharFilter(method='filter_payment_reference', label='Filter by payment reference')
     bank_transfer_reference = django_filters.CharFilter(method='filter_bank_transfer_reference', label='Filter by bank transfer reference')
-    payment_status = django_filters.ChoiceFilter(method='filter_payment_status', choices=[], label='Filter by payment status')
+    payment_status = django_filters.ChoiceFilter(
+        method='filter_payment_status',
+        choices=PaymentStatusChoices.choices,
+        label='Filter by payment status'
+    )
     payment_target = django_filters.ChoiceFilter(method='filter_payment_target', choices=PAYMENT_TARGET_CHOICES, label='Payment target type')
-    payment_method_type = django_filters.ChoiceFilter(method='filter_payment_method_type', choices=[], label='Filter by payment method type')
+    payment_method_type = django_filters.ChoiceFilter(
+        method='filter_payment_method_type',
+        choices=PaymentMethodTypeChoices.choices,
+        label='Filter by payment method type'
+    )
     payment_method_title = django_filters.CharFilter(method='filter_payment_method_title', label='Filter by payment method title')
 
     # Refund filters
@@ -162,21 +171,6 @@ class AttendeeFilterSet(django_filters.FilterSet):
             'relationship_to_user': ['exact'],
             'gender': ['exact', 'icontains'],
         }
-
-    @property
-    def payment_status_choices(self):
-        from apps.payments.models import PaymentStatusChoices
-        return PaymentStatusChoices.choices
-
-    @property
-    def payment_method_type_choices(self):
-        from apps.payments.models import PaymentMethodTypeChoices
-        return PaymentMethodTypeChoices.choices
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.filters['payment_status'].extra['choices'] = self.payment_status_choices
-        self.filters['payment_method_type'].extra['choices'] = self.payment_method_type_choices
 
     def _booking_payment_attendee_ids(self, payment_queryset):
         """Return attendee ids whose booking is targeted by the supplied payments."""

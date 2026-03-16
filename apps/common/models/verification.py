@@ -74,17 +74,17 @@ class RequiresVerificationModel(models.Model):
         self.save()
         
     @property
-    def is_verified(self):
+    def is_verified(self) -> bool:
         return self.verification_status == VerificationStatus.VERIFIED
     
     @property
-    def is_rejected(self):
+    def is_rejected(self) -> bool:
         return self.verification_status == VerificationStatus.REJECTED
     
     @property
-    def is_pending(self):
+    def is_pending(self) -> bool:
         return self.verification_status == VerificationStatus.PENDING
     
     @property
-    def is_processed(self):
+    def is_processed(self) -> bool:
         return self.verification_status == VerificationStatus.PROCESSED

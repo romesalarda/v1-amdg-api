@@ -25,7 +25,7 @@ from apps.events.models import (
     EventStaff, EventStaffAvailability, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionOption,
-    EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue
+    EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue, EventRoleCategoryChoices
 )
 from apps.common.models import AvailabilityWindow, Resource
 from apps.common.api.serializers import (
@@ -366,6 +366,8 @@ class EventViewSet(viewsets.ModelViewSet):
         description="List sponsors for an event or create a sponsor for the event.",
         tags=["Events", "Event Sponsors"],
     )
+    @extend_schema(methods=['get'], operation_id='event_list_sponsors_list')
+    @extend_schema(methods=['post'], operation_id='event_list_sponsors_create')
     @action(detail=True, methods=['get', 'post'], url_path='sponsors', permission_classes=[permissions.IsAuthenticated])
     def sponsors(self, request, event_id=None):
         event = self.get_object()
@@ -418,8 +420,14 @@ class EventViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Event Sponsor Detail",
         description="Retrieve, update, or delete a sponsor within an event context.",
+        parameters=[
+            OpenApiParameter(name='sponsor_id', type=OpenApiTypes.UUID, location=OpenApiParameter.PATH, required=True),
+        ],
         tags=["Events", "Event Sponsors"],
     )
+    @extend_schema(methods=['get'], operation_id='event_list_sponsors_retrieve')
+    @extend_schema(methods=['patch'], operation_id='event_list_sponsors_partial_update')
+    @extend_schema(methods=['delete'], operation_id='event_list_sponsors_destroy')
     @action(
         detail=True,
         methods=['get', 'patch', 'delete'],
@@ -472,6 +480,10 @@ class EventViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Approve Event Sponsor",
         description="Mark a sponsor as verified. Event admin permissions required.",
+        parameters=[
+            OpenApiParameter(name='sponsor_id', type=OpenApiTypes.UUID, location=OpenApiParameter.PATH, required=True),
+        ],
+        operation_id='event_list_sponsors_approve',
         tags=["Events", "Event Sponsors"],
     )
     @action(
@@ -500,6 +512,10 @@ class EventViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Reject Event Sponsor",
         description="Mark a sponsor as rejected. Event admin permissions required.",
+        parameters=[
+            OpenApiParameter(name='sponsor_id', type=OpenApiTypes.UUID, location=OpenApiParameter.PATH, required=True),
+        ],
+        operation_id='event_list_sponsors_reject',
         tags=["Events", "Event Sponsors"],
     )
     @action(
@@ -530,6 +546,8 @@ class EventViewSet(viewsets.ModelViewSet):
         description="List or create sponsor packages for an event.",
         tags=["Events", "Sponsorship Packages"],
     )
+    @extend_schema(methods=['get'], operation_id='event_list_sponsorship_packages_list')
+    @extend_schema(methods=['post'], operation_id='event_list_sponsorship_packages_create')
     @action(detail=True, methods=['get', 'post'], url_path='sponsorship-packages', permission_classes=[permissions.IsAuthenticated])
     def sponsorship_packages(self, request, event_id=None):
         event = self.get_object()
@@ -571,8 +589,14 @@ class EventViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Event Sponsorship Package Detail",
         description="Retrieve, update, or delete a sponsorship package for an event.",
+        parameters=[
+            OpenApiParameter(name='package_id', type=OpenApiTypes.UUID, location=OpenApiParameter.PATH, required=True),
+        ],
         tags=["Events", "Sponsorship Packages"],
     )
+    @extend_schema(methods=['get'], operation_id='event_list_sponsorship_packages_retrieve')
+    @extend_schema(methods=['patch'], operation_id='event_list_sponsorship_packages_partial_update')
+    @extend_schema(methods=['delete'], operation_id='event_list_sponsorship_packages_destroy')
     @action(
         detail=True,
         methods=['get', 'patch', 'delete'],

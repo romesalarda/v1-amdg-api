@@ -26,6 +26,7 @@ from django.utils import timezone
 from datetime import datetime, date
 
 from apps.attendee import statistics
+from apps.attendee.models import Attendee
 from apps.attendee.api.serializers.statistics import (
     AgeDistributionSerializer,
     GenderDistributionSerializer,
@@ -142,7 +143,7 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
     
     permission_classes = []
     serializer_class = AttendeeOverviewStatsSerializer  # Default serializer
-    queryset = None  # Statistics viewset doesn't use queryset
+    queryset = Attendee.objects.none()  # Schema generation model hint
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""

@@ -26,6 +26,7 @@ from django.utils import timezone
 from datetime import datetime, date
 
 from apps.bookings.services import statistics
+from apps.bookings.models import Booking
 from apps.bookings.api.serializers.statistics import (
     BookingOverviewSerializer,
     BookingStatusDistributionSerializer,
@@ -172,7 +173,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
     
     permission_classes = [IsAuthenticated]
     serializer_class = BookingStatisticsOverviewSerializer  # Default serializer
-    queryset = None  # Statistics viewset doesn't use queryset
+    queryset = Booking.objects.none()  # Schema generation model hint
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
