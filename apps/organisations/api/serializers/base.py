@@ -34,7 +34,7 @@ from apps.organisations.models import (
     Organisation, OrganisationContact, OrganisationControl,
     UserOrganisationMembership, OrganisationAcceptanceCode, OrganisationInvite,
     InvolvedEventOrganisation, InvolvedOrganisationRoleChoices,
-    EventSponsor, EventSponsorPackage,
+    EventSponsor, EventSponsorPackage, EventSponsorInvite,
     Leader, LeaderLocationType, LocationLeaderInvite
 )
 from apps.locations.models import (
@@ -835,6 +835,26 @@ class EventSponsorCreateUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class EventSponsorCheckoutSerializer(serializers.Serializer):
+    """Payload serializer for sponsor checkout action."""
+
+    event_id = serializers.UUIDField(required=False)
+    package_id = serializers.UUIDField(required=True)
+    payment_method_id = serializers.IntegerField(required=True)
+    organisation_id = serializers.IntegerField(required=False)
+    invite_token = serializers.UUIDField(required=False)
+    chapter_location = serializers.IntegerField(required=False)
+    name = serializers.CharField(required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs.get('invite_token') and not attrs.get('organisation_id'):
+            raise serializers.ValidationError({
+                'organisation_id': 'organisation_id is required when invite_token is not provided.'
+            })
+        return attrs
+
+
 # ============================================================================
 # EVENT SPONSOR PACKAGE SERIALIZERS
 # ============================================================================
@@ -989,6 +1009,84 @@ class EventSponsorPackageCreateUpdateSerializer(serializers.ModelSerializer):
                     'package_name': "A package with this name already exists for the event.",
                 })
         
+        return attrs
+
+
+class EventSponsorInviteListSerializer(serializers.ModelSerializer):
+    """List serializer for EventSponsorInvite."""
+
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.title', read_only=True)
+    organisation_name = serializers.CharField(source='organisation.title', read_only=True, allow_null=True)
+    is_valid = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EventSponsorInvite
+        fields = (
+            'invite_id', 'event', 'event_name', 'email', 'token',
+            'organisation', 'organisation_name', 'chapter_location',
+            'accepted', 'declined', 'is_valid',
+            'sent_at', 'responded_at', '_links'
+        )
+        read_only_fields = ('invite_id', 'token', 'accepted', 'declined', 'sent_at', 'responded_at')
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_is_valid(self, obj) -> bool:
+        return obj.is_valid
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+            'organisation': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+
+        links = {
+            'self': request.build_absolute_uri(f"/api/organisations/sponsor-invites/{obj.invite_id}/"),
+            'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
+        }
+
+        if obj.organisation_id:
+            links['organisation'] = request.build_absolute_uri(
+                f"/api/organisations/list/{obj.organisation_id}/"
+            )
+
+        return links
+
+
+class EventSponsorInviteDetailSerializer(EventSponsorInviteListSerializer):
+    """Detail serializer for EventSponsorInvite."""
+
+    class Meta(EventSponsorInviteListSerializer.Meta):
+        fields = EventSponsorInviteListSerializer.Meta.fields
+
+
+class EventSponsorInviteCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/update serializer for EventSponsorInvite."""
+
+    class Meta:
+        model = EventSponsorInvite
+        fields = ('event', 'email', 'organisation', 'chapter_location', 'accepted', 'declined')
+        read_only_fields = ('accepted', 'declined')
+
+    def validate(self, attrs):
+        accepted = attrs.get('accepted', getattr(self.instance, 'accepted', False))
+        declined = attrs.get('declined', getattr(self.instance, 'declined', False))
+        if accepted and declined:
+            raise serializers.ValidationError("Invite cannot be both accepted and declined.")
+
+        event = attrs.get('event', getattr(self.instance, 'event', None))
+        organisation = attrs.get('organisation', getattr(self.instance, 'organisation', None))
+        if organisation and event and organisation.involvements.filter(event=event).exists() is False:
+            # A sponsor can still be invited even without event involvement; keep this permissive.
+            pass
+
         return attrs
 
 

@@ -24,10 +24,12 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import transaction
 from django.db.models import Q, Prefetch
 from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -40,9 +42,11 @@ from typing import Any
 from apps.organisations.models import (
     Organisation, OrganisationContact, OrganisationControl,
     UserOrganisationMembership, OrganisationAcceptanceCode, OrganisationInvite,
-    InvolvedEventOrganisation, EventSponsor, EventSponsorPackage,
+    InvolvedEventOrganisation, EventSponsor, EventSponsorPackage, EventSponsorInvite,
     Leader, LeaderLocationType, LocationLeaderInvite
 )
+from apps.events.models import Event
+from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
 from .serializers import (
     OrganisationListSerializer, OrganisationDetailSerializer, OrganisationCreateUpdateSerializer,
     OrganisationContactSerializer, OrganisationContactCreateUpdateSerializer,
@@ -53,6 +57,8 @@ from .serializers import (
     InvolvedEventOrganisationSerializer, InvolvedEventOrganisationCreateUpdateSerializer,
     EventSponsorListSerializer, EventSponsorDetailSerializer, EventSponsorCreateUpdateSerializer,
     EventSponsorPackageListSerializer, EventSponsorPackageDetailSerializer, EventSponsorPackageCreateUpdateSerializer,
+    EventSponsorInviteListSerializer, EventSponsorInviteDetailSerializer, EventSponsorInviteCreateUpdateSerializer,
+    EventSponsorCheckoutSerializer,
     LeaderListSerializer, LeaderDetailSerializer, LeaderCreateUpdateSerializer,
     LocationLeaderInviteListSerializer, LocationLeaderInviteDetailSerializer, LocationLeaderInviteCreateUpdateSerializer
 )
@@ -60,6 +66,7 @@ from .filtersets import (
     OrganisationFilterSet, OrganisationContactFilterSet, OrganisationControlFilterSet,
     UserOrganisationMembershipFilterSet, OrganisationAcceptanceCodeFilterSet, OrganisationInviteFilterSet,
     InvolvedEventOrganisationFilterSet, EventSponsorFilterSet, EventSponsorPackageFilterSet,
+    EventSponsorInviteFilterSet,
     LeaderFilterSet, LocationLeaderInviteFilterSet
 )
 from .permissions import (
@@ -671,6 +678,181 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
         )
         return Response(serializer.data)
 
+    @extend_schema(
+        summary="Sponsor checkout",
+        description=(
+            "Create a provisional sponsor commitment and initialize payment. "
+            "Supports direct authenticated controller flow and invite-token assisted flow."
+        ),
+        request=EventSponsorCheckoutSerializer,
+        tags=["Event Sponsors"],
+    )
+    @action(detail=False, methods=['post'], url_path='checkout', permission_classes=[permissions.IsAuthenticated])
+    def checkout(self, request):
+        serializer = EventSponsorCheckoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        invite = None
+        if data.get('invite_token'):
+            try:
+                invite = EventSponsorInvite.objects.select_related(
+                    'event', 'organisation', 'chapter_location'
+                ).get(token=data['invite_token'])
+            except EventSponsorInvite.DoesNotExist:
+                return Response({'error': 'Invalid invite token.'}, status=status.HTTP_404_NOT_FOUND)
+
+            if not invite.is_valid:
+                return Response({'error': 'Invite is no longer valid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        event = None
+        if invite:
+            event = invite.event
+            payload_event_id = data.get('event_id')
+            if payload_event_id and str(payload_event_id) != str(event.event_id):
+                return Response({'event_id': ['event_id does not match invite token event.']}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            event_id = data.get('event_id')
+            if not event_id:
+                return Response({'event_id': ['event_id is required when invite_token is not provided.']}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                event = Event.objects.get(event_id=event_id)
+            except Event.DoesNotExist:
+                return Response({'event_id': ['Event not found.']}, status=status.HTTP_404_NOT_FOUND)
+
+        settings_obj = getattr(event, 'settings', None)
+        if settings_obj and not settings_obj.accepting_sponsorships_enabled:
+            return Response({'error': 'Sponsorships are not enabled for this event.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            package = EventSponsorPackage.objects.get(package_id=data['package_id'])
+        except EventSponsorPackage.DoesNotExist:
+            return Response({'package_id': ['Package not found.']}, status=status.HTTP_404_NOT_FOUND)
+
+        if package.event_id != event.id:
+            return Response({'package_id': ['Selected package does not belong to the selected event.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not package.active:
+            return Response({'package_id': ['Selected package is not active.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payment_method = PaymentMethod.objects.get(pk=data['payment_method_id'])
+        except PaymentMethod.DoesNotExist:
+            return Response({'payment_method_id': ['Payment method not found.']}, status=status.HTTP_404_NOT_FOUND)
+
+        if payment_method.event_id != event.id:
+            return Response({'payment_method_id': ['Payment method does not belong to the selected event.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not payment_method.is_active:
+            return Response({'payment_method_id': ['Payment method is not active.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        organisation = None
+        if invite and invite.organisation_id:
+            organisation = invite.organisation
+        elif data.get('organisation_id'):
+            try:
+                organisation = Organisation.objects.get(pk=data['organisation_id'])
+            except Organisation.DoesNotExist:
+                return Response({'organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
+
+        if organisation is None:
+            return Response({'organisation_id': ['Unable to resolve organisation for this checkout.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        is_org_controller = request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
+            organisation=organisation,
+            user=request.user,
+        ).exists()
+        if not is_org_controller:
+            return Response({'error': 'You must control this organisation to checkout sponsorship.'}, status=status.HTTP_403_FORBIDDEN)
+
+        chapter_location = invite.chapter_location if invite and invite.chapter_location_id else None
+        if data.get('chapter_location'):
+            from apps.locations.models import ChapterLocation
+            try:
+                chapter_location = ChapterLocation.objects.get(pk=data['chapter_location'])
+            except ChapterLocation.DoesNotExist:
+                return Response({'chapter_location': ['Chapter location not found.']}, status=status.HTTP_404_NOT_FOUND)
+
+        if EventSponsor.objects.filter(
+            event=event,
+            organisation=organisation,
+            chapter_location=chapter_location,
+        ).exists():
+            return Response({'error': 'This organisation is already sponsoring the event for this location.'}, status=status.HTTP_409_CONFLICT)
+
+        sponsor_name = (data.get('name') or organisation.title).strip()
+        if not sponsor_name:
+            return Response({'name': ['Sponsor name cannot be empty.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            sponsor = EventSponsor.objects.create(
+                name=sponsor_name,
+                description=data.get('description', ''),
+                organisation=organisation,
+                event=event,
+                package=package,
+                chapter_location=chapter_location,
+                added_by=request.user,
+            )
+
+            payment = Payment.objects.create(
+                user=request.user,
+                event=event,
+                method=payment_method,
+                base_amount=package.modified_amount,
+                description=f"Sponsorship payment for {event.title} ({package.package_name})",
+                target_type=ContentType.objects.get_for_model(EventSponsor),
+                target_id=str(sponsor.pk),
+                status=PaymentStatusChoices.DRAFTING,
+            )
+            payment.transition_to(PaymentStatusChoices.PENDING)
+
+            response_data = {
+                'sponsor_id': str(sponsor.sponsor_id),
+                'payment_id': str(payment.payment_id),
+                'payment_reference': payment.payment_reference,
+                'payment_status': payment.status,
+                'payment_method_type': payment_method.method_type,
+            }
+
+            if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
+                from apps.payments.services.stripe.payment_intents import PaymentIntentService
+                from apps.payments.services.stripe.client import StripeClient
+                from apps.payments.services.stripe.exceptions import StripeServiceError
+
+                try:
+                    payment_intent = PaymentIntentService.create(
+                        amount=payment.base_amount,
+                        currency=payment.base_amount.currency.code,
+                        payment_reference=payment.payment_reference,
+                        metadata=payment.prepare_stripe_metadata(),
+                        customer_email=payment.user.email,
+                        customer_id=payment.stripe_customer_id,
+                        description=f"Sponsorship payment for {event.title}",
+                    )
+                    payment.stripe_payment_intent = payment_intent.id
+                    payment.save(update_fields=['stripe_payment_intent', 'updated_at'])
+                    response_data.update({
+                        'client_secret': payment_intent.client_secret,
+                        'payment_intent_id': payment_intent.id,
+                        'publishable_key': StripeClient.get_publishable_key(),
+                    })
+                except StripeServiceError as exc:
+                    raise DjangoValidationError(f"Unable to initialize Stripe payment: {exc.user_message}")
+            elif payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+                response_data.update({
+                    'bank_transfer_reference': payment.bank_transfer_reference,
+                    'payment_instructions': payment_method.provided_details or {},
+                })
+
+            if invite:
+                invite.accepted = True
+                invite.declined = False
+                invite.responded_at = timezone.now()
+                invite.save(update_fields=['accepted', 'declined', 'responded_at'])
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
+
 
 # ============================================================================
 # EVENT SPONSOR PACKAGE VIEWSETS
@@ -730,6 +912,89 @@ class EventSponsorPackageViewSet(viewsets.ModelViewSet):
         elif self.action in ['create', 'update', 'partial_update']:
             return EventSponsorPackageCreateUpdateSerializer
         return EventSponsorPackageDetailSerializer
+
+
+@extend_schema_view(
+    list=extend_schema(summary="List sponsor invites", tags=["Event Sponsor Invites"]),
+    retrieve=extend_schema(summary="Retrieve sponsor invite", tags=["Event Sponsor Invites"]),
+    create=extend_schema(summary="Create sponsor invite", tags=["Event Sponsor Invites"]),
+    update=extend_schema(summary="Update sponsor invite", tags=["Event Sponsor Invites"]),
+    partial_update=extend_schema(summary="Partially update sponsor invite", tags=["Event Sponsor Invites"]),
+    destroy=extend_schema(summary="Delete sponsor invite", tags=["Event Sponsor Invites"]),
+)
+class EventSponsorInviteViewSet(viewsets.ModelViewSet):
+    """ViewSet for sponsor invitation lifecycle."""
+
+    queryset = EventSponsorInvite.objects.select_related('event', 'organisation', 'chapter_location')
+    permission_classes = [permissions.IsAuthenticated, IsOrganisationControllerOrEventAdmin]
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = EventSponsorInviteFilterSet
+    search_fields = ['email', 'event__title', 'organisation__title']
+    ordering_fields = ['sent_at', 'responded_at']
+    ordering = ['-sent_at']
+    lookup_field = 'invite_id'
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return EventSponsorInviteListSerializer
+        if self.action in ['create', 'update', 'partial_update']:
+            return EventSponsorInviteCreateUpdateSerializer
+        return EventSponsorInviteDetailSerializer
+
+    @extend_schema(
+        summary="Accept sponsor invite by token",
+        request={'application/json': {'type': 'object', 'properties': {'token': {'type': 'string', 'format': 'uuid'}}, 'required': ['token']}},
+        tags=["Event Sponsor Invites"],
+    )
+    @action(detail=False, methods=['post'], url_path='accept-by-token', permission_classes=[permissions.AllowAny])
+    def accept_by_token(self, request):
+        token = request.data.get('token')
+        if not token:
+            return Response({'error': 'token is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            invite = EventSponsorInvite.objects.get(token=token)
+        except EventSponsorInvite.DoesNotExist:
+            return Response({'error': 'Invite not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not invite.is_valid:
+            return Response({'error': 'Invite is no longer valid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invite.accepted = True
+        invite.declined = False
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=['accepted', 'declined', 'responded_at'])
+
+        serializer = EventSponsorInviteDetailSerializer(invite, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Decline sponsor invite by token",
+        request={'application/json': {'type': 'object', 'properties': {'token': {'type': 'string', 'format': 'uuid'}}, 'required': ['token']}},
+        tags=["Event Sponsor Invites"],
+    )
+    @action(detail=False, methods=['post'], url_path='decline-by-token', permission_classes=[permissions.AllowAny])
+    def decline_by_token(self, request):
+        token = request.data.get('token')
+        if not token:
+            return Response({'error': 'token is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            invite = EventSponsorInvite.objects.get(token=token)
+        except EventSponsorInvite.DoesNotExist:
+            return Response({'error': 'Invite not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not invite.is_valid:
+            return Response({'error': 'Invite is no longer valid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invite.declined = True
+        invite.accepted = False
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=['accepted', 'declined', 'responded_at'])
+
+        serializer = EventSponsorInviteDetailSerializer(invite, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # ============================================================================

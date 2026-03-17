@@ -337,6 +337,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         from apps.bookings.services import TicketCreatorService
         from apps.payments.models import PaymentMethodTypeChoices
         from apps.bookings.models import Booking
+        from apps.organisations.models import EventSponsor
         from apps.products.models import Order, OrderStatusChoices
         from apps.payments.models import Donation
         import logging
@@ -451,6 +452,18 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 response_data['message'] = (
                     f'Bank transfer verified. Payment completed for donation {target.tracking_reference}. '
                     f'Donation still requires verification via verify_donation endpoint.'
+                )
+
+            elif isinstance(target, EventSponsor):
+                if not target.is_verified:
+                    target.mark_verified(verifier=request.user)
+                if not target.is_processed:
+                    target.mark_processed(processor=request.user)
+
+                response_data['sponsor_id'] = str(target.sponsor_id)
+                response_data['sponsor_verification_status'] = target.verification_status
+                response_data['message'] = (
+                    f'Bank transfer verified. Payment completed and sponsor {target.name} is now official.'
                 )
             
             else:

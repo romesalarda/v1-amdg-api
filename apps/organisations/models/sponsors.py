@@ -1,6 +1,7 @@
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from apps.payments.mixins import PayableModel
 from apps.common.models import RequiresVerificationModel
@@ -102,6 +103,39 @@ class EventSponsorInvite(models.Model):
         ]
         verbose_name = "Event Sponsor Invite"
         verbose_name_plural = "Event Sponsor Invites"
+
+    def clean(self):
+        if self.accepted and self.declined:
+            raise ValidationError("Invite cannot be both accepted and declined.")
+
+        if self.organisation and self.organisation_id and self.event_id:
+            # Keep the invite scoped to an organisation that is related to the same event.
+            if not (
+                self.organisation.involvements.filter(event_id=self.event_id).exists()
+                or self.organisation.sponsored_events.filter(event_id=self.event_id).exists()
+            ):
+                # Soft rule: allow new prospective organisations with no event links yet.
+                pass
+
+    @property
+    def is_valid(self):
+        return not self.accepted and not self.declined
+
+    def accept(self):
+        if not self.is_valid:
+            raise ValidationError("Invite is no longer valid.")
+        self.accepted = True
+        self.declined = False
+        self.responded_at = timezone.now()
+        self.save(update_fields=['accepted', 'declined', 'responded_at'])
+
+    def decline(self):
+        if not self.is_valid:
+            raise ValidationError("Invite is no longer valid.")
+        self.declined = True
+        self.accepted = False
+        self.responded_at = timezone.now()
+        self.save(update_fields=['accepted', 'declined', 'responded_at'])
 
     def __str__(self):
         return f"Invite for {self.email} to sponsor {self.event.title}"

@@ -234,16 +234,45 @@ class EventViewSet(viewsets.ModelViewSet):
         queryset = Event.objects.select_related(
             'event_type', 'organisation', 'created_by'
         ).prefetch_related('settings')
-        
-        if not self.request.user.is_staff: # TODO misleading
+      
+        # # return events that the user is involved in
+        # if self.request.user.is_authenticated:
+        #     queryset = queryset.filter(
+        #         Q(created_by=self.request.user) |
+        #         Q(staff_members__user=self.request.user)
+        #     ).distinct()
+        # else:
+        #     print(queryset)
+        #     queryset = queryset.filter(status__in=[
+        #         EventStatusChoices.PUBLISHED,
+        #         EventStatusChoices.OPEN,
+        #         EventStatusChoices.POSTPONED,
+        #         EventStatusChoices.IN_PROGRESS,
+        #         EventStatusChoices.COMPLETED
+        #     ])
+
+        # users that are involved in events should be able to see there own events, otherwise, show only public facing statuses to non staff users
+        if self.request.user.is_authenticated and not self.request.user.is_staff:
+            queryset = queryset.filter(
+                Q(created_by=self.request.user) |
+                Q(staff_members__user=self.request.user) |
+                Q(status__in=[
+                    EventStatusChoices.PUBLISHED,
+                    EventStatusChoices.OPEN,
+                    EventStatusChoices.POSTPONED,
+                    EventStatusChoices.IN_PROGRESS,
+                    EventStatusChoices.COMPLETED
+                ])
+            ).distinct()
+        elif not self.request.user.is_authenticated:
             queryset = queryset.filter(status__in=[
-                EventStatusChoices.DRAFTING,
                 EventStatusChoices.PUBLISHED,
                 EventStatusChoices.OPEN,
                 EventStatusChoices.POSTPONED,
                 EventStatusChoices.IN_PROGRESS,
                 EventStatusChoices.COMPLETED
             ])
+        
         
         return queryset
     

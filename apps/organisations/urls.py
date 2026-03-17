@@ -19,6 +19,7 @@ from apps.organisations.api.viewsets import (
     InvolvedEventOrganisationViewSet,
     EventSponsorViewSet,
     EventSponsorPackageViewSet,
+    EventSponsorInviteViewSet,
     LeaderViewSet,
     LocationLeaderInviteViewSet,
 )
@@ -39,6 +40,7 @@ router.register(r'invites', OrganisationInviteViewSet, basename='organisationinv
 router.register(r'involved-events', InvolvedEventOrganisationViewSet, basename='involvedeventorganisation')
 router.register(r'sponsors', EventSponsorViewSet, basename='eventsponsor')
 router.register(r'sponsor-packages', EventSponsorPackageViewSet, basename='sponsorpackage')
+router.register(r'sponsor-invites', EventSponsorInviteViewSet, basename='eventsponsorinvite')
 router.register(r'leaders', LeaderViewSet, basename='leader')
 router.register(r'leader-invites', LocationLeaderInviteViewSet, basename='locationleaderinvite')
 router.register(r'statistics', OrganisationStatisticsViewSet, basename='organisationstatistics')

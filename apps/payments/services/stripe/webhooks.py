@@ -146,6 +146,8 @@ class PaymentIntentSucceededHandler(WebhookEventHandler):
         """Update related Order or Booking status after successful payment."""
         try:
             target = payment.target
+
+            from apps.organisations.models import EventSponsor
             
             # Handle Order
             if hasattr(target, 'status') and hasattr(target, 'transition_to'):
@@ -156,6 +158,13 @@ class PaymentIntentSucceededHandler(WebhookEventHandler):
                     self.log_event(f"Updated {target.__class__.__name__} {target.pk} to PROCESSING")
             
             # Handle Booking - tickets are created separately, status managed elsewhere
+
+            if isinstance(target, EventSponsor):
+                if not target.is_verified:
+                    target.mark_verified(verifier=None)
+                if not target.is_processed:
+                    target.mark_processed(processor=None)
+                self.log_event(f"Updated EventSponsor {target.pk} to official paid sponsor")
             
         except Exception as e:
             self.log_event(f"Failed to update target status: {str(e)}", level='warning')

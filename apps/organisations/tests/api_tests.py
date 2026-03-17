@@ -26,9 +26,10 @@ from apps.organisations.models import (
     Organisation, OrganisationContact, OrganisationControl,
     UserOrganisationMembership, OrganisationInvite, OrganisationAcceptanceCode,
     InvolvedEventOrganisation, InvolvedOrganisationRoleChoices,
-    EventSponsor, EventSponsorPackage, Leader
+    EventSponsor, EventSponsorPackage, EventSponsorInvite, Leader
 )
-from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices
+from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventSettings
+from apps.payments.models import PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
 from apps.locations.models import CountryLocation, ClusterLocation, ChapterLocation, GeneralSectorType, SpecificSectorType
 
 User = get_user_model()
@@ -891,6 +892,124 @@ class EventSponsorPackageAPITest(TestCase):
         self.assertIn('_links', response.data)
         self.assertIn('has_payment', response.data)
         self.assertFalse(response.data['has_payment'])
+
+
+class EventSponsorInviteAndCheckoutAPITest(TestCase):
+    """Test sponsor invite token actions and sponsor checkout flow."""
+
+    def setUp(self):
+        self.client = APIClient()
+
+        self.admin_user = User.objects.create_user(
+            email='admin-sponsor@parish.org',
+            password='adminpass123',
+            is_staff=True,
+        )
+        self.controller_user = User.objects.create_user(
+            email='controller-sponsor@parish.org',
+            password='controllerpass123',
+        )
+
+        self.event_org = Organisation.objects.create(
+            title='Event Host Org',
+            created_by=self.admin_user,
+        )
+        self.sponsor_org = Organisation.objects.create(
+            title='Sponsor Org',
+            created_by=self.admin_user,
+        )
+        OrganisationControl.objects.create(
+            organisation=self.sponsor_org,
+            user=self.controller_user,
+            added_by=self.admin_user,
+        )
+
+        self.event_type = EventType.objects.create(
+            title='Summit',
+            code='SUMM',
+            created_by=self.admin_user,
+        )
+        self.event = Event.objects.create(
+            title='Annual Summit',
+            display_code='SUM2026',
+            display_identifier='SUM2026TEST001',
+            created_by=self.admin_user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=31),
+            organisation=self.event_org,
+        )
+        EventSettings.objects.create(
+            event=self.event,
+            payment_enabled=True,
+            accepting_sponsorships_enabled=True,
+        )
+
+        self.package = EventSponsorPackage.objects.create(
+            event=self.event,
+            package_name='Gold Sponsor',
+            package_description='Top tier package',
+            base_amount=2500.00,
+            active=True,
+            tier=1,
+        )
+
+        self.bank_method = PaymentMethod.objects.create(
+            event=self.event,
+            title='Bank Transfer',
+            method_type=PaymentMethodTypeChoices.BANK_TRANSFER,
+            is_active=True,
+            created_by=self.admin_user,
+            provided_details={'account_name': 'AMDG', 'sort_code': '12-34-56', 'account_number': '12345678'},
+        )
+
+        self.invite = EventSponsorInvite.objects.create(
+            event=self.event,
+            email='sponsor@example.org',
+            organisation=self.sponsor_org,
+        )
+
+    def test_accept_sponsor_invite_by_token(self):
+        url = reverse('organisations:eventsponsorinvite-accept-by-token')
+        response = self.client.post(url, {'token': str(self.invite.token)}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.invite.refresh_from_db()
+        self.assertTrue(self.invite.accepted)
+        self.assertFalse(self.invite.declined)
+        self.assertIsNotNone(self.invite.responded_at)
+
+    def test_decline_sponsor_invite_by_token(self):
+        url = reverse('organisations:eventsponsorinvite-decline-by-token')
+        response = self.client.post(url, {'token': str(self.invite.token)}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.invite.refresh_from_db()
+        self.assertTrue(self.invite.declined)
+        self.assertFalse(self.invite.accepted)
+        self.assertIsNotNone(self.invite.responded_at)
+
+    def test_sponsor_checkout_bank_transfer(self):
+        self.client.force_authenticate(user=self.controller_user)
+        url = reverse('organisations:eventsponsor-checkout')
+        payload = {
+            'event_id': str(self.event.event_id),
+            'package_id': str(self.package.package_id),
+            'payment_method_id': self.bank_method.id,
+            'organisation_id': self.sponsor_org.id,
+            'name': 'Sponsor Org Official',
+        }
+        response = self.client.post(url, payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('sponsor_id', response.data)
+        self.assertIn('payment_reference', response.data)
+        self.assertEqual(response.data['payment_status'], PaymentStatusChoices.PENDING)
+        self.assertIn('payment_instructions', response.data)
+
+        sponsor = EventSponsor.objects.get(sponsor_id=response.data['sponsor_id'])
+        self.assertEqual(sponsor.organisation, self.sponsor_org)
+        self.assertEqual(sponsor.event, self.event)
 
 
 class LeaderAPITest(TestCase):

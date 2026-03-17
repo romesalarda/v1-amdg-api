@@ -26,6 +26,7 @@ from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
 from apps.bookings.models import Booking
 from apps.products.models import Order
+from apps.organisations.models import EventSponsor, EventSponsorPackage
 
 User = get_user_model()
 
@@ -252,6 +253,41 @@ class PaymentAPITestCase(APITestCase):
         self.assertIsNone(payment.target_type)
         self.assertIsNone(payment.target_id)
 
+    def test_create_payment_with_sponsorship_target(self):
+        """Test creating a payment with sponsorship alias resolves to EventSponsor."""
+        sponsor_package = EventSponsorPackage.objects.create(
+            event=self.event,
+            package_name='Silver Sponsor',
+            base_amount=Money(120, 'GBP'),
+            tier=7,
+        )
+        sponsor = EventSponsor.objects.create(
+            name='Sponsor One',
+            organisation=self.organisation,
+            event=self.event,
+            package=sponsor_package,
+            added_by=self.admin_user,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-list')
+        data = {
+            'user': self.regular_user.id,
+            'event': self.event.id,
+            'method': self.payment_method.id,
+            'base_amount': '120.00',
+            'base_amount_currency': 'GBP',
+            'target': 'sponsorship',
+            'target_id': str(sponsor.sponsor_id),
+        }
+
+        response = self.client.post(url, data)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        payment = Payment.objects.latest('created_at')
+        self.assertEqual(payment.target_type.model, 'eventsponsor')
+        self.assertEqual(payment.target_id, str(sponsor.pk))
+
     def test_create_payment_rejects_unknown_target(self):
         """Test validation error for unsupported target aliases."""
         self.client.force_authenticate(user=self.admin_user)
@@ -345,6 +381,41 @@ class PaymentAPITestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_verify_bank_transfer_marks_sponsor_official(self):
+        """Verifying a sponsorship bank transfer should finalize the sponsor state."""
+        sponsor_package = EventSponsorPackage.objects.create(
+            event=self.event,
+            package_name='Gold Sponsor',
+            base_amount=Money(220, 'GBP'),
+            tier=8,
+        )
+        sponsor = EventSponsor.objects.create(
+            name='Sponsor Finalize',
+            organisation=self.organisation,
+            event=self.event,
+            package=sponsor_package,
+            added_by=self.admin_user,
+        )
+        sponsor_payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(220, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+            target=sponsor,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-verify-bank-transfer', kwargs={'payment_id': sponsor_payment.payment_id})
+        response = self.client.post(url, {'verified': True, 'notes': 'received'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        sponsor.refresh_from_db()
+        sponsor_payment.refresh_from_db()
+        self.assertEqual(sponsor_payment.status, PaymentStatusChoices.COMPLETED)
+        self.assertTrue(sponsor.is_verified)
+        self.assertTrue(sponsor.is_processed)
 
 
 class PaymentMethodAPITestCase(APITestCase):

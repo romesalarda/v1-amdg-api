@@ -29,7 +29,7 @@ from apps.organisations.models import (
     Organisation, OrganisationContact, OrganisationControl,
     UserOrganisationMembership, OrganisationAcceptanceCode, OrganisationInvite,
     InvolvedEventOrganisation, InvolvedOrganisationRoleChoices,
-    EventSponsor, EventSponsorPackage,
+    EventSponsor, EventSponsorPackage, EventSponsorInvite,
     Leader, LeaderLocationType, LocationLeaderInvite
 )
 
@@ -665,6 +665,57 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
         if value:
             return queryset.filter(id__in=package_ids_with_payment)
         return queryset.exclude(id__in=package_ids_with_payment)
+
+
+class EventSponsorInviteFilterSet(filters.FilterSet):
+    """Filterset for EventSponsorInvite model."""
+
+    event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text="Filter by event UUID"
+    )
+
+    organisation_id = filters.UUIDFilter(
+        field_name='organisation__organisation_id',
+        help_text="Filter by organisation UUID"
+    )
+
+    email = filters.CharFilter(
+        field_name='email',
+        lookup_expr='icontains',
+        help_text="Filter by invitee email"
+    )
+
+    accepted = filters.BooleanFilter(
+        field_name='accepted',
+        help_text="Filter accepted invites"
+    )
+
+    declined = filters.BooleanFilter(
+        field_name='declined',
+        help_text="Filter declined invites"
+    )
+
+    chapter_location_id = filters.NumberFilter(
+        field_name='chapter_location__id',
+        help_text="Filter by chapter location ID"
+    )
+
+    sent_after = filters.DateTimeFilter(
+        field_name='sent_at',
+        lookup_expr='gte',
+        help_text="Filter invites sent after this date"
+    )
+
+    sent_before = filters.DateTimeFilter(
+        field_name='sent_at',
+        lookup_expr='lte',
+        help_text="Filter invites sent before this date"
+    )
+
+    class Meta:
+        model = EventSponsorInvite
+        fields = ['event_id', 'organisation_id', 'email', 'accepted', 'declined']
 
 
 class LeaderFilterSet(filters.FilterSet):
