@@ -289,13 +289,19 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
     }
 
     base_amount = MoneyField(max_digits=10, decimal_places=2)
+    base_amount_currency = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        default='GBP',
+        help_text="ISO 4217 currency code for base_amount (e.g., GBP, USD, EUR)."
+    )
     # Frontend-safe target fields.
     target = serializers.ChoiceField(
         choices=TARGET_CHOICES,
         write_only=True,
         required=False,
         allow_null=True,
-        help_text="Payment target type: booking, order, ticket, or none."
+        help_text="Payment target type: booking, order, ticket, donation, sponsorship, or none."
     )
     target_id = serializers.CharField(
         write_only=True,
@@ -356,6 +362,16 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         if value and not value.is_active:
             raise serializers.ValidationError("Selected payment method is not active.")
         return value
+
+    def validate_base_amount_currency(self, value):
+        """Validate currency code format."""
+        if not value:
+            return 'GBP'
+
+        currency = str(value).strip().upper()
+        if len(currency) != 3:
+            raise serializers.ValidationError("Currency must be a 3-letter ISO 4217 code.")
+        return currency
     
     def validate(self, attrs):
         """Cross-field validation for payment creation."""
@@ -1296,6 +1312,10 @@ class DonationCheckoutSerializer(serializers.Serializer):
     payment_method_id = serializers.IntegerField(
         help_text="ID of the PaymentMethod to use"
     )
+    user_id = serializers.IntegerField(
+        required=False,
+        help_text="Optional donor user ID. Requires event administrative permissions when different from authenticated user."
+    )
     event_id = serializers.UUIDField(
         required=False,
         allow_null=True,
@@ -1359,9 +1379,13 @@ class DonationCheckoutSerializer(serializers.Serializer):
         """Cross-field validation."""
         from apps.payments.models import PaymentMethod
         from apps.events.models import Event
+        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+        from apps.attendee.models import Attendee
         
         payment_method = PaymentMethod.objects.get(id=attrs['payment_method_id'])
         event_id = attrs.get('event_id')
+        request = self.context.get('request')
+        request_user = request.user if request else None
         
         # If event is provided, validate payment method belongs to that event
         if event_id:
@@ -1381,8 +1405,43 @@ class DonationCheckoutSerializer(serializers.Serializer):
                 })
             
             attrs['event'] = payment_method.event
+
+        donor_user = request_user
+        requested_user_id = attrs.get('user_id')
+        if requested_user_id is not None:
+            try:
+                donor_user = User.objects.get(id=requested_user_id, is_active=True)
+            except User.DoesNotExist:
+                raise serializers.ValidationError({'user_id': 'Selected user does not exist or is inactive.'})
+
+            if request_user and donor_user != request_user:
+                is_platform_admin = request_user.is_superuser or request_user.is_staff
+                is_event_admin = EventRoleAssignment.objects.filter(
+                    user=request_user,
+                    event=attrs['event'],
+                    role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+                ).exists()
+
+                if not (is_platform_admin or is_event_admin):
+                    raise serializers.ValidationError({
+                        'user_id': 'You do not have permission to create donations for another user.'
+                    })
+
+            is_event_attendee = Attendee.objects.filter(
+                user=donor_user,
+                event=attrs['event'],
+                deleted_at__isnull=True,
+            ).exists()
+            is_event_staff = donor_user.event_staff.filter(event=attrs['event']).exists()
+            has_event_role = donor_user.event_roles.filter(event=attrs['event']).exists()
+
+            if not (is_event_attendee or is_event_staff or has_event_role):
+                raise serializers.ValidationError({
+                    'user_id': 'Selected user is not an attendee or service team member for this event.'
+                })
         
         attrs['payment_method'] = payment_method
+        attrs['donor_user'] = donor_user
         
         return attrs
 

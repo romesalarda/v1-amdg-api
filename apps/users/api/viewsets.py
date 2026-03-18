@@ -298,6 +298,86 @@ class UserViewSet(viewsets.ModelViewSet):
         elif self.action in ['retrieve', 'update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
         return super().get_permissions()
+
+    @extend_schema(
+        summary="List Event Attendee Users",
+        description=(
+            "Retrieve users who belong to a specific event context. "
+            "Membership includes users attached to attendee records, EventStaff assignments, "
+            "or EventRoleAssignment entries for the selected event. "
+            "Supports optional search by email, username, and name fields."
+        ),
+        tags=['Users'],
+        parameters=[
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Event UUID to scope the user list.'
+            ),
+            OpenApiParameter(
+                name='search',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Optional search across email, username, first name, and last name.'
+            ),
+            OpenApiParameter(
+                name='page',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Page number for paginated results.'
+            ),
+            OpenApiParameter(
+                name='page_size',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Page size (max 100).'
+            ),
+        ],
+        responses={
+            200: UserSerializer(many=True),
+            400: OpenApiResponse(description='Missing or invalid event_id query parameter.'),
+            401: OpenApiResponse(description='Unauthorized - Authentication required'),
+        },
+    )
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='event-attendees')
+    def event_attendees(self, request):
+        """List users scoped to an event's attendee/service-team membership."""
+        event_id = request.query_params.get('event_id')
+        if not event_id:
+            return Response(
+                {'detail': "'event_id' query parameter is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        queryset = User.objects.select_related('profile').prefetch_related('groups').filter(
+            is_active=True
+        ).filter(
+            Q(attendees__event__event_id=event_id, attendees__deleted_at__isnull=True) |
+            Q(event_staff__event__event_id=event_id, event_staff__user__isnull=False) |
+            Q(event_roles__event__event_id=event_id)
+        ).distinct()
+
+        search_value = request.query_params.get('search')
+        if search_value:
+            queryset = queryset.filter(
+                Q(email__icontains=search_value) |
+                Q(username__icontains=search_value) |
+                Q(first_name__icontains=search_value) |
+                Q(last_name__icontains=search_value)
+            )
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
     
     def perform_create(self, serializer):
         """

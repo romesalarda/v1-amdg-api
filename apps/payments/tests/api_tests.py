@@ -27,7 +27,9 @@ from apps.events.models import Event, EventType, EventRole, EventRoleAssignment,
 from apps.bookings.models import Booking
 from apps.products.models import Order
 from apps.organisations.models import EventSponsor, EventSponsorPackage
+from apps.attendee.models import Attendee
 
+import datetime
 User = get_user_model()
 
 
@@ -811,6 +813,18 @@ class DonationAPITestCase(APITestCase):
             email='user@test.com',
             password='testpass123'
         )
+
+        self.other_user = User.objects.create_user(
+            username='other',
+            email='other@test.com',
+            password='testpass123'
+        )
+
+        self.non_admin_user = User.objects.create_user(
+            username='member',
+            email='member@test.com',
+            password='testpass123'
+        )
         
         from apps.organisations.models import Organisation
         self.organisation = Organisation.objects.create(
@@ -836,6 +850,34 @@ class DonationAPITestCase(APITestCase):
             event=self.event,
             method_type=PaymentMethodTypeChoices.STRIPE,
             is_active=True
+        )
+
+        self.cash_method = PaymentMethod.objects.create(
+            title='Cash',
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.CASH,
+            is_active=True
+        )
+
+        admin_role = EventRole.objects.create(
+            name='Event Admin',
+            code='EVADM2',
+            category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        )
+        EventRoleAssignment.objects.create(
+            event=self.event,
+            user=self.admin_user,
+            role=admin_role,
+        )
+
+        Attendee.objects.create(
+            first_name='Other',
+            last_name='User',
+            relationship_to_user='self',
+            event=self.event,
+            user=self.other_user,
+            defined_by=self.admin_user,
+            date_of_birth=datetime.date(1990, 1, 1)
         )
         
         self.payment = Payment.objects.create(
@@ -897,6 +939,63 @@ class DonationAPITestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
+
+    def test_create_donation_with_payment_for_selected_user_as_admin(self):
+        """Event admin can create donation+payment for a selected event attendee user."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:donation-create-with-payment')
+        data = {
+            'amount': '30.00',
+            'payment_method_id': self.cash_method.id,
+            'event_id': str(self.event.event_id),
+            'user_id': self.other_user.id,
+            'message': 'Admin recorded donation',
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        donation = Donation.objects.get(donation_id=response.data['donation_id'])
+        self.assertEqual(donation.donated_by, self.other_user)
+        self.assertIsNotNone(donation.payment)
+        self.assertEqual(donation.payment.user, self.other_user)
+
+    def test_create_donation_with_payment_rejects_non_admin_selected_user(self):
+        """Non-admin users cannot create donation+payment on behalf of other users."""
+        self.client.force_authenticate(user=self.non_admin_user)
+        url = reverse('payments:donation-create-with-payment')
+        data = {
+            'amount': '20.00',
+            'payment_method_id': self.cash_method.id,
+            'event_id': str(self.event.event_id),
+            'user_id': self.other_user.id,
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('user_id', response.data)
+
+    def test_create_donation_with_payment_rejects_user_outside_event(self):
+        """Selected donor must belong to event attendee/service-team membership."""
+        outsider = User.objects.create_user(
+            username='outsider',
+            email='outsider@test.com',
+            password='testpass123',
+        )
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:donation-create-with-payment')
+        data = {
+            'amount': '20.00',
+            'payment_method_id': self.cash_method.id,
+            'event_id': str(self.event.event_id),
+            'user_id': outsider.id,
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('user_id', response.data)
 
 
 class PermissionsTestCase(APITestCase):

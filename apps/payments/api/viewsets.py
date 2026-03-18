@@ -1449,6 +1449,7 @@ class DonationViewSet(viewsets.ModelViewSet):
             fields={
                 'amount': MoneyField(max_digits=10, decimal_places=2, help_text="Donation amount"),
                 'payment_method_id': serializers.IntegerField(help_text="Payment method ID"),
+                'user_id': serializers.IntegerField(required=False, help_text="Optional donor user ID (admins only when not self)"),
                 'event_id': serializers.UUIDField(required=False, help_text="Optional event ID"),
                 'message': serializers.CharField(required=False, max_length=500, help_text="Optional donor message")
             }
@@ -1520,7 +1521,7 @@ class DonationViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         amount = serializer.validated_data['amount']
-        
+        donor_user = serializer.validated_data['donor_user']
         payment_method = serializer.validated_data['payment_method']
         event = serializer.validated_data['event']
         message = serializer.validated_data.get('message', '')
@@ -1530,18 +1531,18 @@ class DonationViewSet(viewsets.ModelViewSet):
             # Create donation (status PENDING by default)
             donation = Donation.objects.create(
                 amount=amount,
-                donated_by=request.user,
+                donated_by=donor_user,
                 payment=None  # Will be linked after payment creation
             )
             
             logger.info(
-                f"Created donation {donation.tracking_reference} for user {request.user.id}, "
+                f"Created donation {donation.tracking_reference} for user {donor_user.id}, "
                 f"amount: {amount}"
             )
             
             # Create payment with donation as target
             payment = Payment.objects.create(
-                user=request.user,
+                user=donor_user,
                 event=event,
                 method=payment_method,
                 base_amount=amount,
@@ -1554,7 +1555,8 @@ class DonationViewSet(viewsets.ModelViewSet):
                         'amount': str(donation.amount.amount),
                         'currency': donation.amount.currency.code,
                         'message': message,
-                        'donated_by': request.user.username,
+                        'donated_by': donor_user.username,
+                        'created_by': request.user.username,
                         'event': event.title if event else 'General'
                     }
                 }
@@ -1593,7 +1595,7 @@ class DonationViewSet(viewsets.ModelViewSet):
                         currency=donation.amount.currency.code,
                         payment_reference=payment.payment_reference,
                         metadata=stripe_metadata,
-                        customer_email=request.user.email
+                        customer_email=donor_user.email
                     )
                     
                     payment.stripe_payment_intent_id = payment_intent['id']
