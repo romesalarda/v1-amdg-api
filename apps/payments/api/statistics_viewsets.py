@@ -108,9 +108,9 @@ GROUP_BY_PARAM = OpenApiParameter(
     name='group_by',
     type=OpenApiTypes.STR,
     location=OpenApiParameter.QUERY,
-    description='Time grouping for trends. "day" groups by day, "week" by week, "month" by month.',
+    description='Time grouping for trends. "hour" groups by hour, "day" by day, "week" by week, "month" by month.',
     required=False,
-    enum=['day', 'week', 'month'],
+    enum=['hour', 'day', 'week', 'month'],
     default='day',
 )
 
@@ -221,9 +221,9 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         
         # Group by (validate enum)
         group_by = request.query_params.get('group_by', 'day')
-        if group_by not in ['day', 'week', 'month']:
+        if group_by not in ['hour', 'day', 'week', 'month']:
             raise exceptions.ValidationError({
-                'group_by': 'Invalid value. Must be one of: day, week, month.'
+                'group_by': 'Invalid value. Must be one of: hour, day, week, month.'
             })
         filters['group_by'] = group_by
         
@@ -304,7 +304,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
                 'include_deleted': 'Include soft-deleted orders (boolean)',
                 'date_from': 'Start date filter (YYYY-MM-DD)',
                 'date_to': 'End date filter (YYYY-MM-DD)',
-                'group_by': 'Time grouping: day, week, or month',
+                'group_by': 'Time grouping: hour, day, week, or month',
                 'limit': 'Maximum results for top/limit queries'
             }
         })

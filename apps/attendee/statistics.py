@@ -238,6 +238,52 @@ def calculate_relationship_distribution(
     }
 
 
+def _calculate_location_distribution(
+    queryset,
+    total_count: int,
+    name: str,
+    label_field: str,
+    code_field: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a location distribution block for a specific hierarchy level."""
+    values = [label_field]
+    if code_field:
+        values.append(code_field)
+
+    counts = queryset.filter(
+        **{f'{label_field}__isnull': False}
+    ).values(
+        *values
+    ).annotate(
+        count=Count('id')
+    ).order_by('-count')
+
+    without_value = queryset.filter(
+        **{f'{label_field}__isnull': True}
+    ).count()
+
+    distribution = []
+    for item in counts:
+        label = item.get(label_field)
+        if label is None:
+            continue
+
+        row = {
+            'label': label,
+            'value': item['count'],
+            'percentage': round((item['count'] / total_count * 100), 2) if total_count > 0 else 0,
+        }
+        if code_field:
+            row['code'] = item.get(code_field)
+        distribution.append(row)
+
+    return {
+        f'total_with_{name}': total_count - without_value,
+        f'total_without_{name}': without_value,
+        'distribution': distribution,
+    }
+
+
 def calculate_area_distribution(
     event_id: Optional[str] = None,
     include_deleted: bool = False
@@ -253,35 +299,73 @@ def calculate_area_distribution(
         Dictionary with area distribution data
     """
     queryset = _get_base_queryset(event_id, include_deleted)
-    
     total_count = queryset.count()
-    
-    # Get area counts
-    area_counts = queryset.filter(
-        area_from__isnull=False
-    ).values(
-        'area_from__area_name'
-    ).annotate(
-        count=Count('id')
-    ).order_by('-count')
-    
-    without_area = queryset.filter(area_from__isnull=True).count()
-    
-    distribution = []
-    for item in area_counts:
-        area = item['area_from__area_name']
-        count = item['count']
-        distribution.append({
-            'label': area,
-            'value': count,
-            'percentage': round((count / total_count * 100), 2) if total_count > 0 else 0
-        })
-    
+
+    area_data = _calculate_location_distribution(
+        queryset=queryset,
+        total_count=total_count,
+        name='area',
+        label_field='area_from__area_name',
+        code_field='area_from__area_code',
+    )
+
     return {
         'total': total_count,
-        'total_with_area': total_count - without_area,
-        'total_without_area': without_area,
-        'distribution': distribution
+        'total_with_area': area_data['total_with_area'],
+        'total_without_area': area_data['total_without_area'],
+        'distribution': area_data['distribution']
+    }
+
+
+def calculate_location_breakdown(
+    event_id: Optional[str] = None,
+    include_deleted: bool = False
+) -> Dict[str, Any]:
+    """
+    Calculate attendee breakdown across all available location hierarchy levels.
+
+    Args:
+        event_id: Optional event UUID to filter attendees
+        include_deleted: Whether to include soft-deleted attendees
+
+    Returns:
+        Dictionary with area, chapter, cluster, and country distributions
+    """
+    queryset = _get_base_queryset(event_id, include_deleted)
+    total_count = queryset.count()
+
+    by_area = _calculate_location_distribution(
+        queryset=queryset,
+        total_count=total_count,
+        name='area',
+        label_field='area_from__area_name',
+        code_field='area_from__area_code',
+    )
+    by_chapter = _calculate_location_distribution(
+        queryset=queryset,
+        total_count=total_count,
+        name='chapter',
+        label_field='area_from__chapter__chapter_name',
+    )
+    by_cluster = _calculate_location_distribution(
+        queryset=queryset,
+        total_count=total_count,
+        name='cluster',
+        label_field='area_from__chapter__cluster__cluster_name',
+    )
+    by_country = _calculate_location_distribution(
+        queryset=queryset,
+        total_count=total_count,
+        name='country',
+        label_field='area_from__chapter__cluster__country__country',
+    )
+
+    return {
+        'total': total_count,
+        'by_area': by_area,
+        'by_chapter': by_chapter,
+        'by_cluster': by_cluster,
+        'by_country': by_country,
     }
 
 

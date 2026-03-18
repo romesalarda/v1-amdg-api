@@ -126,6 +126,41 @@ class AreaDistributionSerializer(BaseStatisticsSerializer):
         )
 
 
+class LocationBreakdownSerializer(BaseStatisticsSerializer):
+    """Serializer for combined location breakdown statistics."""
+    total = serializers.IntegerField()
+    by_area = serializers.DictField()
+    by_chapter = serializers.DictField()
+    by_cluster = serializers.DictField()
+    by_country = serializers.DictField()
+
+    def format_for_echarts(self, representation: Dict[str, Any], instance: Dict[str, Any]) -> Dict[str, Any]:
+        """Format each location level as a horizontal bar chart."""
+        chart_map = {}
+        sections = {
+            'areas': ('by_area', 'Areas'),
+            'chapters': ('by_chapter', 'Chapters'),
+            'clusters': ('by_cluster', 'Clusters'),
+            'countries': ('by_country', 'Countries'),
+        }
+
+        for key, (section_key, title_name) in sections.items():
+            distribution = instance.get(section_key, {}).get('distribution', [])
+            if not distribution:
+                continue
+
+            sorted_data = sorted(distribution, key=lambda x: x['value'], reverse=True)
+            chart_map[key] = formatters.format_bar_chart(
+                data=sorted_data[:15],
+                title=f'Top {title_name} by Attendee Count',
+                x_axis_label='Number of Attendees',
+                y_axis_label=title_name[:-1] if title_name.endswith('s') else title_name,
+                orientation='horizontal'
+            )
+
+        return chart_map
+
+
 class MedicalConditionsStatsSerializer(BaseStatisticsSerializer):
     """Serializer for medical conditions statistics."""
     total_attendees = serializers.IntegerField()

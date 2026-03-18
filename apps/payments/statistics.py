@@ -14,7 +14,7 @@ NOTE: Payment model does NOT support soft-delete. Only Order model has soft-dele
 The include_deleted parameter only affects Order-related statistics.
 """
 from django.db.models import Count, Q, Avg, Sum, F, Value, CharField, Case, When, DecimalField
-from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, Coalesce
+from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, TruncHour, Coalesce
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from datetime import date, timedelta
@@ -211,7 +211,7 @@ def calculate_payment_trends(
     
     Args:
         event_id: Optional event UUID to filter payments
-        group_by: Time grouping ('day', 'week', 'month')
+        group_by: Time grouping ('hour', 'day', 'week', 'month')
         date_from: Start date for filtering
         date_to: End date for filtering
         include_deleted: IGNORED - Payment model does not support soft-delete
@@ -232,7 +232,9 @@ def calculate_payment_trends(
         queryset = queryset.filter(created_at__date__lte=date_to)
     
     # Group by time period
-    if group_by == 'week':
+    if group_by == 'hour':
+        queryset = queryset.annotate(period=TruncHour('created_at'))
+    elif group_by == 'week':
         queryset = queryset.annotate(period=TruncWeek('created_at'))
     elif group_by == 'month':
         queryset = queryset.annotate(period=TruncMonth('created_at'))
@@ -527,7 +529,7 @@ def calculate_refund_trends(
     
     Args:
         event_id: Optional event UUID to filter refunds
-        group_by: Time grouping ('day', 'week', 'month')
+        group_by: Time grouping ('hour', 'day', 'week', 'month')
         date_from: Start date for filtering
         date_to: End date for filtering
     
@@ -546,7 +548,9 @@ def calculate_refund_trends(
         queryset = queryset.filter(requested_at__date__lte=date_to)
     
     # Group by time period
-    if group_by == 'week':
+    if group_by == 'hour':
+        queryset = queryset.annotate(period=TruncHour('requested_at'))
+    elif group_by == 'week':
         queryset = queryset.annotate(period=TruncWeek('requested_at'))
     elif group_by == 'month':
         queryset = queryset.annotate(period=TruncMonth('requested_at'))
@@ -693,7 +697,7 @@ def calculate_donation_trends(
     
     Args:
         event_id: Optional event UUID to filter donations
-        group_by: Time grouping ('day', 'week', 'month')
+        group_by: Time grouping ('hour', 'day', 'week', 'month')
         date_from: Start date for filtering
         date_to: End date for filtering
     
@@ -712,7 +716,9 @@ def calculate_donation_trends(
         queryset = queryset.filter(donated_at__date__lte=date_to)
     
     # Group by time period
-    if group_by == 'week':
+    if group_by == 'hour':
+        queryset = queryset.annotate(period=TruncHour('donated_at'))
+    elif group_by == 'week':
         queryset = queryset.annotate(period=TruncWeek('donated_at'))
     elif group_by == 'month':
         queryset = queryset.annotate(period=TruncMonth('donated_at'))
@@ -852,7 +858,7 @@ def calculate_revenue_trends(
     
     Args:
         event_id: Optional event UUID to filter payments
-        group_by: Time grouping ('day', 'week', 'month')
+        group_by: Time grouping ('hour', 'day', 'week', 'month')
         date_from: Start date for filtering
         date_to: End date for filtering
         include_deleted: IGNORED for payments (no soft-delete support)
@@ -872,7 +878,9 @@ def calculate_revenue_trends(
         queryset = queryset.filter(created_at__date__lte=date_to)
     
     # Group by time period
-    if group_by == 'week':
+    if group_by == 'hour':
+        queryset = queryset.annotate(period=TruncHour('created_at'))
+    elif group_by == 'week':
         queryset = queryset.annotate(period=TruncWeek('created_at'))
     elif group_by == 'month':
         queryset = queryset.annotate(period=TruncMonth('created_at'))

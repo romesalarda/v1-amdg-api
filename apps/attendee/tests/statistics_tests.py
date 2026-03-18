@@ -601,6 +601,48 @@ class AreaDistributionStatisticsTests(AttendeeStatisticsBaseTestCase):
         self.assertEqual(area_counts.get('Camden'), 2)
 
 
+class LocationBreakdownStatisticsTests(AttendeeStatisticsBaseTestCase):
+    """Tests for combined location breakdown statistics."""
+
+    def test_location_breakdown_basic(self):
+        """Test combined location breakdown structure and totals."""
+        result = statistics.calculate_location_breakdown(
+            event_id=str(self.event1.event_id)
+        )
+
+        self.assertEqual(result['total'], 5)
+        self.assertIn('by_area', result)
+        self.assertIn('by_chapter', result)
+        self.assertIn('by_cluster', result)
+        self.assertIn('by_country', result)
+
+        self.assertEqual(result['by_area']['total_with_area'], 4)
+        self.assertEqual(result['by_area']['total_without_area'], 1)
+        self.assertEqual(result['by_chapter']['total_with_chapter'], 4)
+        self.assertEqual(result['by_chapter']['total_without_chapter'], 1)
+        self.assertEqual(result['by_cluster']['total_with_cluster'], 4)
+        self.assertEqual(result['by_cluster']['total_without_cluster'], 1)
+        self.assertEqual(result['by_country']['total_with_country'], 4)
+        self.assertEqual(result['by_country']['total_without_country'], 1)
+
+    def test_location_breakdown_distribution_values(self):
+        """Test combined location distribution includes expected values."""
+        result = statistics.calculate_location_breakdown(
+            event_id=str(self.event1.event_id)
+        )
+
+        areas = {item['label']: item['value'] for item in result['by_area']['distribution']}
+        chapters = {item['label']: item['value'] for item in result['by_chapter']['distribution']}
+        clusters = {item['label']: item['value'] for item in result['by_cluster']['distribution']}
+        countries = {item['label']: item['value'] for item in result['by_country']['distribution']}
+
+        self.assertEqual(areas.get('Westminster'), 2)
+        self.assertEqual(areas.get('Camden'), 2)
+        self.assertEqual(chapters.get('London Chapter'), 4)
+        self.assertEqual(clusters.get('South Cluster'), 4)
+        self.assertEqual(countries.get('UK'), 4)
+
+
 class MedicalConditionsStatisticsTests(AttendeeStatisticsBaseTestCase):
     """Tests for medical conditions statistics."""
     
@@ -940,6 +982,19 @@ class AttendeeStatisticsAPITests(AttendeeStatisticsBaseTestCase):
         self.assertIn('gender', response.data)
         self.assertIn('relationships', response.data)
         self.assertIn('areas', response.data)
+
+    def test_location_breakdown_api(self):
+        """Test combined location breakdown API."""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(
+            f'/api/attendees/statistics/location-breakdown/?event_id={self.event1.event_id}'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('by_area', response.data)
+        self.assertIn('by_chapter', response.data)
+        self.assertIn('by_cluster', response.data)
+        self.assertIn('by_country', response.data)
     
     def test_personal_info_api(self):
         """Test personal info combined API."""

@@ -232,7 +232,7 @@ class EventRegistrationTrendsSerializer(BaseStatisticsSerializer):
     )
     total_registrations = serializers.IntegerField()
     period = serializers.CharField(
-        help_text="Time period (day, week, month)"
+        help_text="Time period (hour, day, week, month)"
     )
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:

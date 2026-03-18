@@ -786,6 +786,22 @@ class RegistrationTrendsTest(EventStatisticsBaseTestCase):
         for i in range(1, len(cumulative_values)):
             self.assertGreaterEqual(cumulative_values[i], cumulative_values[i-1])
 
+    def test_registration_trends_by_hour(self):
+        """Test registration trends grouped by hour."""
+        response = self.client.get(
+            f'/api/event/statistics/registration-trends/?event_id={self.open_event1.event_id}&period=hour'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.data
+        self.assertIn('trends', data)
+        self.assertEqual(data['period'], 'hour')
+
+    def test_registration_trends_invalid_period(self):
+        """Test registration trends rejects invalid period values."""
+        response = self.client.get('/api/event/statistics/registration-trends/?period=year')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class ReviewStatisticsTest(EventStatisticsBaseTestCase):
     """Test the review statistics endpoint."""

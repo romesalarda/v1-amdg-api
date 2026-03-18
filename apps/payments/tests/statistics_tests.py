@@ -546,6 +546,12 @@ class PaymentTrendsTests(PaymentStatisticsBaseTestCase):
         result = statistics.calculate_payment_trends(group_by='month')
         
         self.assertIn('trends', result)
+
+    def test_trends_grouping_hour(self):
+        """Test trends with hour grouping."""
+        result = statistics.calculate_payment_trends(group_by='hour')
+
+        self.assertIn('trends', result)
     
     def test_trends_with_event_filter(self):
         """Test trends filtered by event."""
@@ -719,7 +725,7 @@ class RefundTrendsTests(PaymentStatisticsBaseTestCase):
     
     def test_refund_trends_grouping(self):
         """Test refund trends with different groupings."""
-        for group_by in ['day', 'week', 'month']:
+        for group_by in ['hour', 'day', 'week', 'month']:
             result = statistics.calculate_refund_trends(group_by=group_by)
             self.assertIn('trends', result)
 
@@ -782,6 +788,12 @@ class DonationTrendsTests(PaymentStatisticsBaseTestCase):
         self.assertIn('trends', result)
         self.assertIn('total_count', result)
         self.assertIn('total_amount', result)
+
+    def test_donation_trends_grouping(self):
+        """Test donation trends with different groupings."""
+        for group_by in ['hour', 'day', 'week', 'month']:
+            result = statistics.calculate_donation_trends(group_by=group_by)
+            self.assertIn('trends', result)
 
 
 class TopDonorsTests(PaymentStatisticsBaseTestCase):
@@ -942,7 +954,7 @@ class RevenueTrendsTests(PaymentStatisticsBaseTestCase):
     
     def test_revenue_trends_grouping(self):
         """Test revenue trends with different groupings."""
-        for group_by in ['day', 'week', 'month']:
+        for group_by in ['hour', 'day', 'week', 'month']:
             result = statistics.calculate_revenue_trends(group_by=group_by)
             self.assertIn('trends', result)
 
@@ -1139,6 +1151,16 @@ class PaymentStatisticsAPITests(PaymentStatisticsBaseTestCase):
         self.assertEqual(response.status_code, http_status.HTTP_200_OK)
         self.assertIn('total', response.data)
         self.assertIn('distribution', response.data)
+
+    def test_payment_trends_hour_grouping_endpoint(self):
+        """Test payment trends endpoint supports hour grouping."""
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(
+            f'/api/payments/statistics/payment-trends/?event_id={self.event1.event_id}&group_by=hour'
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        self.assertIn('trends', response.data)
     
     def test_revenue_overview_endpoint(self):
         """Test revenue overview endpoint."""

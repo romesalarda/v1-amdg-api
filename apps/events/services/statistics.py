@@ -20,7 +20,7 @@ from django.db.models import (
     Count, Sum, Avg, Q, F, Value, DecimalField, 
     Case, When, IntegerField, FloatField
 )
-from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, Coalesce
+from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, TruncHour, Coalesce
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from datetime import date, timedelta
@@ -699,7 +699,7 @@ def calculate_registration_trends(
     
     Args:
         event_id: Event UUID (required)
-        period: 'day', 'week', or 'month'
+        period: 'hour', 'day', 'week', or 'month'
         cumulative: Whether to include cumulative counts
     
     Returns:
@@ -735,7 +735,9 @@ def calculate_registration_trends(
     )
     
     # Group by time period
-    if period == 'week':
+    if period == 'hour':
+        trunc_func = TruncHour
+    elif period == 'week':
         trunc_func = TruncWeek
     elif period == 'month':
         trunc_func = TruncMonth

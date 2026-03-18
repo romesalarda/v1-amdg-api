@@ -113,7 +113,7 @@ PERIOD_PARAM = OpenApiParameter(
     location=OpenApiParameter.QUERY,
     description='Time period grouping for trends',
     required=False,
-    enum=['day', 'week', 'month'],
+    enum=['hour', 'day', 'week', 'month'],
     default='month'
 )
 
@@ -528,6 +528,11 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         """Get registration trends."""
         filters = self._get_common_filters(request)
         period = request.query_params.get('period', 'month')
+        if period not in ['hour', 'day', 'week', 'month']:
+            return Response(
+                {'error': 'Invalid period value. Use one of: hour, day, week, month.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         cumulative = request.query_params.get('cumulative', 'false').lower() == 'true'
         
         data = statistics.calculate_registration_trends(

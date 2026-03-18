@@ -32,6 +32,7 @@ from apps.attendee.api.serializers.statistics import (
     GenderDistributionSerializer,
     RelationshipDistributionSerializer,
     AreaDistributionSerializer,
+    LocationBreakdownSerializer,
     MedicalConditionsStatsSerializer,
     AccessibilityRequirementsStatsSerializer,
     DietaryRequirementsStatsSerializer,
@@ -141,7 +142,7 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
     - Soft-deleted attendee inclusion via ?include_deleted parameter
     """
     
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
     serializer_class = AttendeeOverviewStatsSerializer  # Default serializer
     queryset = Attendee.objects.none()  # Schema generation model hint
     
@@ -179,6 +180,7 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
             'gender-distribution': 'Gender distribution breakdown',
             'relationship-distribution': 'Relationship to user distribution',
             'area-distribution': 'Geographic area distribution',
+            'location-breakdown': 'Combined location distribution by area, chapter, cluster, and country',
             'personal-info': 'Combined personal information statistics',
             'medical-conditions': 'Medical conditions breakdown with severity',
             'accessibility': 'Accessibility requirements statistics',
@@ -311,6 +313,24 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
         data = self._add_filter_metadata(data, request)
         
         serializer = AreaDistributionSerializer(data, context={'request': request})
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Location breakdown",
+        description="Combined attendee location breakdown by area, chapter, cluster, and country.",
+        parameters=[EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
+        responses={200: LocationBreakdownSerializer},
+        tags=["Attendee Statistics"],
+    )
+    @action(detail=False, methods=['get'], url_path='location-breakdown')
+    def location_breakdown(self, request):
+        """Get combined location breakdown statistics."""
+        filters = self._get_common_filters(request)
+
+        data = statistics.calculate_location_breakdown(**filters)
+        data = self._add_filter_metadata(data, request)
+
+        serializer = LocationBreakdownSerializer(data, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
