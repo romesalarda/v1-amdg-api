@@ -19,10 +19,12 @@ from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventStatusChoices
 from apps.locations.models import AreaLocation
 from apps.organisations.models import (
+	EventSponsor,
 	EventSponsorPackage,
 	Leader,
 	Organisation,
 	OrganisationControl,
+	EventSponsorInvite,
 	UserOrganisationMembership,
 )
 from apps.payments.models import Payment, PaymentStatusChoices
@@ -64,6 +66,78 @@ def _base_payments_queryset(
 	if date_to:
 		queryset = queryset.filter(created_at__date__lte=date_to)
 	return queryset
+
+
+def _base_sponsors_queryset(
+	organisation_ids: list[int] | None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+):
+	queryset = EventSponsor.objects.filter(event__deleted_at__isnull=True)
+	if organisation_ids is not None:
+		if not organisation_ids:
+			return EventSponsor.objects.none()
+		queryset = queryset.filter(organisation_id__in=organisation_ids)
+	if event_id:
+		queryset = queryset.filter(event__event_id=event_id)
+	if date_from:
+		queryset = queryset.filter(added_at__date__gte=date_from)
+	if date_to:
+		queryset = queryset.filter(added_at__date__lte=date_to)
+	return queryset
+
+
+def _base_sponsor_invites_queryset(
+	organisation_ids: list[int] | None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+):
+	queryset = EventSponsorInvite.objects.filter(event__deleted_at__isnull=True)
+	if organisation_ids is not None:
+		if not organisation_ids:
+			return EventSponsorInvite.objects.none()
+		queryset = queryset.filter(event__organisation_id__in=organisation_ids)
+	if event_id:
+		queryset = queryset.filter(event__event_id=event_id)
+	if date_from:
+		queryset = queryset.filter(sent_at__date__gte=date_from)
+	if date_to:
+		queryset = queryset.filter(sent_at__date__lte=date_to)
+	return queryset
+
+
+def _base_sponsor_payments_queryset(
+	organisation_ids: list[int] | None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+):
+	sponsor_type = ContentType.objects.get_for_model(EventSponsor)
+	queryset = Payment.objects.filter(
+		event__deleted_at__isnull=True,
+		target_type=sponsor_type,
+	)
+	if organisation_ids is not None:
+		if not organisation_ids:
+			return Payment.objects.none()
+		queryset = queryset.filter(event__organisation_id__in=organisation_ids)
+	if event_id:
+		queryset = queryset.filter(event__event_id=event_id)
+	if date_from:
+		queryset = queryset.filter(created_at__date__gte=date_from)
+	if date_to:
+		queryset = queryset.filter(created_at__date__lte=date_to)
+	return queryset
+
+
+def _money_to_float(value) -> float:
+	if value is None:
+		return 0.0
+	if hasattr(value, "amount"):
+		return float(value.amount)
+	return float(value)
 
 
 def _get_revenue_sources(payments_queryset):
@@ -329,4 +403,284 @@ def calculate_payments_by_source_statistics(
 			"count": donation_total.count(),
 			"amount": float(verified_donation_amount),
 		},
+	}
+
+
+def calculate_sponsor_overview_statistics(
+	organisation_ids: list[int] | None = None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+) -> dict[str, Any]:
+	sponsors_qs = _base_sponsors_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	)
+	invites_qs = _base_sponsor_invites_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	)
+	payments_qs = _base_sponsor_payments_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	)
+
+	total_sponsors = sponsors_qs.count()
+	verification_counts = sponsors_qs.aggregate(
+		pending=Count("id", filter=Q(verification_status=VerificationStatus.PENDING)),
+		verified=Count("id", filter=Q(verification_status=VerificationStatus.VERIFIED)),
+		rejected=Count("id", filter=Q(verification_status=VerificationStatus.REJECTED)),
+		processed=Count("id", filter=Q(verification_status=VerificationStatus.PROCESSED)),
+	)
+
+	payment_counts = payments_qs.aggregate(
+		total=Count("id"),
+		completed=Count("id", filter=Q(status=PaymentStatusChoices.COMPLETED)),
+		pending=Count("id", filter=Q(status=PaymentStatusChoices.PENDING)),
+		failed=Count("id", filter=Q(status=PaymentStatusChoices.FAILED)),
+		cancelled=Count("id", filter=Q(status=PaymentStatusChoices.CANCELLED)),
+		completed_amount=Coalesce(Sum("base_amount", filter=Q(status=PaymentStatusChoices.COMPLETED)), Decimal("0.00")),
+		pending_amount=Coalesce(Sum("base_amount", filter=Q(status=PaymentStatusChoices.PENDING)), Decimal("0.00")),
+	)
+
+	commitment_amount = 0.0
+	for sponsor in sponsors_qs.select_related("package"):
+		if sponsor.package_id:
+			commitment_amount += _money_to_float(sponsor.package.modified_amount)
+
+	total_invites = invites_qs.count()
+	accepted_invites = invites_qs.filter(accepted=True).count()
+	declined_invites = invites_qs.filter(declined=True).count()
+	pending_invites = invites_qs.filter(accepted=False, declined=False).count()
+
+	event_breakdown_qs = sponsors_qs.values("event__event_id", "event__title").annotate(
+		sponsors=Count("id"),
+		organisations=Count("organisation_id", distinct=True),
+	).order_by("-sponsors")
+	event_completed_revenue = {
+		row["event__event_id"]: _money_to_float(row["amount"])
+		for row in payments_qs.filter(status=PaymentStatusChoices.COMPLETED)
+		.values("event__event_id")
+		.annotate(amount=Coalesce(Sum("base_amount"), Decimal("0.00")))
+	}
+	event_breakdown = []
+	for row in event_breakdown_qs:
+		event_breakdown.append(
+			{
+				"event_id": str(row["event__event_id"]),
+				"event_title": row["event__title"],
+				"sponsors": row["sponsors"],
+				"organisations": row["organisations"],
+				"completed_revenue": round(event_completed_revenue.get(row["event__event_id"], 0.0), 2),
+			}
+		)
+
+	completed_revenue = _money_to_float(payment_counts["completed_amount"])
+
+	return {
+		"total_sponsors": total_sponsors,
+		"unique_organisations_sponsoring": sponsors_qs.values("organisation_id").distinct().count(),
+		"verification_summary": {
+			"pending": verification_counts["pending"],
+			"verified": verification_counts["verified"],
+			"rejected": verification_counts["rejected"],
+			"processed": verification_counts["processed"],
+		},
+		"payment_summary": {
+			"total": payment_counts["total"],
+			"completed": payment_counts["completed"],
+			"pending": payment_counts["pending"],
+			"failed": payment_counts["failed"],
+			"cancelled": payment_counts["cancelled"],
+			"completed_revenue": round(completed_revenue, 2),
+			"pending_revenue": round(_money_to_float(payment_counts["pending_amount"]), 2),
+		},
+		"invite_summary": {
+			"total_sent": total_invites,
+			"accepted": accepted_invites,
+			"declined": declined_invites,
+			"pending": pending_invites,
+			"acceptance_rate": round((accepted_invites / total_invites) * 100, 2) if total_invites else 0.0,
+			"response_rate": round(((accepted_invites + declined_invites) / total_invites) * 100, 2)
+			if total_invites
+			else 0.0,
+		},
+		"commitment_amount": round(commitment_amount, 2),
+		"realization_rate": round((completed_revenue / commitment_amount) * 100, 2) if commitment_amount else 0.0,
+		"event_breakdown": event_breakdown,
+	}
+
+
+def calculate_sponsor_package_performance_statistics(
+	organisation_ids: list[int] | None = None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+	limit: int = 20,
+) -> dict[str, Any]:
+	sponsors_qs = _base_sponsors_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	).filter(package_id__isnull=False).select_related("package", "event")
+	payments_qs = _base_sponsor_payments_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	)
+
+	package_metrics: dict[int, dict[str, Any]] = {}
+	sponsor_package_by_id: dict[int, int] = {}
+	for sponsor in sponsors_qs:
+		if not sponsor.package_id:
+			continue
+		sponsor_package_by_id[sponsor.id] = sponsor.package_id
+		if sponsor.package_id not in package_metrics:
+			package_metrics[sponsor.package_id] = {
+				"package_id": str(sponsor.package.package_id),
+				"package_name": sponsor.package.package_name,
+				"tier": sponsor.package.tier,
+				"event_id": str(sponsor.event.event_id),
+				"event_title": sponsor.event.title,
+				"sponsor_count": 0,
+				"organisation_ids": set(),
+				"committed_revenue": 0.0,
+				"completed_payment_count": 0,
+				"completed_revenue": 0.0,
+			}
+
+		entry = package_metrics[sponsor.package_id]
+		entry["sponsor_count"] += 1
+		entry["organisation_ids"].add(sponsor.organisation_id)
+		entry["committed_revenue"] += _money_to_float(sponsor.package.modified_amount)
+
+	for payment in payments_qs.filter(status=PaymentStatusChoices.COMPLETED):
+		try:
+			sponsor_id = int(payment.target_id)
+		except (TypeError, ValueError):
+			continue
+		package_pk = sponsor_package_by_id.get(sponsor_id)
+		if not package_pk:
+			continue
+		entry = package_metrics[package_pk]
+		entry["completed_payment_count"] += 1
+		entry["completed_revenue"] += _money_to_float(payment.base_amount)
+
+	rows = []
+	for value in package_metrics.values():
+		sponsor_count = value["sponsor_count"]
+		rows.append(
+			{
+				"package_id": value["package_id"],
+				"package_name": value["package_name"],
+				"tier": value["tier"],
+				"event_id": value["event_id"],
+				"event_title": value["event_title"],
+				"sponsor_count": sponsor_count,
+				"organisation_count": len(value["organisation_ids"]),
+				"committed_revenue": round(value["committed_revenue"], 2),
+				"completed_payment_count": value["completed_payment_count"],
+				"completed_revenue": round(value["completed_revenue"], 2),
+				"realization_rate": round((value["completed_revenue"] / value["committed_revenue"]) * 100, 2)
+				if value["committed_revenue"]
+				else 0.0,
+				"payment_success_rate": round((value["completed_payment_count"] / sponsor_count) * 100, 2)
+				if sponsor_count
+				else 0.0,
+			}
+		)
+
+	rows.sort(key=lambda item: (item["completed_revenue"], item["sponsor_count"]), reverse=True)
+	rows = rows[:limit]
+
+	return {
+		"packages": rows,
+		"totals": {
+			"total_packages": len(package_metrics),
+			"total_sponsors": sum(item["sponsor_count"] for item in rows),
+			"total_committed_revenue": round(sum(item["committed_revenue"] for item in rows), 2),
+			"total_completed_revenue": round(sum(item["completed_revenue"] for item in rows), 2),
+		},
+		"limit": limit,
+	}
+
+
+def calculate_sponsor_invite_conversion_statistics(
+	organisation_ids: list[int] | None = None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+) -> dict[str, Any]:
+	invites_qs = _base_sponsor_invites_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	)
+
+	total_sent = invites_qs.count()
+	accepted = invites_qs.filter(accepted=True).count()
+	declined = invites_qs.filter(declined=True).count()
+	pending = invites_qs.filter(accepted=False, declined=False).count()
+
+	accepted_with_org = invites_qs.filter(accepted=True).exclude(organisation_id__isnull=True)
+	accepted_org_ids = set(accepted_with_org.values_list("organisation_id", flat=True))
+	accepted_event_ids = set(accepted_with_org.values_list("event_id", flat=True))
+
+	matching_sponsors = EventSponsor.objects.filter(
+		organisation_id__in=accepted_org_ids,
+		event_id__in=accepted_event_ids,
+		event__deleted_at__isnull=True,
+	)
+	if organisation_ids is not None:
+		if not organisation_ids:
+			matching_sponsors = EventSponsor.objects.none()
+		else:
+			matching_sponsors = matching_sponsors.filter(organisation_id__in=organisation_ids)
+	if event_id:
+		matching_sponsors = matching_sponsors.filter(event__event_id=event_id)
+
+	event_rows = invites_qs.values("event__event_id", "event__title").annotate(
+		total_sent=Count("id"),
+		accepted_count=Count("id", filter=Q(accepted=True)),
+		declined_count=Count("id", filter=Q(declined=True)),
+		pending_count=Count("id", filter=Q(accepted=False, declined=False)),
+	).order_by("-total_sent")
+
+	event_breakdown = []
+	for row in event_rows:
+		total_for_event = row["total_sent"]
+		event_breakdown.append(
+			{
+				"event_id": str(row["event__event_id"]),
+				"event_title": row["event__title"],
+				"total_sent": total_for_event,
+				"accepted": row["accepted_count"],
+				"declined": row["declined_count"],
+				"pending": row["pending_count"],
+				"acceptance_rate": round((row["accepted_count"] / total_for_event) * 100, 2)
+				if total_for_event
+				else 0.0,
+			}
+		)
+
+	return {
+		"summary": {
+			"total_sent": total_sent,
+			"accepted": accepted,
+			"declined": declined,
+			"pending": pending,
+			"acceptance_rate": round((accepted / total_sent) * 100, 2) if total_sent else 0.0,
+			"response_rate": round(((accepted + declined) / total_sent) * 100, 2) if total_sent else 0.0,
+			"accepted_with_resulting_sponsor": matching_sponsors.count(),
+		},
+		"event_breakdown": event_breakdown,
 	}

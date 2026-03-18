@@ -855,6 +855,31 @@ class EventSponsorCheckoutSerializer(serializers.Serializer):
         return attrs
 
 
+class SponsorshipPaymentTimelineItemSerializer(serializers.Serializer):
+    """Single sponsorship payment timeline entry."""
+
+    payment_id = serializers.UUIDField(read_only=True)
+    payment_reference = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    amount = serializers.CharField(read_only=True)
+    currency = serializers.CharField(read_only=True)
+    method_type = serializers.CharField(read_only=True, allow_null=True)
+    method_title = serializers.CharField(read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+
+
+class SponsorshipPaymentHistorySerializer(serializers.Serializer):
+    """Organisation sponsorship payment history grouped by selected event."""
+
+    event_id = serializers.UUIDField(read_only=True)
+    event_title = serializers.CharField(read_only=True)
+    organisation_id = serializers.IntegerField(read_only=True)
+    organisation_title = serializers.CharField(read_only=True)
+    summary = serializers.DictField(read_only=True)
+    timeline = SponsorshipPaymentTimelineItemSerializer(many=True, read_only=True)
+
+
 # ============================================================================
 # EVENT SPONSOR PACKAGE SERIALIZERS
 # ============================================================================
@@ -964,7 +989,7 @@ class EventSponsorPackageCreateUpdateSerializer(serializers.ModelSerializer):
         model = EventSponsorPackage
         fields = (
             'event', 'package_name', 'package_description',
-            'base_amount', 'percentage_modifier', 'active', 'tier'
+            'base_amount', 'base_amount_currency', 'percentage_modifier', 'active', 'tier'
         )
     
     def validate_base_amount(self, value):

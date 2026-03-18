@@ -2,6 +2,7 @@
 Organisation Statistics API ViewSet.
 """
 from datetime import datetime
+from uuid import UUID
 
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
@@ -16,7 +17,11 @@ from apps.organisations.api.serializers.statistics import (
 	LeaderDistributionSerializer,
 	OverviewStatisticsSerializer,
 	PaymentSourcesSerializer,
+	SponsorInviteConversionSerializer,
+	SponsorOverviewStatisticsSerializer,
+	SponsorPackagePerformanceSerializer,
 )
+from apps.events.models import Event
 from apps.organisations.models import Organisation, OrganisationControl
 
 
@@ -54,6 +59,14 @@ DATE_TO_PARAM = OpenApiParameter(
 	type=OpenApiTypes.DATE,
 	location=OpenApiParameter.QUERY,
 	description="End date filter (YYYY-MM-DD).",
+	required=False,
+)
+
+EVENT_ID_PARAM = OpenApiParameter(
+	name="event_id",
+	type=OpenApiTypes.UUID,
+	location=OpenApiParameter.QUERY,
+	description="Event public UUID filter.",
 	required=False,
 )
 
@@ -126,9 +139,30 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 			"requested_organisation_id": None,
 		}
 
+	def _parse_event_id(self, value: str | None, scope: dict[str, object]):
+		if not value:
+			return None
+
+		try:
+			UUID(value)
+		except ValueError as exc:
+			raise exceptions.ValidationError({"event_id": "Must be a valid UUID."}) from exc
+
+		event = Event.objects.filter(event_id=value).first()
+		if event is None:
+			raise exceptions.NotFound("Event not found.")
+
+		organisation_ids = scope.get("organisation_ids")
+		if organisation_ids is not None and event.organisation_id not in organisation_ids:
+			raise exceptions.PermissionDenied(
+				"You can only access statistics for events in organisations you control."
+			)
+		return event.event_id
+
 	def _build_filters_metadata(self, request):
 		return {
 			"organisation_id": request.query_params.get("organisation_id"),
+			"event_id": request.query_params.get("event_id"),
 			"date_from": request.query_params.get("date_from"),
 			"date_to": request.query_params.get("date_to"),
 			"format": request.query_params.get("format", "raw"),
@@ -143,6 +177,9 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 					"leaders-distribution": "Distribution of leaders over location types and areas",
 					"event-performance": "Event counts, attendees, and payment totals/averages per event",
 					"payments-by-source": "Completed payments split by bookings/donations/sponsorships",
+					"sponsors-overview": "Sponsor pipeline, commitments, and realized payment metrics",
+					"sponsor-packages-performance": "Per-package sponsor adoption and revenue realization",
+					"sponsor-invite-conversion": "Sponsor invite acceptance and conversion analytics",
 				}
 			}
 		)
@@ -271,4 +308,153 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 		payload["filters_applied"] = self._build_filters_metadata(request)
 
 		serializer = PaymentSourcesSerializer(payload, context={"request": request})
+		return Response(serializer.data)
+
+	@extend_schema(
+		summary="Sponsor overview statistics",
+		description="Sponsor KPI overview with verification, payment, invite and event-level breakdowns.",
+		parameters=[ORGANISATION_ID_PARAM, EVENT_ID_PARAM, DATE_FROM_PARAM, DATE_TO_PARAM, FORMAT_PARAM],
+		responses={200: SponsorOverviewStatisticsSerializer},
+		tags=["Sponsor Statistics"],
+		examples=[
+			OpenApiExample(
+				"Sponsor Overview Example",
+				value={
+					"total_sponsors": 8,
+					"unique_organisations_sponsoring": 5,
+					"verification_summary": {"pending": 2, "verified": 4, "rejected": 1, "processed": 1},
+					"payment_summary": {"total": 7, "completed": 5, "pending": 1, "failed": 1, "cancelled": 0, "completed_revenue": 5250.0, "pending_revenue": 500.0},
+					"invite_summary": {"total_sent": 10, "accepted": 5, "declined": 2, "pending": 3, "acceptance_rate": 50.0, "response_rate": 70.0},
+					"commitment_amount": 6000.0,
+					"realization_rate": 87.5,
+				},
+				response_only=True,
+			)
+		],
+	)
+	@action(detail=False, methods=["get"], url_path="sponsors-overview")
+	def sponsors_overview(self, request):
+		scope = self._get_scope(request)
+		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
+		event_id = self._parse_event_id(request.query_params.get("event_id"), scope)
+
+		payload = statistics.calculate_sponsor_overview_statistics(
+			organisation_ids=scope["organisation_ids"],
+			event_id=event_id,
+			date_from=date_from,
+			date_to=date_to,
+		)
+		payload["generated_at"] = datetime.utcnow()
+		payload["scope"] = {
+			"type": scope["scope_label"],
+			"organisation_ids": scope["organisation_ids"],
+		}
+		payload["filters_applied"] = self._build_filters_metadata(request)
+
+		serializer = SponsorOverviewStatisticsSerializer(payload, context={"request": request})
+		return Response(serializer.data)
+
+	@extend_schema(
+		summary="Sponsor package performance statistics",
+		description="Package-level sponsor counts, committed revenue, completed revenue and realization rates.",
+		parameters=[ORGANISATION_ID_PARAM, EVENT_ID_PARAM, DATE_FROM_PARAM, DATE_TO_PARAM, LIMIT_PARAM, FORMAT_PARAM],
+		responses={200: SponsorPackagePerformanceSerializer},
+		tags=["Sponsor Statistics"],
+		examples=[
+			OpenApiExample(
+				"Sponsor Package Performance Example",
+				value={
+					"packages": [
+						{
+							"package_name": "Gold",
+							"sponsor_count": 3,
+							"committed_revenue": 3000.0,
+							"completed_revenue": 2500.0,
+							"realization_rate": 83.33,
+						}
+					],
+					"totals": {"total_packages": 1, "total_sponsors": 3, "total_committed_revenue": 3000.0, "total_completed_revenue": 2500.0},
+					"limit": 20,
+				},
+				response_only=True,
+			)
+		],
+	)
+	@action(detail=False, methods=["get"], url_path="sponsor-packages-performance")
+	def sponsor_packages_performance(self, request):
+		scope = self._get_scope(request)
+		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
+		event_id = self._parse_event_id(request.query_params.get("event_id"), scope)
+
+		try:
+			limit = int(request.query_params.get("limit", 20))
+		except ValueError as exc:
+			raise exceptions.ValidationError({"limit": "Must be an integer."}) from exc
+		if limit < 1:
+			raise exceptions.ValidationError({"limit": "Must be greater than zero."})
+
+		payload = statistics.calculate_sponsor_package_performance_statistics(
+			organisation_ids=scope["organisation_ids"],
+			event_id=event_id,
+			date_from=date_from,
+			date_to=date_to,
+			limit=limit,
+		)
+		payload["generated_at"] = datetime.utcnow()
+		payload["scope"] = {
+			"type": scope["scope_label"],
+			"organisation_ids": scope["organisation_ids"],
+		}
+		payload["filters_applied"] = self._build_filters_metadata(request)
+
+		serializer = SponsorPackagePerformanceSerializer(payload, context={"request": request})
+		return Response(serializer.data)
+
+	@extend_schema(
+		summary="Sponsor invite conversion statistics",
+		description="Invite outcomes and conversion from accepted invites to actual sponsors.",
+		parameters=[ORGANISATION_ID_PARAM, EVENT_ID_PARAM, DATE_FROM_PARAM, DATE_TO_PARAM, FORMAT_PARAM],
+		responses={200: SponsorInviteConversionSerializer},
+		tags=["Sponsor Statistics"],
+		examples=[
+			OpenApiExample(
+				"Sponsor Invite Conversion Example",
+				value={
+					"summary": {
+						"total_sent": 12,
+						"accepted": 6,
+						"declined": 3,
+						"pending": 3,
+						"acceptance_rate": 50.0,
+						"response_rate": 75.0,
+						"accepted_with_resulting_sponsor": 5,
+					},
+				},
+				response_only=True,
+			)
+		],
+	)
+	@action(detail=False, methods=["get"], url_path="sponsor-invite-conversion")
+	def sponsor_invite_conversion(self, request):
+		scope = self._get_scope(request)
+		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
+		event_id = self._parse_event_id(request.query_params.get("event_id"), scope)
+
+		payload = statistics.calculate_sponsor_invite_conversion_statistics(
+			organisation_ids=scope["organisation_ids"],
+			event_id=event_id,
+			date_from=date_from,
+			date_to=date_to,
+		)
+		payload["generated_at"] = datetime.utcnow()
+		payload["scope"] = {
+			"type": scope["scope_label"],
+			"organisation_ids": scope["organisation_ids"],
+		}
+		payload["filters_applied"] = self._build_filters_metadata(request)
+
+		serializer = SponsorInviteConversionSerializer(payload, context={"request": request})
 		return Response(serializer.data)

@@ -333,6 +333,19 @@ class EventSettings(models.Model):
         default=False,
         help_text="Whether accepting sponsorships is enabled for this event."
     ) # whether accepting sponsorships is enabled for this event
+    requires_verified_sponsors_for_checkout = models.BooleanField(
+        default=False,
+        help_text="Whether sponsorship checkout requires verified sponsors before completion."
+    )
+    requires_invite_acceptance_for_checkout = models.BooleanField(
+        default=False,
+        help_text="Whether sponsorship checkout is limited to accepted invite token flow."
+    )
+    sponsor_checkout_policy_notes = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Optional organiser notes describing sponsorship checkout policy."
+    )
 
     participants_registration_require_verification = models.BooleanField(
         default=False,

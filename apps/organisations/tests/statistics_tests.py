@@ -17,6 +17,8 @@ from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventStatusChoices, EventType
 from apps.locations.models import AreaLocation, ChapterLocation
 from apps.organisations.models import (
+	EventSponsor,
+	EventSponsorInvite,
     EventSponsorPackage,
     Leader,
     Organisation,
@@ -139,6 +141,7 @@ class OrganisationStatisticsAPITest(TestCase):
         )
         sponsor_ct = ContentType.objects.get_for_model(EventSponsorPackage)
         donation_ct = ContentType.objects.get_for_model(Donation)
+        sponsor_object_ct = ContentType.objects.get_for_model(EventSponsor)
 
         booking_payment = Payment.objects.create(
             user=self.controller,
@@ -163,6 +166,82 @@ class OrganisationStatisticsAPITest(TestCase):
             status=PaymentStatusChoices.COMPLETED,
             target_type=sponsor_ct,
             target_id=str(sponsor_pkg.pk),
+        )
+
+        self.org1_sponsor = EventSponsor.objects.create(
+            name="Org1 Sponsor",
+            description="Primary sponsor",
+            organisation=self.org1,
+            event=self.org1_event_open,
+            package=sponsor_pkg,
+            added_by=self.controller,
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        self.org1_sponsor_pending_payment = EventSponsor.objects.create(
+            name="Org1 Sponsor Pending",
+            description="Pending payment sponsor",
+            organisation=self.org1,
+            event=self.org1_event_completed,
+            package=sponsor_pkg,
+            added_by=self.controller,
+            verification_status=VerificationStatus.PENDING,
+        )
+        self.org2_sponsor = EventSponsor.objects.create(
+            name="Org2 Sponsor",
+            description="Out of scope sponsor",
+            organisation=self.org2,
+            event=self.org2_event,
+            added_by=self.superuser,
+            verification_status=VerificationStatus.REJECTED,
+        )
+
+        Payment.objects.create(
+            user=self.controller,
+            event=self.org1_event_open,
+            base_amount=Money(250, "GBP"),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=sponsor_object_ct,
+            target_id=str(self.org1_sponsor.pk),
+        )
+        Payment.objects.create(
+            user=self.controller,
+            event=self.org1_event_completed,
+            base_amount=Money(250, "GBP"),
+            status=PaymentStatusChoices.PENDING,
+            target_type=sponsor_object_ct,
+            target_id=str(self.org1_sponsor_pending_payment.pk),
+        )
+        Payment.objects.create(
+            user=self.superuser,
+            event=self.org2_event,
+            base_amount=Money(300, "GBP"),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=sponsor_object_ct,
+            target_id=str(self.org2_sponsor.pk),
+        )
+
+        EventSponsorInvite.objects.create(
+            event=self.org1_event_open,
+            email="accepted-org1@example.com",
+            organisation=self.org1,
+            accepted=True,
+        )
+        EventSponsorInvite.objects.create(
+            event=self.org1_event_open,
+            email="declined-org1@example.com",
+            organisation=self.org1,
+            declined=True,
+        )
+        EventSponsorInvite.objects.create(
+            event=self.org1_event_completed,
+            email="pending-org1@example.com",
+            organisation=self.org1,
+        )
+        EventSponsorInvite.objects.create(
+            event=self.org2_event,
+            email="accepted-org2@example.com",
+            organisation=self.org2,
+            accepted=True,
         )
 
         Donation.objects.create(
@@ -210,7 +289,7 @@ class OrganisationStatisticsAPITest(TestCase):
         self.assertEqual(response.data["total_events"], 2)
         self.assertEqual(response.data["total_attendees"], 2)
         self.assertEqual(response.data["total_members"], 2)
-        self.assertEqual(response.data["total_revenue"], 350.0)
+        self.assertEqual(response.data["total_revenue"], 600.0)
 
     def test_leader_distribution_returns_all_location_type_buckets_present(self):
         self.client.force_authenticate(user=self.controller)
@@ -240,4 +319,40 @@ class OrganisationStatisticsAPITest(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["total_events"], 1)
-        self.assertEqual(response.data["total_revenue"], 999.0)
+        self.assertEqual(response.data["total_revenue"], 1299.0)
+
+    def test_sponsors_overview_scoped_to_controller_organisations(self):
+        self.client.force_authenticate(user=self.controller)
+        url = reverse("organisations:organisationstatistics-sponsors-overview")
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total_sponsors"], 2)
+        self.assertEqual(response.data["payment_summary"]["completed"], 1)
+        self.assertEqual(response.data["payment_summary"]["pending"], 1)
+        self.assertEqual(response.data["invite_summary"]["total_sent"], 3)
+
+    def test_sponsor_packages_performance_respects_event_filter(self):
+        self.client.force_authenticate(user=self.controller)
+        url = reverse("organisations:organisationstatistics-sponsor-packages-performance")
+
+        response = self.client.get(url, {"event_id": str(self.org1_event_open.event_id)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["packages"]), 1)
+        self.assertEqual(response.data["packages"][0]["sponsor_count"], 1)
+        self.assertEqual(response.data["packages"][0]["completed_payment_count"], 1)
+
+    def test_sponsor_invite_conversion_scoped_for_controller(self):
+        self.client.force_authenticate(user=self.controller)
+        url = reverse("organisations:organisationstatistics-sponsor-invite-conversion")
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        summary = response.data["summary"]
+        self.assertEqual(summary["total_sent"], 3)
+        self.assertEqual(summary["accepted"], 1)
+        self.assertEqual(summary["declined"], 1)
+        self.assertEqual(summary["pending"], 1)

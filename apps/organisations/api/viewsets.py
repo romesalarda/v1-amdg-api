@@ -25,7 +25,7 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, Count, Sum
 from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth import get_user_model
@@ -58,7 +58,7 @@ from .serializers import (
     EventSponsorListSerializer, EventSponsorDetailSerializer, EventSponsorCreateUpdateSerializer,
     EventSponsorPackageListSerializer, EventSponsorPackageDetailSerializer, EventSponsorPackageCreateUpdateSerializer,
     EventSponsorInviteListSerializer, EventSponsorInviteDetailSerializer, EventSponsorInviteCreateUpdateSerializer,
-    EventSponsorCheckoutSerializer,
+    EventSponsorCheckoutSerializer, SponsorshipPaymentHistorySerializer,
     LeaderListSerializer, LeaderDetailSerializer, LeaderCreateUpdateSerializer,
     LocationLeaderInviteListSerializer, LocationLeaderInviteDetailSerializer, LocationLeaderInviteCreateUpdateSerializer
 )
@@ -723,6 +723,11 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
         settings_obj = getattr(event, 'settings', None)
         if settings_obj and not settings_obj.accepting_sponsorships_enabled:
             return Response({'error': 'Sponsorships are not enabled for this event.'}, status=status.HTTP_400_BAD_REQUEST)
+        if settings_obj and settings_obj.requires_invite_acceptance_for_checkout and not invite:
+            return Response(
+                {'error': 'This event requires sponsorship invite acceptance before checkout.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             package = EventSponsorPackage.objects.get(package_id=data['package_id'])
@@ -852,6 +857,134 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
                 invite.save(update_fields=['accepted', 'declined', 'responded_at'])
 
         return Response(response_data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        summary="Sponsorship payment history",
+        description=(
+            "Get sponsorship payment summary and timeline for an organisation and event pair. "
+            "Only organisation controllers or staff can access this endpoint."
+        ),
+        tags=["Event Sponsors"],
+        parameters=[
+            OpenApiParameter(name='organisation_id', type=OpenApiTypes.INT, required=True, description='Organisation ID.'),
+            OpenApiParameter(name='event_id', type=OpenApiTypes.UUID, required=True, description='Event public UUID.'),
+        ],
+        responses={200: SponsorshipPaymentHistorySerializer},
+    )
+    @action(detail=False, methods=['get'], url_path='payment-history', permission_classes=[permissions.IsAuthenticated])
+    def payment_history(self, request):
+        organisation_id = request.query_params.get('organisation_id')
+        event_id = request.query_params.get('event_id')
+
+        if not organisation_id:
+            return Response({'organisation_id': ['organisation_id is required.']}, status=status.HTTP_400_BAD_REQUEST)
+        if not event_id:
+            return Response({'event_id': ['event_id is required.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            organisation = Organisation.objects.get(pk=organisation_id)
+        except Organisation.DoesNotExist:
+            return Response({'organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            event = Event.objects.get(event_id=event_id)
+        except Event.DoesNotExist:
+            return Response({'event_id': ['Event not found.']}, status=status.HTTP_404_NOT_FOUND)
+
+        is_org_controller = request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
+            organisation=organisation,
+            user=request.user,
+        ).exists()
+        if not is_org_controller:
+            return Response(
+                {'error': 'You must control this organisation to view sponsorship payments.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        sponsor_ids = list(
+            EventSponsor.objects.filter(
+                organisation=organisation,
+                event=event,
+            ).values_list('id', flat=True)
+        )
+
+        if not sponsor_ids:
+            data = {
+                'event_id': event.event_id,
+                'event_title': event.title,
+                'organisation_id': organisation.id,
+                'organisation_title': organisation.title,
+                'summary': {
+                    'total_payments': 0,
+                    'completed_payments': 0,
+                    'pending_payments': 0,
+                    'failed_payments': 0,
+                    'cancelled_payments': 0,
+                    'total_completed_amount': '0.00',
+                    'currency': 'GBP',
+                },
+                'timeline': [],
+            }
+            serializer = SponsorshipPaymentHistorySerializer(data)
+            return Response(serializer.data)
+
+        sponsor_content_type = ContentType.objects.get_for_model(EventSponsor)
+        payment_queryset = Payment.objects.select_related('method').filter(
+            target_type=sponsor_content_type,
+            target_id__in=[str(sponsor_id) for sponsor_id in sponsor_ids],
+            event=event,
+        ).order_by('-created_at')
+
+        aggregates = payment_queryset.aggregate(
+            total_payments=Count('id'),
+            completed_payments=Count('id', filter=Q(status=PaymentStatusChoices.COMPLETED)),
+            pending_payments=Count('id', filter=Q(status=PaymentStatusChoices.PENDING)),
+            failed_payments=Count('id', filter=Q(status=PaymentStatusChoices.FAILED)),
+            cancelled_payments=Count('id', filter=Q(status=PaymentStatusChoices.CANCELLED)),
+            total_completed_amount=Sum('base_amount', filter=Q(status=PaymentStatusChoices.COMPLETED)),
+        )
+
+        total_completed_amount = aggregates.get('total_completed_amount')
+        if total_completed_amount is None:
+            total_completed_amount_value = '0.00'
+            currency = 'GBP'
+        else:
+            total_completed_amount_value = str(getattr(total_completed_amount, 'amount', total_completed_amount))
+            currency = str(getattr(total_completed_amount, 'currency', 'GBP'))
+
+        timeline = [
+            {
+                'payment_id': payment.payment_id,
+                'payment_reference': payment.payment_reference,
+                'status': payment.status,
+                'amount': str(payment.base_amount.amount) if payment.base_amount else '0.00',
+                'currency': str(payment.base_amount.currency) if payment.base_amount else currency,
+                'method_type': payment.method.method_type if payment.method else None,
+                'method_title': payment.method.title if payment.method else None,
+                'created_at': payment.created_at,
+                'updated_at': payment.updated_at,
+            }
+            for payment in payment_queryset
+        ]
+
+        response_payload = {
+            'event_id': event.event_id,
+            'event_title': event.title,
+            'organisation_id': organisation.id,
+            'organisation_title': organisation.title,
+            'summary': {
+                'total_payments': aggregates.get('total_payments', 0),
+                'completed_payments': aggregates.get('completed_payments', 0),
+                'pending_payments': aggregates.get('pending_payments', 0),
+                'failed_payments': aggregates.get('failed_payments', 0),
+                'cancelled_payments': aggregates.get('cancelled_payments', 0),
+                'total_completed_amount': total_completed_amount_value,
+                'currency': currency,
+            },
+            'timeline': timeline,
+        }
+        serializer = SponsorshipPaymentHistorySerializer(response_payload)
+        return Response(serializer.data)
 
 
 # ============================================================================

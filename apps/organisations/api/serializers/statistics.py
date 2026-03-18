@@ -167,3 +167,149 @@ class PaymentSourcesSerializer(BaseOrganisationStatisticsSerializer):
 
 	class Meta:
 		ref_name = "OrganisationPaymentSourcesStatistics"
+
+
+class SponsorOverviewStatisticsSerializer(BaseOrganisationStatisticsSerializer):
+	total_sponsors = serializers.IntegerField()
+	unique_organisations_sponsoring = serializers.IntegerField()
+	verification_summary = serializers.DictField()
+	payment_summary = serializers.DictField()
+	invite_summary = serializers.DictField()
+	commitment_amount = serializers.FloatField()
+	realization_rate = serializers.FloatField()
+	event_breakdown = serializers.ListField(child=serializers.DictField())
+	generated_at = serializers.DateTimeField()
+	scope = serializers.DictField()
+	filters_applied = serializers.DictField()
+
+	def format_for_echarts(self, data: dict[str, Any]) -> dict[str, Any]:
+		verification_summary = data.get("verification_summary", {})
+		payment_summary = data.get("payment_summary", {})
+		invite_summary = data.get("invite_summary", {})
+
+		return {
+			"verification_status_chart": formatters.format_pie_chart(
+				data=[
+					{"label": "Pending", "value": verification_summary.get("pending", 0)},
+					{"label": "Verified", "value": verification_summary.get("verified", 0)},
+					{"label": "Rejected", "value": verification_summary.get("rejected", 0)},
+					{"label": "Processed", "value": verification_summary.get("processed", 0)},
+				],
+				title="Sponsor Verification Status",
+			),
+			"payment_status_chart": formatters.format_pie_chart(
+				data=[
+					{"label": "Completed", "value": payment_summary.get("completed", 0)},
+					{"label": "Pending", "value": payment_summary.get("pending", 0)},
+					{"label": "Failed", "value": payment_summary.get("failed", 0)},
+					{"label": "Cancelled", "value": payment_summary.get("cancelled", 0)},
+				],
+				title="Sponsor Payment Status",
+			),
+			"event_revenue_chart": formatters.format_bar_chart(
+				data=[
+					{"label": item.get("event_title"), "value": item.get("completed_revenue", 0)}
+					for item in data.get("event_breakdown", [])
+				],
+				title="Completed Sponsorship Revenue by Event",
+				x_axis_label="Event",
+				y_axis_label="Revenue",
+			),
+			"summary": {
+				"total_sponsors": data.get("total_sponsors", 0),
+				"commitment_amount": data.get("commitment_amount", 0.0),
+				"completed_revenue": payment_summary.get("completed_revenue", 0.0),
+				"realization_rate": data.get("realization_rate", 0.0),
+				"invite_acceptance_rate": invite_summary.get("acceptance_rate", 0.0),
+			},
+			"scope": data.get("scope", {}),
+			"filters_applied": data.get("filters_applied", {}),
+			"generated_at": data.get("generated_at"),
+		}
+
+	class Meta:
+		ref_name = "OrganisationSponsorOverviewStatistics"
+
+
+class SponsorPackagePerformanceSerializer(BaseOrganisationStatisticsSerializer):
+	packages = serializers.ListField(child=serializers.DictField())
+	totals = serializers.DictField()
+	limit = serializers.IntegerField()
+	generated_at = serializers.DateTimeField()
+	scope = serializers.DictField()
+	filters_applied = serializers.DictField()
+
+	def format_for_echarts(self, data: dict[str, Any]) -> dict[str, Any]:
+		return {
+			"package_committed_revenue_chart": formatters.format_bar_chart(
+				data=[
+					{"label": item.get("package_name"), "value": item.get("committed_revenue", 0)}
+					for item in data.get("packages", [])
+				],
+				title="Committed Sponsorship Revenue by Package",
+				x_axis_label="Package",
+				y_axis_label="Revenue",
+			),
+			"package_realized_revenue_chart": formatters.format_bar_chart(
+				data=[
+					{"label": item.get("package_name"), "value": item.get("completed_revenue", 0)}
+					for item in data.get("packages", [])
+				],
+				title="Realized Sponsorship Revenue by Package",
+				x_axis_label="Package",
+				y_axis_label="Revenue",
+			),
+			"package_sponsor_count_chart": formatters.format_bar_chart(
+				data=[
+					{"label": item.get("package_name"), "value": item.get("sponsor_count", 0)}
+					for item in data.get("packages", [])
+				],
+				title="Sponsors per Package",
+				x_axis_label="Package",
+				y_axis_label="Sponsors",
+			),
+			"totals": data.get("totals", {}),
+			"scope": data.get("scope", {}),
+			"filters_applied": data.get("filters_applied", {}),
+			"generated_at": data.get("generated_at"),
+		}
+
+	class Meta:
+		ref_name = "OrganisationSponsorPackagePerformanceStatistics"
+
+
+class SponsorInviteConversionSerializer(BaseOrganisationStatisticsSerializer):
+	summary = serializers.DictField()
+	event_breakdown = serializers.ListField(child=serializers.DictField())
+	generated_at = serializers.DateTimeField()
+	scope = serializers.DictField()
+	filters_applied = serializers.DictField()
+
+	def format_for_echarts(self, data: dict[str, Any]) -> dict[str, Any]:
+		summary = data.get("summary", {})
+		return {
+			"invite_outcome_chart": formatters.format_pie_chart(
+				data=[
+					{"label": "Accepted", "value": summary.get("accepted", 0)},
+					{"label": "Declined", "value": summary.get("declined", 0)},
+					{"label": "Pending", "value": summary.get("pending", 0)},
+				],
+				title="Sponsor Invite Outcomes",
+			),
+			"event_acceptance_chart": formatters.format_bar_chart(
+				data=[
+					{"label": item.get("event_title"), "value": item.get("acceptance_rate", 0)}
+					for item in data.get("event_breakdown", [])
+				],
+				title="Invite Acceptance Rate by Event",
+				x_axis_label="Event",
+				y_axis_label="Acceptance Rate (%)",
+			),
+			"summary": summary,
+			"scope": data.get("scope", {}),
+			"filters_applied": data.get("filters_applied", {}),
+			"generated_at": data.get("generated_at"),
+		}
+
+	class Meta:
+		ref_name = "OrganisationSponsorInviteConversionStatistics"

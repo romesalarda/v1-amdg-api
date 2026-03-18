@@ -5,7 +5,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, Count
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
@@ -36,7 +36,7 @@ from apps.common.api.serializers import (
 from apps.events.api.serializers import (
     
     EventTypeSerializer, EventListSerializer, EventDetailSerializer,
-    EventCreateUpdateSerializer, EventSettingsSerializer,
+    EventCreateUpdateSerializer, EventSettingsSerializer, SponsorableEventListSerializer,
     EventAuthorizationSerializer, EventPermissionSerializer,
     EventPermissionAssignmentSerializer, EventRoleSerializer,
     EventRoleAssignmentSerializer, EventStaffSerializer,
@@ -345,6 +345,50 @@ class EventViewSet(viewsets.ModelViewSet):
             serializer = EventListSerializer(page, many=True, context={'request': request})
             return self.get_paginated_response(serializer.data)
         serializer = EventListSerializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Get sponsorable events",
+        description=(
+            "Retrieve events available for sponsorship checkout. "
+            "Results are limited to events with sponsorships enabled and at least one active sponsorship package."
+        ),
+        tags=["Events"],
+        responses={200: SponsorableEventListSerializer(many=True)},
+        parameters=[
+            OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Search by title, description, or display code.'),
+            OpenApiParameter(name='page', type=OpenApiTypes.INT, description='Page number.'),
+            OpenApiParameter(name='page_size', type=OpenApiTypes.INT, description='Number of results per page.'),
+        ],
+    )
+    @action(detail=False, methods=['get'], url_path='sponsorable')
+    def sponsorable(self, request):
+        queryset = self.get_queryset().filter(
+            settings__accepting_sponsorships_enabled=True,
+            sponsorship_packages__active=True,
+        ).annotate(
+            active_sponsorship_packages_count=Count(
+                'sponsorship_packages',
+                filter=Q(sponsorship_packages__active=True),
+                distinct=True,
+            )
+        ).distinct()
+
+        search_value = request.query_params.get('search')
+        if search_value:
+            queryset = queryset.filter(
+                Q(title__icontains=search_value)
+                | Q(short_description__icontains=search_value)
+                | Q(long_description__icontains=search_value)
+                | Q(display_code__icontains=search_value)
+            )
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = SponsorableEventListSerializer(page, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
+
+        serializer = SponsorableEventListSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(

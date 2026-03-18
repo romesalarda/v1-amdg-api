@@ -76,6 +76,8 @@ class EventSettingsSerializer(serializers.ModelSerializer):
             'id', 'event', 'payment_enabled', 'product_publication_requires_verification',
             'product_selling_enabled', 'donation_enabled', 'refunds_enabled',
             'accepting_sponsorships_enabled', 'participants_registration_require_verification',
+            'requires_verified_sponsors_for_checkout', 'requires_invite_acceptance_for_checkout',
+            'sponsor_checkout_policy_notes',
             'default_timezone', '_links'
         )
         read_only_fields = ('id',)
@@ -171,6 +173,50 @@ class EventListSerializer(serializers.ModelSerializer):
         )
         
         return links
+
+
+class SponsorableEventListSerializer(EventListSerializer):
+    """List serializer for organisation-facing sponsorable event discovery."""
+
+    accepting_sponsorships_enabled = serializers.BooleanField(
+        source='settings.accepting_sponsorships_enabled',
+        read_only=True,
+    )
+    requires_invite_acceptance_for_checkout = serializers.BooleanField(
+        source='settings.requires_invite_acceptance_for_checkout',
+        read_only=True,
+    )
+    requires_verified_sponsors_for_checkout = serializers.BooleanField(
+        source='settings.requires_verified_sponsors_for_checkout',
+        read_only=True,
+    )
+    sponsor_checkout_policy_notes = serializers.CharField(
+        source='settings.sponsor_checkout_policy_notes',
+        read_only=True,
+        allow_null=True,
+    )
+    active_sponsorship_packages_count = serializers.IntegerField(read_only=True)
+    can_checkout = serializers.SerializerMethodField()
+
+    class Meta(EventListSerializer.Meta):
+        fields = EventListSerializer.Meta.fields + (
+            'accepting_sponsorships_enabled',
+            'requires_invite_acceptance_for_checkout',
+            'requires_verified_sponsors_for_checkout',
+            'sponsor_checkout_policy_notes',
+            'active_sponsorship_packages_count',
+            'can_checkout',
+        )
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_can_checkout(self, obj):
+        settings_obj = getattr(obj, 'settings', None)
+        if not settings_obj:
+            return False
+        return bool(
+            settings_obj.accepting_sponsorships_enabled
+            and getattr(obj, 'active_sponsorship_packages_count', 0) > 0
+        )
 
 
 class EventDetailSerializer(serializers.ModelSerializer):
