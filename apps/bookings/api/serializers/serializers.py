@@ -1142,11 +1142,100 @@ class ProductSelectionSerializer(serializers.Serializer):
         return attrs
 
 
+class EmergencyContactDraftSerializer(serializers.Serializer):
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    relationship = serializers.ChoiceField(
+        choices=[
+            'parent', 'sibling', 'child', 'spouse', 'friend', 'other'
+        ]
+    )
+    phone_number = serializers.CharField()
+    email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
+    primary_contact = serializers.BooleanField(required=False, default=True)
+
+
+class PersonalInfoItemSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    details = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class MedicalConditionItemSerializer(PersonalInfoItemSerializer):
+    severity = serializers.ChoiceField(
+        choices=['mild', 'moderate', 'severe'],
+        required=False,
+        allow_null=True
+    )
+
+
+class AttendeePersonalInfoDraftSerializer(serializers.Serializer):
+    dietary_requirements = PersonalInfoItemSerializer(many=True, required=False)
+    medical_conditions = MedicalConditionItemSerializer(many=True, required=False)
+    accessibility_requirements = PersonalInfoItemSerializer(many=True, required=False)
+    emergency_contact = EmergencyContactDraftSerializer(required=False)
+
+
+class AttendeeConsentDraftSerializer(serializers.Serializer):
+    consent_id = serializers.IntegerField()
+    consent_given = serializers.BooleanField(default=False)
+
+
+class EventQuestionAnswerDraftSerializer(serializers.Serializer):
+    question_id = serializers.UUIDField()
+    answer_text = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    selected_option_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False
+    )
+    upload_resource_id = serializers.IntegerField(required=False)
+    upload_url = serializers.URLField(required=False)
+
+    def validate(self, attrs):
+        answer_text = attrs.get('answer_text')
+        selected_option_ids = attrs.get('selected_option_ids', [])
+        upload_resource_id = attrs.get('upload_resource_id')
+        upload_url = attrs.get('upload_url')
+
+        if upload_resource_id and upload_url:
+            raise serializers.ValidationError(
+                'Provide only one of upload_resource_id or upload_url.'
+            )
+
+        if not answer_text and not selected_option_ids and not upload_resource_id and not upload_url:
+            raise serializers.ValidationError(
+                'An answer, selected options, or upload reference is required.'
+            )
+
+        return attrs
+
+
+class AttendeeDraftSerializer(serializers.Serializer):
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
+    phone_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    date_of_birth = serializers.DateField()
+    gender = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    relationship_to_user = serializers.ChoiceField(
+        choices=['self', 'spouse', 'child', 'friend', 'parent', 'sibling', 'other']
+    )
+    area_from = serializers.IntegerField(required=False, allow_null=True)
+    personal_info = AttendeePersonalInfoDraftSerializer(required=False)
+    consents = AttendeeConsentDraftSerializer(many=True, required=False)
+    question_answers = EventQuestionAnswerDraftSerializer(many=True, required=False)
+
+
 class AttendeeCheckoutSerializer(serializers.Serializer):
     """Serializer for a single attendee's package and product selections."""
-    
+
     attendee_id = serializers.UUIDField(
+        required=False,
         help_text="UUID of the attendee this selection is for"
+    )
+    attendee = AttendeeDraftSerializer(
+        required=False,
+        help_text="Draft attendee data to create during checkout"
     )
     package_id = serializers.IntegerField(
         help_text="ID of the BookingPackage selected for this attendee"
@@ -1156,52 +1245,59 @@ class AttendeeCheckoutSerializer(serializers.Serializer):
         required=False,
         help_text="Optional product variant selections for package products"
     )
-    
+
     def validate(self, attrs):
         """Validate attendee and package compatibility."""
         from apps.attendee.models import Attendee
         from apps.bookings.models import BookingPackage
-        
+
         attendee_id = attrs.get('attendee_id')
+        attendee_draft = attrs.get('attendee')
         package_id = attrs.get('package_id')
         product_selections = attrs.get('product_selections', [])
-        
-        # Validate Attendee exists
-        try:
-            attendee = Attendee.objects.get(attendee_id=attendee_id)
-        except Attendee.DoesNotExist:
+
+        if bool(attendee_id) == bool(attendee_draft):
             raise serializers.ValidationError({
-                'attendee_id': f'Attendee with id {attendee_id} does not exist.'
+                'attendee_id': 'Provide either attendee_id or attendee, but not both.'
             })
-        
-        # Validate BookingPackage exists and belongs to same event
+
+        # Validate BookingPackage exists
         try:
             package = BookingPackage.objects.get(id=package_id)
         except BookingPackage.DoesNotExist:
             raise serializers.ValidationError({
                 'package_id': f'BookingPackage with id {package_id} does not exist.'
             })
-        
-        if package.event_id != attendee.event_id:
-            raise serializers.ValidationError({
-                'package_id': 'Package must belong to the same event as the attendee.'
-            })
-        
+
+        if attendee_id:
+            try:
+                attendee = Attendee.objects.get(attendee_id=attendee_id)
+            except Attendee.DoesNotExist:
+                raise serializers.ValidationError({
+                    'attendee_id': f'Attendee with id {attendee_id} does not exist.'
+                })
+
+            if package.event_id != attendee.event_id:
+                raise serializers.ValidationError({
+                    'package_id': 'Package must belong to the same event as the attendee.'
+                })
+
+            attrs['_attendee'] = attendee
+        else:
+            attrs['_attendee_draft'] = attendee_draft
+
         # Validate product selections match package products
         if product_selections:
             package_product_ids = set(ps['package_product_id'] for ps in product_selections)
             actual_package_products = package.package_products.values_list('id', flat=True)
-            
+
             invalid_ids = package_product_ids - set(actual_package_products)
             if invalid_ids:
                 raise serializers.ValidationError({
                     'product_selections': f'PackageProduct IDs {invalid_ids} do not belong to package {package.name}'
                 })
-        
-        # Store validated objects
-        attrs['_attendee'] = attendee
+
         attrs['_package'] = package
-        
         return attrs
 
 
@@ -1221,6 +1317,11 @@ class CheckoutSerializer(serializers.Serializer):
     )
     payment_method_id = serializers.IntegerField(
         help_text="ID of the PaymentMethod to use"
+    )
+    stripe_payment_intent_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Stripe PaymentIntent ID when payment is already confirmed"
     )
     attendees = AttendeeCheckoutSerializer(
         many=True,
@@ -1273,6 +1374,7 @@ class CheckoutSerializer(serializers.Serializer):
         intent_id = attrs.get('booking_intent_id')
         method_id = attrs.get('payment_method_id')
         attendee_selections = attrs.get('attendees', [])
+        stripe_payment_intent_id = attrs.get('stripe_payment_intent_id')
         
         # Get intent and payment method
         intent = BookingIntent.objects.get(booking_intent_id=intent_id)
@@ -1295,16 +1397,205 @@ class CheckoutSerializer(serializers.Serializer):
             })
         
         # Validate all attendees belong to the same event
-        event_ids = set(selection['_attendee'].event_id for selection in attendee_selections)
+        event_ids = set()
+        for selection in attendee_selections:
+            attendee = selection.get('_attendee')
+            if attendee:
+                event_ids.add(attendee.event_id)
+            else:
+                event_ids.add(intent.event_id)
+
         if len(event_ids) > 1:
             raise serializers.ValidationError({
                 'attendees': 'All attendees must belong to the same event.'
             })
-        
+
         if event_ids and list(event_ids)[0] != intent.event_id:
             raise serializers.ValidationError({
                 'attendees': 'Attendees must belong to the same event as the booking intent.'
             })
+
+        # Validate draft attendee details (consents/questions/uploads)
+        from apps.attendee.models import Consent
+        from apps.attendee.models.personal.dietary import DietaryRequirement
+        from apps.attendee.models.personal.medical import MedicalCondition
+        from apps.attendee.models.personal.accessibility import AccessibilityRequirement
+        from apps.events.models import EventQuestion, EventQuestionTypeChoices
+        from apps.common.models import Resource
+
+        required_consent_ids = set(
+            Consent.objects.filter(event=intent.event, required=True, active=True)
+            .values_list('id', flat=True)
+        )
+        required_question_ids = set(
+            EventQuestion.objects.filter(event=intent.event, required=True, public=True)
+            .values_list('id', flat=True)
+        )
+
+        for selection in attendee_selections:
+            draft = selection.get('_attendee_draft')
+            if not draft:
+                continue
+
+            consents = draft.get('consents', [])
+            consent_ids = [item['consent_id'] for item in consents]
+            if len(consent_ids) != len(set(consent_ids)):
+                raise serializers.ValidationError({
+                    'attendees': 'Duplicate consent entries detected.'
+                })
+
+            if consent_ids:
+                valid_consents = set(
+                    Consent.objects.filter(event=intent.event, id__in=consent_ids)
+                    .values_list('id', flat=True)
+                )
+                invalid_consents = set(consent_ids) - valid_consents
+                if invalid_consents:
+                    raise serializers.ValidationError({
+                        'attendees': f'Invalid consent IDs: {sorted(invalid_consents)}'
+                    })
+            consent_given_ids = {
+                item['consent_id']
+                for item in consents
+                if item.get('consent_given') is True
+            }
+            missing_consents = required_consent_ids - consent_given_ids
+            if missing_consents:
+                raise serializers.ValidationError({
+                    'attendees': f'Missing required consents: {sorted(missing_consents)}'
+                })
+
+            answers = draft.get('question_answers', [])
+            question_ids = [item['question_id'] for item in answers]
+            if len(question_ids) != len(set(question_ids)):
+                raise serializers.ValidationError({
+                    'attendees': 'Duplicate question answers detected.'
+                })
+            answered_question_ids = set()
+            normalized_answers = []
+
+            for answer in answers:
+                question_id = answer.get('question_id')
+                selected_option_ids = answer.get('selected_option_ids', [])
+                upload_resource_id = answer.get('upload_resource_id')
+                upload_url = answer.get('upload_url')
+                answer_text = answer.get('answer_text')
+
+                try:
+                    question = EventQuestion.objects.get(id=question_id)
+                except EventQuestion.DoesNotExist:
+                    raise serializers.ValidationError({
+                        'attendees': f'Question {question_id} does not exist.'
+                    })
+
+                if question.event_id != intent.event_id:
+                    raise serializers.ValidationError({
+                        'attendees': 'Question must belong to the same event as the booking intent.'
+                    })
+
+                if upload_resource_id:
+                    try:
+                        resource = Resource.objects.get(id=upload_resource_id)
+                    except Resource.DoesNotExist:
+                        raise serializers.ValidationError({
+                            'attendees': f'Upload resource {upload_resource_id} does not exist.'
+                        })
+
+                    if resource.target_type.model != 'event' or str(resource.target_id) != str(intent.event_id):
+                        raise serializers.ValidationError({
+                            'attendees': 'Upload resource must belong to the same event.'
+                        })
+
+                    answer_text = resource.resource_url
+                elif upload_url:
+                    answer_text = upload_url
+
+                if question.question_type in [
+                    EventQuestionTypeChoices.SINGLE_CHOICE,
+                    EventQuestionTypeChoices.MULTIPLE_CHOICE
+                ]:
+                    if not selected_option_ids:
+                        raise serializers.ValidationError({
+                            'attendees': f'Question {question_id} requires selected options.'
+                        })
+                    valid_option_ids = set(question.options.values_list('id', flat=True))
+                    invalid_options = set(selected_option_ids) - valid_option_ids
+                    if invalid_options:
+                        raise serializers.ValidationError({
+                            'attendees': f'Invalid option IDs {invalid_options} for question {question_id}.'
+                        })
+                    if question.question_type == EventQuestionTypeChoices.SINGLE_CHOICE and len(selected_option_ids) > 1:
+                        raise serializers.ValidationError({
+                            'attendees': f'Question {question_id} allows only one selected option.'
+                        })
+                else:
+                    if not answer_text:
+                        raise serializers.ValidationError({
+                            'attendees': f'Question {question_id} requires an answer.'
+                        })
+                    question.validate_answer(answer_text)
+
+                answered_question_ids.add(question_id)
+                normalized_answers.append({
+                    'question_id': question_id,
+                    'answer_text': answer_text,
+                    'selected_option_ids': selected_option_ids,
+                })
+
+            missing_questions = required_question_ids - answered_question_ids
+            if missing_questions:
+                raise serializers.ValidationError({
+                    'attendees': f'Missing required questions: {sorted(missing_questions)}'
+                })
+
+            personal_info = draft.get('personal_info') or {}
+            dietary_ids = [item['id'] for item in personal_info.get('dietary_requirements', [])]
+            accessibility_ids = [item['id'] for item in personal_info.get('accessibility_requirements', [])]
+            medical_ids = [item['id'] for item in personal_info.get('medical_conditions', [])]
+
+            if dietary_ids:
+                valid_dietary = set(
+                    DietaryRequirement.objects.filter(active=True, id__in=dietary_ids)
+                    .values_list('id', flat=True)
+                )
+                invalid_dietary = set(dietary_ids) - valid_dietary
+                if invalid_dietary:
+                    raise serializers.ValidationError({
+                        'attendees': f'Invalid dietary requirement IDs: {sorted(invalid_dietary)}'
+                    })
+
+            if accessibility_ids:
+                valid_accessibility = set(
+                    AccessibilityRequirement.objects.filter(active=True, id__in=accessibility_ids)
+                    .values_list('id', flat=True)
+                )
+                invalid_accessibility = set(accessibility_ids) - valid_accessibility
+                if invalid_accessibility:
+                    raise serializers.ValidationError({
+                        'attendees': f'Invalid accessibility requirement IDs: {sorted(invalid_accessibility)}'
+                    })
+
+            if medical_ids:
+                valid_medical = set(
+                    MedicalCondition.objects.filter(active=True, id__in=medical_ids)
+                    .values_list('id', flat=True)
+                )
+                invalid_medical = set(medical_ids) - valid_medical
+                if invalid_medical:
+                    raise serializers.ValidationError({
+                        'attendees': f'Invalid medical condition IDs: {sorted(invalid_medical)}'
+                    })
+
+            package = selection.get('_package')
+            if package and package.event_id != intent.event_id:
+                raise serializers.ValidationError({
+                    'attendees': 'Package must belong to the same event as the booking intent.'
+                })
+
+            draft['question_answers'] = normalized_answers
+
+        if stripe_payment_intent_id:
+            attrs['_stripe_payment_intent_id'] = stripe_payment_intent_id
         
         # Store validated objects for processing
         attrs['_intent'] = intent

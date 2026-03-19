@@ -4836,6 +4836,130 @@ class EventQuestionAnswerViewSet(viewsets.ModelViewSet):
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
     filterset_class = EventQuestionAnswerFilterSet
+
+    @extend_schema(
+        summary="Upload Event Question File",
+        description=(
+            "Upload a file or image to be used as an answer for upload-type event questions. "
+            "This endpoint stores the upload as a generic Resource linked to the event and "
+            "returns the resource reference for use in checkout payloads. "
+            "Use the returned resource ID in checkout as upload_resource_id."
+        ),
+        tags=["Event Question Answers"],
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'event_id': {
+                        'type': 'string',
+                        'format': 'uuid',
+                        'description': 'Event UUID the upload belongs to'
+                    },
+                    'name': {
+                        'type': 'string',
+                        'description': 'Optional name for the resource (defaults to file name)'
+                    },
+                    'description': {
+                        'type': 'string',
+                        'description': 'Optional description for the upload'
+                    },
+                    'resource_type': {
+                        'type': 'string',
+                        'enum': ['DOCUMENT', 'IMAGE', 'OTHER'],
+                        'description': 'Resource type (DOCUMENT for files, IMAGE for images)'
+                    },
+                    'file': {
+                        'type': 'string',
+                        'format': 'binary',
+                        'description': 'File upload for DOCUMENT/OTHER types'
+                    },
+                    'image': {
+                        'type': 'string',
+                        'format': 'binary',
+                        'description': 'Image upload for IMAGE type'
+                    }
+                },
+                'required': ['event_id']
+            }
+        },
+        responses={
+            201: ResourceSerializer,
+            400: OpenApiResponse(description='Validation errors'),
+            403: OpenApiResponse(description='Permission denied')
+        }
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='upload',
+        permission_classes=[permissions.IsAuthenticated],
+        parser_classes=[MultiPartParser, FormParser]
+    )
+    def upload(self, request):
+        event_id = request.data.get('event_id')
+        if not event_id:
+            return Response(
+                {'detail': 'event_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        event = get_object_or_404(Event, event_id=event_id)
+
+        resource_type = request.data.get('resource_type', 'DOCUMENT')
+        resource_type = resource_type.upper()
+        if resource_type not in ['DOCUMENT', 'IMAGE', 'OTHER']:
+            return Response(
+                {'detail': 'resource_type must be DOCUMENT, IMAGE, or OTHER'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        upload_file = request.FILES.get('file')
+        upload_image = request.FILES.get('image')
+
+        if resource_type == 'IMAGE' and not upload_image:
+            return Response(
+                {'detail': 'image file is required for IMAGE resource type'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if resource_type in ['DOCUMENT', 'OTHER'] and not upload_file:
+            return Response(
+                {'detail': 'file is required for DOCUMENT/OTHER resource types'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        name = request.data.get('name')
+        if not name:
+            name = upload_image.name if upload_image else upload_file.name
+
+        serializer_data = {
+            'name': name,
+            'description': request.data.get('description', ''),
+            'resource_type': resource_type,
+            'public': False,
+        }
+
+        if upload_image:
+            serializer_data['image'] = upload_image
+        if upload_file:
+            serializer_data['file'] = upload_file
+
+        serializer = ResourceSerializer(data=serializer_data, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        content_type = ContentType.objects.get_for_model(Event)
+        resource = serializer.save(
+            target_type=content_type,
+            target_id=event.id,
+            added_by=request.user,
+            tag='QUESTION_UPLOAD'
+        )
+
+        return Response(
+            ResourceSerializer(resource, context={'request': request}).data,
+            status=status.HTTP_201_CREATED
+        )
     
     @extend_schema(
         summary="Submit Form (Batch Answers)",

@@ -151,6 +151,18 @@ class BookingIntent(SoftDeleteModel): # intents delete after expiry
     expires_at = models.DateTimeField(null=True, blank=True)
 
     complete_delete_at = models.DateTimeField(null=True, blank=True)
+    completed_booking = models.OneToOneField(
+        'bookings.Booking',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='booking_intent'
+    )
+    last_checkout_idempotency_key = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True
+    )
         
     def __str__(self):
         return f"BookingIntent {self.booking_intent_id} by {self.made_by}"
