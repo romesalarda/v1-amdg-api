@@ -17,7 +17,7 @@ from apps.attendee.models import Attendee
 from apps.bookings.models import Booking
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventStatusChoices
-from apps.locations.models import AreaLocation
+from apps.locations.models import AreaLocation, ChapterLocation, ClusterLocation, CountryLocation
 from apps.organisations.models import (
 	EventSponsor,
 	EventSponsorPackage,
@@ -276,30 +276,48 @@ def calculate_leader_distribution(organisation_ids: list[int] | None = None) -> 
 			}
 		)
 
-	area_rows = leaders_qs.filter(target_type__model="arealocation").values("target_id").annotate(
-		value=Count("id")
-	).order_by("-value")
-	area_ids = [int(row["target_id"]) for row in area_rows if str(row["target_id"]).isdigit()]
-	area_names = {
-		area.id: area.area_name
-		for area in AreaLocation.objects.filter(id__in=area_ids)
-	}
-	area_distribution = []
-	for row in area_rows:
-		target_id = row["target_id"]
-		area_id = int(target_id) if str(target_id).isdigit() else None
-		area_distribution.append(
-			{
-				"area_id": target_id,
-				"label": area_names.get(area_id, f"Area #{target_id}"),
-				"value": row["value"],
-			}
-		)
+	def get_location_distribution(location_model, model_name_str):
+		def _get_location_title(location):
+			title = getattr(location, "title", None)
+			if callable(title):
+				return title()
+			if isinstance(title, str):
+				return title
+			return str(location)
+
+		location_rows = leaders_qs.filter(target_type=ContentType.objects.get_for_model(location_model)).values("target_id").annotate(
+			value=Count("id")
+		).order_by("-value")
+		location_ids = [int(row["target_id"]) for row in location_rows if str(row["target_id"]).isdigit()]
+		location_names = {
+			loc.id: _get_location_title(loc)
+			for loc in location_model.objects.filter(id__in=location_ids)
+		}
+		location_distribution = []
+		for row in location_rows:
+			target_id = row["target_id"]
+			location_id = int(target_id) if str(target_id).isdigit() else None
+			location_distribution.append(
+				{
+					"location_id": target_id,
+					"label": location_names.get(location_id, f"Location #{target_id}"),
+					"value": row["value"],
+				}
+			)
+		return location_distribution
+
+	area_distribution = get_location_distribution(AreaLocation, "arealocation")
+	chapter_distribution = get_location_distribution(ChapterLocation, "chapterlocation")
+	cluster_distribution = get_location_distribution(ClusterLocation, "clusterlocation")
+	country_distribution = get_location_distribution(CountryLocation, "countrylocation")
 
 	return {
 		"total_leaders": total,
 		"distribution": distribution,
 		"area_distribution": area_distribution,
+		"chapter_distribution": chapter_distribution,
+		"cluster_distribution": cluster_distribution,
+		"country_distribution": country_distribution,
 	}
 
 

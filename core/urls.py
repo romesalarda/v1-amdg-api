@@ -40,7 +40,7 @@ urlpatterns = [
     path('api/', include('apps.attendee.urls')),
     path('api/bookings/', include('apps.bookings.urls')),
     path('api/', include('apps.products.urls')),
-    path('api/locations/', include('apps.locations.urls')),
+    path('api/', include('apps.locations.urls')),
 ]
 
 # Serve static/media files in development

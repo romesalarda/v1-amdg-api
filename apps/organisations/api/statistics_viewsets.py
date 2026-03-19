@@ -96,7 +96,7 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 			raise exceptions.ValidationError({field_name: "Invalid date format. Use YYYY-MM-DD."}) from exc
 
 	def _get_scope(self, request):
-		org_id_raw = request.query_params.get("organisation_id")
+		org_id_raw = request.GET.get("organisation_id")
 
 		if org_id_raw:
 			try:
@@ -161,12 +161,12 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 
 	def _build_filters_metadata(self, request):
 		return {
-			"organisation_id": request.query_params.get("organisation_id"),
-			"event_id": request.query_params.get("event_id"),
-			"date_from": request.query_params.get("date_from"),
-			"date_to": request.query_params.get("date_to"),
-			"format": request.query_params.get("format", "raw"),
-			"limit": request.query_params.get("limit"),
+			"organisation_id": request.GET.get("organisation_id"),
+			"event_id": request.GET.get("event_id"),
+			"date_from": request.GET.get("date_from"),
+			"date_to": request.GET.get("date_to"),
+			"format": request.GET.get("format", "raw"),
+			"limit": request.GET.get("limit"),
 		}
 
 	def list(self, request):
@@ -180,6 +180,8 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 					"sponsors-overview": "Sponsor pipeline, commitments, and realized payment metrics",
 					"sponsor-packages-performance": "Per-package sponsor adoption and revenue realization",
 					"sponsor-invite-conversion": "Sponsor invite acceptance and conversion analytics",
+					"events-on-map": "Returns a GeoJSON FeatureCollection of events for a given organisation.",
+					"leaders-on-map": "Returns a GeoJSON FeatureCollection of leaders for a given organisation.",
 				}
 			}
 		)
@@ -207,8 +209,8 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	@action(detail=False, methods=["get"], url_path="overview")
 	def overview(self, request):
 		scope = self._get_scope(request)
-		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
-		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
+		date_from = self._parse_iso_date(request.GET.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.GET.get("date_to"), "date_to")
 
 		payload = statistics.calculate_overview_statistics(
 			organisation_ids=scope["organisation_ids"],
@@ -236,13 +238,12 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	def leaders_distribution(self, request):
 		scope = self._get_scope(request)
 		payload = statistics.calculate_leader_distribution(organisation_ids=scope["organisation_ids"])
-		payload["generated_at"] = datetime.utcnow()
+		payload["generated_at"] = datetime.now()
 		payload["scope"] = {
 			"type": scope["scope_label"],
 			"organisation_ids": scope["organisation_ids"],
 		}
 		payload["filters_applied"] = self._build_filters_metadata(request)
-
 		serializer = LeaderDistributionSerializer(payload, context={"request": request})
 		return Response(serializer.data)
 
@@ -256,11 +257,11 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	@action(detail=False, methods=["get"], url_path="event-performance")
 	def event_performance(self, request):
 		scope = self._get_scope(request)
-		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
-		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
+		date_from = self._parse_iso_date(request.GET.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.GET.get("date_to"), "date_to")
 
 		try:
-			limit = int(request.query_params.get("limit", 20))
+			limit = int(request.GET.get("limit", 20))
 		except ValueError as exc:
 			raise exceptions.ValidationError({"limit": "Must be an integer."}) from exc
 		if limit < 1:
@@ -292,8 +293,8 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	@action(detail=False, methods=["get"], url_path="payments-by-source")
 	def payments_by_source(self, request):
 		scope = self._get_scope(request)
-		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
-		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
+		date_from = self._parse_iso_date(request.GET.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.GET.get("date_to"), "date_to")
 
 		payload = statistics.calculate_payments_by_source_statistics(
 			organisation_ids=scope["organisation_ids"],
@@ -335,9 +336,9 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	@action(detail=False, methods=["get"], url_path="sponsors-overview")
 	def sponsors_overview(self, request):
 		scope = self._get_scope(request)
-		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
-		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
-		event_id = self._parse_event_id(request.query_params.get("event_id"), scope)
+		date_from = self._parse_iso_date(request.GET.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.GET.get("date_to"), "date_to")
+		event_id = self._parse_event_id(request.GET.get("event_id"), scope)
 
 		payload = statistics.calculate_sponsor_overview_statistics(
 			organisation_ids=scope["organisation_ids"],
@@ -384,12 +385,12 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	@action(detail=False, methods=["get"], url_path="sponsor-packages-performance")
 	def sponsor_packages_performance(self, request):
 		scope = self._get_scope(request)
-		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
-		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
-		event_id = self._parse_event_id(request.query_params.get("event_id"), scope)
+		date_from = self._parse_iso_date(request.GET.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.GET.get("date_to"), "date_to")
+		event_id = self._parse_event_id(request.GET.get("event_id"), scope)
 
 		try:
-			limit = int(request.query_params.get("limit", 20))
+			limit = int(request.GET.get("limit", 20))
 		except ValueError as exc:
 			raise exceptions.ValidationError({"limit": "Must be an integer."}) from exc
 		if limit < 1:
@@ -439,9 +440,9 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	@action(detail=False, methods=["get"], url_path="sponsor-invite-conversion")
 	def sponsor_invite_conversion(self, request):
 		scope = self._get_scope(request)
-		date_from = self._parse_iso_date(request.query_params.get("date_from"), "date_from")
-		date_to = self._parse_iso_date(request.query_params.get("date_to"), "date_to")
-		event_id = self._parse_event_id(request.query_params.get("event_id"), scope)
+		date_from = self._parse_iso_date(request.GET.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.GET.get("date_to"), "date_to")
+		event_id = self._parse_event_id(request.GET.get("event_id"), scope)
 
 		payload = statistics.calculate_sponsor_invite_conversion_statistics(
 			organisation_ids=scope["organisation_ids"],
@@ -449,7 +450,7 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 			date_from=date_from,
 			date_to=date_to,
 		)
-		payload["generated_at"] = datetime.utcnow()
+		payload["generated_at"] = datetime.now()
 		payload["scope"] = {
 			"type": scope["scope_label"],
 			"organisation_ids": scope["organisation_ids"],
@@ -458,3 +459,90 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 
 		serializer = SponsorInviteConversionSerializer(payload, context={"request": request})
 		return Response(serializer.data)
+
+	@extend_schema(
+		summary="Events on Map",
+		description="Returns a GeoJSON FeatureCollection of events for a given organisation.",
+		parameters=[ORGANISATION_ID_PARAM],
+		tags=["Organisation Statistics"],
+	)
+	@action(detail=False, methods=["get"], url_path="events-on-map")
+	def events_on_map(self, request):
+		scope = self._get_scope(request)
+		organisation_ids = scope["organisation_ids"]
+
+		events = Event.objects.filter(
+			event_venues__isnull=False,
+			event_venues__venue__poi__latitude__isnull=False,
+			event_venues__venue__poi__longitude__isnull=False,
+		).distinct()
+		if organisation_ids is not None:
+			events = events.filter(organisation_id__in=organisation_ids)
+
+		features = []
+		for event in events.select_related("organisation").prefetch_related("event_venues__venue__poi", "attendees"):
+			event_venue = event.event_venues.select_related("venue__poi").first()
+			poi = event_venue.venue.poi if event_venue and event_venue.venue_id else None
+			if poi and poi.latitude is not None and poi.longitude is not None:
+				features.append({
+					"type": "Feature",
+					"geometry": {
+						"type": "Point",
+						"coordinates": [
+							float(poi.longitude),
+							float(poi.latitude),
+						]
+					},
+					"properties": {
+						"event_id": str(event.event_id),
+						"name": event.title,
+						"start_date": event.start_datetime.isoformat(),
+						"attendee_count": event.attendees.count(),
+					}
+				})
+
+		feature_collection = {
+			"type": "FeatureCollection",
+			"features": features
+		}
+
+		return Response(feature_collection)
+
+	@extend_schema(
+		summary="Leaders on Map",
+		description="Returns a GeoJSON FeatureCollection of leaders for a given organisation.",
+		parameters=[ORGANISATION_ID_PARAM],
+		tags=["Organisation Statistics"],
+	)
+	@action(detail=False, methods=["get"], url_path="leaders-on-map")
+	def leaders_on_map(self, request):
+		scope = self._get_scope(request)
+		organisation_ids = scope["organisation_ids"]
+
+		leaders = OrganisationControl.objects.all()
+		if organisation_ids is not None:
+			leaders = leaders.filter(organisation_id__in=organisation_ids)
+
+		features = []
+		for leader in leaders:
+			# Placeholder for calculating leader's location
+			# This needs to be implemented based on how leader locations are determined
+			# For now, we'll use a placeholder location
+			features.append({
+				"type": "Feature",
+				"geometry": {
+					"type": "Point",
+					"coordinates": [0, 0]  # Placeholder
+				},
+				"properties": {
+					"name": leader.user.get_full_name(),
+					"role": "Leader"
+				}
+			})
+
+		feature_collection = {
+			"type": "FeatureCollection",
+			"features": features
+		}
+
+		return Response(feature_collection)

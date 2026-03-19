@@ -77,6 +77,10 @@ class CountryLocation (models.Model):
     def __repr__(self):
         return f"CountryLocation(country={self.country}, general_sector={self.general_sector}, specific_sector={self.specific_sector})"
     
+    @property
+    def title(self):
+        return f"{self.country}"
+    
 class ClusterLocation (models.Model):
     
     cluster_name = models.CharField(verbose_name="name-of-cluster", max_length=150) # verbose and nice name
@@ -102,7 +106,10 @@ class ClusterLocation (models.Model):
     
     def __repr__(self):
         return f"ClusterLocation(cluster_name={self.cluster_name}, country={self.country})"
-  
+    
+    @property
+    def title(self):
+        return f"{self.cluster_name}"
         
 class ChapterLocation (models.Model):
     '''
@@ -134,6 +141,10 @@ class ChapterLocation (models.Model):
 
     def __repr__(self):
         return f"ChapterLocation(chapter_name={self.chapter_name}, cluster={self.cluster})"
+    
+    @property
+    def title(self):
+        return f"{self.chapter_name}"
     
 class AreaLocation (models.Model):
     '''
@@ -175,6 +186,9 @@ class AreaLocation (models.Model):
     def __repr__(self):
         return f"AreaLocation(area_name={self.area_name}, chapter={self.chapter})"
     
+    def title(self):
+        return f"{self.area_name}"
+    
 class RelativeArea(models.Model):
     '''
     assisting model for relative locations
@@ -191,3 +205,6 @@ class RelativeArea(models.Model):
     
     def __repr__(self):
         return f"RelativeArea(name={self.name}, relative_area={self.relative_area})"
+    
+    def title(self):
+        return f"{self.name}"
