@@ -803,6 +803,64 @@ class EventSponsorDetailSerializer(EventSponsorListSerializer):
         }]
 
 
+class EventSponsorLedgerSerializer(serializers.Serializer):
+    """Serializer for inbound/outbound sponsor list rows."""
+
+    sponsor_id = serializers.UUIDField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True, allow_blank=True, allow_null=True)
+    organisation_id = serializers.IntegerField(source='organisation.id', read_only=True)
+    organisation_title = serializers.CharField(source='organisation.title', read_only=True)
+    event_id = serializers.UUIDField(source='event.event_id', read_only=True)
+    event_title = serializers.CharField(source='event.title', read_only=True)
+    package_id = serializers.SerializerMethodField()
+    package_name = serializers.SerializerMethodField()
+    chapter_location = serializers.IntegerField(source='chapter_location_id', read_only=True, allow_null=True)
+    added_at = serializers.DateTimeField(read_only=True)
+    added_by = serializers.IntegerField(source='added_by_id', read_only=True, allow_null=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+    payment = serializers.SerializerMethodField()
+
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_package_id(self, obj):
+        if not obj.package_id:
+            return None
+        return str(obj.package.package_id)
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_package_name(self, obj):
+        if not obj.package_id:
+            return None
+        return obj.package.package_name
+
+    @extend_schema_field({
+        'type': 'object',
+        'nullable': True,
+        'properties': {
+            'payment_id': {'type': 'string', 'format': 'uuid'},
+            'payment_reference': {'type': 'string'},
+            'base_amount': {'type': 'string'},
+        }
+    })
+    def get_payment(self, obj):
+        payment_map = self.context.get('payment_map', {})
+        payment = payment_map.get(obj.id)
+        if not payment:
+            return None
+
+        base_amount = payment.base_amount
+        amount_value = None
+        if base_amount is not None:
+            amount_value = str(getattr(base_amount, 'amount', base_amount))
+
+        return {
+            'payment_id': str(payment.payment_id),
+            'payment_reference': payment.payment_reference,
+            'base_amount': amount_value,
+        }
+
+
 class EventSponsorCreateUpdateSerializer(serializers.ModelSerializer):
     """Create/Update serializer for EventSponsor."""
     

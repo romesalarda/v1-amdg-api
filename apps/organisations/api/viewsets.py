@@ -38,6 +38,7 @@ from drf_spectacular.utils import (
 )
 from drf_spectacular.types import OpenApiTypes
 from typing import Any
+from uuid import UUID
 
 from apps.organisations.models import (
     Organisation, OrganisationContact, OrganisationControl,
@@ -56,6 +57,7 @@ from .serializers import (
     OrganisationInviteListSerializer, OrganisationInviteDetailSerializer, OrganisationInviteCreateUpdateSerializer,
     InvolvedEventOrganisationSerializer, InvolvedEventOrganisationCreateUpdateSerializer,
     EventSponsorListSerializer, EventSponsorDetailSerializer, EventSponsorCreateUpdateSerializer,
+    EventSponsorLedgerSerializer,
     EventSponsorPackageListSerializer, EventSponsorPackageDetailSerializer, EventSponsorPackageCreateUpdateSerializer,
     EventSponsorInviteListSerializer, EventSponsorInviteDetailSerializer, EventSponsorInviteCreateUpdateSerializer,
     EventSponsorCheckoutSerializer, SponsorshipPaymentHistorySerializer,
@@ -653,6 +655,81 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'added_at']
     ordering = ['-added_at']
     lookup_field = 'sponsor_id'
+
+    def _get_organisation_for_sponsor_lists(self, request):
+        organisation_id = request.query_params.get('organisation_id') or request.query_params.get('organisation')
+        if not organisation_id:
+            return None, Response({'organisation_id': ['organisation_id is required.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            organisation_id_value = int(organisation_id)
+        except ValueError:
+            return None, Response({'organisation_id': ['organisation_id must be an integer.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            organisation = Organisation.objects.get(pk=organisation_id_value)
+        except Organisation.DoesNotExist:
+            return None, Response({'organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
+
+        is_org_controller = request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
+            organisation=organisation,
+            user=request.user,
+        ).exists()
+        if not is_org_controller:
+            return None, Response(
+                {'error': 'You must control this organisation to view sponsors.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return organisation, None
+
+    def _apply_sponsor_list_filters(self, queryset, request):
+        event_id = request.query_params.get('event_id')
+        if event_id:
+            try:
+                UUID(event_id)
+            except ValueError:
+                return None, Response({'event_id': ['event_id must be a valid UUID.']}, status=status.HTTP_400_BAD_REQUEST)
+            queryset = queryset.filter(event__event_id=event_id)
+
+        sponsor_org_id = request.query_params.get('sponsor_organisation_id')
+        if sponsor_org_id:
+            try:
+                sponsor_org_id_value = int(sponsor_org_id)
+            except ValueError:
+                return None, Response({'sponsor_organisation_id': ['sponsor_organisation_id must be an integer.']}, status=status.HTTP_400_BAD_REQUEST)
+            queryset = queryset.filter(organisation_id=sponsor_org_id_value)
+
+        event_org_id = request.query_params.get('event_organisation_id')
+        if event_org_id:
+            try:
+                event_org_id_value = int(event_org_id)
+            except ValueError:
+                return None, Response({'event_organisation_id': ['event_organisation_id must be an integer.']}, status=status.HTTP_400_BAD_REQUEST)
+            queryset = queryset.filter(event__organisation_id=event_org_id_value)
+
+        return queryset, None
+
+    def _build_payment_map(self, sponsors):
+        sponsor_ids = [str(sponsor.id) for sponsor in sponsors]
+        if not sponsor_ids:
+            return {}
+
+        sponsor_type = ContentType.objects.get_for_model(EventSponsor)
+        payments = Payment.objects.filter(
+            target_type=sponsor_type,
+            target_id__in=sponsor_ids,
+        ).order_by('-created_at')
+
+        payment_map = {}
+        for payment in payments:
+            try:
+                sponsor_id = int(payment.target_id)
+            except (TypeError, ValueError):
+                continue
+            if sponsor_id not in payment_map:
+                payment_map[sponsor_id] = payment
+        return payment_map
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -675,6 +752,90 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
         packages = [sponsor.package] if sponsor.package else []
         serializer = EventSponsorPackageListSerializer(
             packages, many=True, context={'request': request}
+        )
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Inbound sponsors list",
+        description=(
+            "List organisations sponsoring events owned by the specified organisation."
+        ),
+        tags=["Event Sponsors"],
+        parameters=[
+            OpenApiParameter(name='organisation_id', type=OpenApiTypes.INT, required=True, description='Organisation ID.'),
+            OpenApiParameter(name='event_id', type=OpenApiTypes.UUID, required=False, description='Event public UUID.'),
+            OpenApiParameter(name='sponsor_organisation_id', type=OpenApiTypes.INT, required=False, description='Sponsor organisation ID.'),
+        ],
+        responses={200: EventSponsorLedgerSerializer(many=True)},
+    )
+    @action(detail=False, methods=['get'], url_path='inbound')
+    def inbound(self, request):
+        organisation, error_response = self._get_organisation_for_sponsor_lists(request)
+        if error_response:
+            return error_response
+
+        queryset = self.get_queryset().filter(event__organisation_id=organisation.id).order_by('-added_at')
+        queryset, filter_error = self._apply_sponsor_list_filters(queryset, request)
+        if filter_error:
+            return filter_error
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            payment_map = self._build_payment_map(page)
+            serializer = EventSponsorLedgerSerializer(
+                page,
+                many=True,
+                context={'request': request, 'payment_map': payment_map},
+            )
+            return self.get_paginated_response(serializer.data)
+
+        payment_map = self._build_payment_map(queryset)
+        serializer = EventSponsorLedgerSerializer(
+            queryset,
+            many=True,
+            context={'request': request, 'payment_map': payment_map},
+        )
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Outbound sponsors list",
+        description=(
+            "List events that the specified organisation is sponsoring."
+        ),
+        tags=["Event Sponsors"],
+        parameters=[
+            OpenApiParameter(name='organisation_id', type=OpenApiTypes.INT, required=True, description='Organisation ID.'),
+            OpenApiParameter(name='event_id', type=OpenApiTypes.UUID, required=False, description='Event public UUID.'),
+            OpenApiParameter(name='event_organisation_id', type=OpenApiTypes.INT, required=False, description='Event organisation ID.'),
+        ],
+        responses={200: EventSponsorLedgerSerializer(many=True)},
+    )
+    @action(detail=False, methods=['get'], url_path='outbound')
+    def outbound(self, request):
+        organisation, error_response = self._get_organisation_for_sponsor_lists(request)
+        if error_response:
+            return error_response
+
+        queryset = self.get_queryset().filter(organisation_id=organisation.id).order_by('-added_at')
+        queryset, filter_error = self._apply_sponsor_list_filters(queryset, request)
+        if filter_error:
+            return filter_error
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            payment_map = self._build_payment_map(page)
+            serializer = EventSponsorLedgerSerializer(
+                page,
+                many=True,
+                context={'request': request, 'payment_map': payment_map},
+            )
+            return self.get_paginated_response(serializer.data)
+
+        payment_map = self._build_payment_map(queryset)
+        serializer = EventSponsorLedgerSerializer(
+            queryset,
+            many=True,
+            context={'request': request, 'payment_map': payment_map},
         )
         return Response(serializer.data)
 

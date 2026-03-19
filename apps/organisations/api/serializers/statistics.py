@@ -316,3 +316,69 @@ class SponsorInviteConversionSerializer(BaseOrganisationStatisticsSerializer):
 
 	class Meta:
 		ref_name = "OrganisationSponsorInviteConversionStatistics"
+
+
+class SponsorFlowStatisticsSerializer(BaseOrganisationStatisticsSerializer):
+	"""Inbound/outbound sponsorship flow statistics."""
+
+	inbound_summary = serializers.DictField()
+	outbound_summary = serializers.DictField()
+	net_summary = serializers.DictField()
+	inbound_by_sponsor = serializers.ListField(child=serializers.DictField())
+	inbound_by_event = serializers.ListField(child=serializers.DictField())
+	outbound_by_event = serializers.ListField(child=serializers.DictField())
+	generated_at = serializers.DateTimeField()
+	scope = serializers.DictField()
+	filters_applied = serializers.DictField()
+
+	def format_for_echarts(self, data: dict[str, Any]) -> dict[str, Any]:
+		inbound_summary = data.get("inbound_summary", {})
+		outbound_summary = data.get("outbound_summary", {})
+
+		return {
+			"summary": {
+				"inbound": inbound_summary,
+				"outbound": outbound_summary,
+				"net": data.get("net_summary", {}),
+			},
+			"inbound_sponsors_chart": formatters.format_pie_chart(
+				data=[
+					{"label": item.get("organisation_title"), "value": item.get("committed_amount", 0)}
+					for item in data.get("inbound_by_sponsor", [])
+				],
+				title="Inbound Sponsors by Organisation",
+			),
+			"inbound_event_chart": formatters.format_bar_chart(
+				data=[
+					{"label": item.get("event_title"), "value": item.get("sponsor_count", 0)}
+					for item in data.get("inbound_by_event", [])
+				],
+				title="Inbound Sponsors by Event",
+				x_axis_label="Event",
+				y_axis_label="Sponsors",
+			),
+			"outbound_event_chart": formatters.format_bar_chart(
+				data=[
+					{"label": item.get("event_title"), "value": item.get("sponsor_count", 0)}
+					for item in data.get("outbound_by_event", [])
+				],
+				title="Outbound Sponsors by Event",
+				x_axis_label="Event",
+				y_axis_label="Sponsors",
+			),
+			"inbound_outbound_revenue_chart": formatters.format_bar_chart(
+				data=[
+					{"label": "Inbound", "value": inbound_summary.get("completed_revenue", 0)},
+					{"label": "Outbound", "value": outbound_summary.get("completed_revenue", 0)},
+				],
+				title="Inbound vs Outbound Completed Revenue",
+				x_axis_label="Direction",
+				y_axis_label="Revenue",
+			),
+			"scope": data.get("scope", {}),
+			"filters_applied": data.get("filters_applied", {}),
+			"generated_at": data.get("generated_at"),
+		}
+
+	class Meta:
+		ref_name = "OrganisationSponsorFlowStatistics"

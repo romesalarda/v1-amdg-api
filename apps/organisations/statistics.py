@@ -132,6 +132,57 @@ def _base_sponsor_payments_queryset(
 	return queryset
 
 
+def _base_inbound_sponsors_queryset(
+	organisation_ids: list[int] | None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+):
+	queryset = EventSponsor.objects.filter(event__deleted_at__isnull=True)
+	if organisation_ids is not None:
+		if not organisation_ids:
+			return EventSponsor.objects.none()
+		queryset = queryset.filter(event__organisation_id__in=organisation_ids)
+	if event_id:
+		queryset = queryset.filter(event__event_id=event_id)
+	if date_from:
+		queryset = queryset.filter(added_at__date__gte=date_from)
+	if date_to:
+		queryset = queryset.filter(added_at__date__lte=date_to)
+	return queryset
+
+
+def _base_outbound_sponsor_payments_queryset(
+	organisation_ids: list[int] | None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+):
+	sponsor_type = ContentType.objects.get_for_model(EventSponsor)
+	sponsor_ids_qs = _base_sponsors_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	).values_list("id", flat=True)
+	sponsor_ids = list(sponsor_ids_qs)
+	if not sponsor_ids:
+		return Payment.objects.none()
+
+	queryset = Payment.objects.filter(
+		event__deleted_at__isnull=True,
+		target_type=sponsor_type,
+		target_id__in=[str(sponsor_id) for sponsor_id in sponsor_ids],
+	)
+	if event_id:
+		queryset = queryset.filter(event__event_id=event_id)
+	if date_from:
+		queryset = queryset.filter(created_at__date__gte=date_from)
+	if date_to:
+		queryset = queryset.filter(created_at__date__lte=date_to)
+	return queryset
+
+
 def _money_to_float(value) -> float:
 	if value is None:
 		return 0.0
@@ -143,7 +194,7 @@ def _money_to_float(value) -> float:
 def _get_revenue_sources(payments_queryset):
 	booking_type = ContentType.objects.get_for_model(Booking)
 	donation_type = ContentType.objects.get_for_model(Donation)
-	sponsor_package_type = ContentType.objects.get_for_model(EventSponsorPackage)
+	sponsor_package_type = ContentType.objects.get_for_model(EventSponsor)
 
 	booking_qs = payments_queryset.filter(target_type=booking_type)
 	donation_qs = payments_queryset.filter(target_type=donation_type)
@@ -701,4 +752,174 @@ def calculate_sponsor_invite_conversion_statistics(
 			"accepted_with_resulting_sponsor": matching_sponsors.count(),
 		},
 		"event_breakdown": event_breakdown,
+	}
+
+
+def calculate_sponsor_flow_statistics(
+	organisation_ids: list[int] | None = None,
+	event_id=None,
+	date_from=None,
+	date_to=None,
+) -> dict[str, Any]:
+	inbound_sponsors_qs = _base_inbound_sponsors_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	).select_related("organisation", "event", "package")
+
+	outbound_sponsors_qs = _base_sponsors_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	).select_related("organisation", "event", "package")
+
+	inbound_payments_qs = _base_sponsor_payments_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	)
+	outbound_payments_qs = _base_outbound_sponsor_payments_queryset(
+		organisation_ids,
+		event_id=event_id,
+		date_from=date_from,
+		date_to=date_to,
+	)
+
+	def build_summary(sponsors_qs, payments_qs):
+		total_sponsors = sponsors_qs.count()
+		unique_orgs = sponsors_qs.values("organisation_id").distinct().count()
+		commitment_amount = 0.0
+		for sponsor in sponsors_qs:
+			if sponsor.package_id:
+				commitment_amount += _money_to_float(sponsor.package.modified_amount)
+
+		payment_counts = payments_qs.aggregate(
+			total=Count("id"),
+			completed=Count("id", filter=Q(status=PaymentStatusChoices.COMPLETED)),
+			pending=Count("id", filter=Q(status=PaymentStatusChoices.PENDING)),
+			failed=Count("id", filter=Q(status=PaymentStatusChoices.FAILED)),
+			cancelled=Count("id", filter=Q(status=PaymentStatusChoices.CANCELLED)),
+			completed_amount=Coalesce(
+				Sum("base_amount", filter=Q(status=PaymentStatusChoices.COMPLETED)),
+				Decimal("0.00"),
+			),
+			pending_amount=Coalesce(
+				Sum("base_amount", filter=Q(status=PaymentStatusChoices.PENDING)),
+				Decimal("0.00"),
+			),
+		)
+
+		completed_revenue = _money_to_float(payment_counts["completed_amount"])
+		pending_revenue = _money_to_float(payment_counts["pending_amount"])
+		average_commitment = round(commitment_amount / total_sponsors, 2) if total_sponsors else 0.0
+		average_completed = round(completed_revenue / total_sponsors, 2) if total_sponsors else 0.0
+
+		return {
+			"total_sponsors": total_sponsors,
+			"unique_organisations": unique_orgs,
+			"commitment_amount": round(commitment_amount, 2),
+			"completed_revenue": round(completed_revenue, 2),
+			"pending_revenue": round(pending_revenue, 2),
+			"average_commitment_per_sponsor": average_commitment,
+			"average_completed_revenue_per_sponsor": average_completed,
+			"total_payments": payment_counts["total"],
+			"completed_payments": payment_counts["completed"],
+			"pending_payments": payment_counts["pending"],
+			"failed_payments": payment_counts["failed"],
+			"cancelled_payments": payment_counts["cancelled"],
+		}
+
+	def build_event_breakdown(sponsors_qs, payments_qs):
+		rows: dict[str, dict[str, Any]] = {}
+		for sponsor in sponsors_qs:
+			event_id_value = str(sponsor.event.event_id)
+			entry = rows.get(event_id_value)
+			if not entry:
+				entry = {
+					"event_id": event_id_value,
+					"event_title": sponsor.event.title,
+					"sponsor_count": 0,
+					"committed_amount": 0.0,
+					"completed_revenue": 0.0,
+				}
+				rows[event_id_value] = entry
+
+			entry["sponsor_count"] += 1
+			if sponsor.package_id:
+				entry["committed_amount"] += _money_to_float(sponsor.package.modified_amount)
+
+		completed_rows = payments_qs.filter(status=PaymentStatusChoices.COMPLETED).values(
+			"event__event_id",
+			"event__title",
+		).annotate(amount=Coalesce(Sum("base_amount"), Decimal("0.00")))
+		for row in completed_rows:
+			event_key = str(row["event__event_id"])
+			entry = rows.get(event_key)
+			if not entry:
+				entry = {
+					"event_id": event_key,
+					"event_title": row["event__title"],
+					"sponsor_count": 0,
+					"committed_amount": 0.0,
+					"completed_revenue": 0.0,
+				}
+				rows[event_key] = entry
+			entry["completed_revenue"] += _money_to_float(row["amount"])
+
+		return sorted(rows.values(), key=lambda item: item["sponsor_count"], reverse=True)
+
+	def build_inbound_sponsor_breakdown(sponsors_qs):
+		rows: dict[int, dict[str, Any]] = {}
+		for sponsor in sponsors_qs:
+			org_id = sponsor.organisation_id
+			entry = rows.get(org_id)
+			if not entry:
+				entry = {
+					"organisation_id": org_id,
+					"organisation_title": sponsor.organisation.title,
+					"sponsor_count": 0,
+					"committed_amount": 0.0,
+				}
+				rows[org_id] = entry
+			entry["sponsor_count"] += 1
+			if sponsor.package_id:
+				entry["committed_amount"] += _money_to_float(sponsor.package.modified_amount)
+
+		return sorted(rows.values(), key=lambda item: item["committed_amount"], reverse=True)
+
+	inbound_summary = build_summary(inbound_sponsors_qs, inbound_payments_qs)
+	outbound_summary = build_summary(outbound_sponsors_qs, outbound_payments_qs)
+
+	net_summary = {
+		"sponsor_count_delta": inbound_summary["total_sponsors"] - outbound_summary["total_sponsors"],
+		"commitment_amount_delta": round(
+			inbound_summary["commitment_amount"] - outbound_summary["commitment_amount"],
+			2,
+		),
+		"completed_revenue_delta": round(
+			inbound_summary["completed_revenue"] - outbound_summary["completed_revenue"],
+			2,
+		),
+		"average_commitment_per_sponsor_delta": round(
+			inbound_summary["average_commitment_per_sponsor"]
+			- outbound_summary["average_commitment_per_sponsor"],
+			2,
+		),
+		"average_completed_revenue_per_sponsor_delta": round(
+			inbound_summary["average_completed_revenue_per_sponsor"]
+			- outbound_summary["average_completed_revenue_per_sponsor"],
+			2,
+		),
+	}
+
+	return {
+		"inbound_summary": inbound_summary,
+		"outbound_summary": outbound_summary,
+		"net_summary": net_summary,
+		"inbound_by_sponsor": build_inbound_sponsor_breakdown(inbound_sponsors_qs),
+		"inbound_by_event": build_event_breakdown(inbound_sponsors_qs, inbound_payments_qs),
+		"outbound_by_event": build_event_breakdown(outbound_sponsors_qs, outbound_payments_qs),
 	}

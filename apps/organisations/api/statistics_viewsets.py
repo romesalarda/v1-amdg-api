@@ -20,6 +20,7 @@ from apps.organisations.api.serializers.statistics import (
 	SponsorInviteConversionSerializer,
 	SponsorOverviewStatisticsSerializer,
 	SponsorPackagePerformanceSerializer,
+	SponsorFlowStatisticsSerializer,
 )
 from apps.events.models import Event
 from apps.organisations.models import Organisation, OrganisationControl
@@ -180,6 +181,7 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 					"sponsors-overview": "Sponsor pipeline, commitments, and realized payment metrics",
 					"sponsor-packages-performance": "Per-package sponsor adoption and revenue realization",
 					"sponsor-invite-conversion": "Sponsor invite acceptance and conversion analytics",
+					"sponsors-flow": "Inbound vs outbound sponsorship flow statistics",
 					"events-on-map": "Returns a GeoJSON FeatureCollection of events for a given organisation.",
 					"leaders-on-map": "Returns a GeoJSON FeatureCollection of leaders for a given organisation.",
 				}
@@ -458,6 +460,38 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 		payload["filters_applied"] = self._build_filters_metadata(request)
 
 		serializer = SponsorInviteConversionSerializer(payload, context={"request": request})
+		return Response(serializer.data)
+
+	@extend_schema(
+		summary="Sponsor flow statistics",
+		description=(
+			"Inbound vs outbound sponsorship metrics with organisation and event breakdowns."
+		),
+		parameters=[ORGANISATION_ID_PARAM, EVENT_ID_PARAM, DATE_FROM_PARAM, DATE_TO_PARAM, FORMAT_PARAM],
+		responses={200: SponsorFlowStatisticsSerializer},
+		tags=["Sponsor Statistics"],
+	)
+	@action(detail=False, methods=["get"], url_path="sponsors-flow")
+	def sponsors_flow(self, request):
+		scope = self._get_scope(request)
+		date_from = self._parse_iso_date(request.GET.get("date_from"), "date_from")
+		date_to = self._parse_iso_date(request.GET.get("date_to"), "date_to")
+		event_id = self._parse_event_id(request.GET.get("event_id"), scope)
+
+		payload = statistics.calculate_sponsor_flow_statistics(
+			organisation_ids=scope["organisation_ids"],
+			event_id=event_id,
+			date_from=date_from,
+			date_to=date_to,
+		)
+		payload["generated_at"] = datetime.utcnow()
+		payload["scope"] = {
+			"type": scope["scope_label"],
+			"organisation_ids": scope["organisation_ids"],
+		}
+		payload["filters_applied"] = self._build_filters_metadata(request)
+
+		serializer = SponsorFlowStatisticsSerializer(payload, context={"request": request})
 		return Response(serializer.data)
 
 	@extend_schema(
