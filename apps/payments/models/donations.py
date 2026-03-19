@@ -44,7 +44,7 @@ class Donation(RequiresVerificationModel): # don't inherit from PayableModel as 
     )
 
     def __str__(self):
-        return f"Donation({self.id}) - {self.status}"
+        return f"Donation({self.id}) - {self.payment.status if self.payment else 'No Payment'} - {self.amount} by {self.donated_by.username if self.donated_by else 'Anonymous'}"
     
     def __repr__(self):
         return f"<Donation id={self.id} donation_id={self.donation_id} amount={self.amount} status={self.verification_status}>"

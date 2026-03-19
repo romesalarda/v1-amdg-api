@@ -923,9 +923,10 @@ class SponsorshipPaymentTimelineItemSerializer(serializers.Serializer):
     currency = serializers.CharField(read_only=True)
     method_type = serializers.CharField(read_only=True, allow_null=True)
     method_title = serializers.CharField(read_only=True, allow_null=True)
+    method_provided_details = serializers.JSONField(read_only=True, allow_null=True)
     created_at = serializers.DateTimeField(read_only=True)
-    updated_at = serializers.DateTimeField(read_only=True)
-
+    updated_at = serializers.DateTimeField(read_only=True)#
+    bank_transfer_reference = serializers.CharField(read_only=True, allow_null=True)
 
 class SponsorshipPaymentHistorySerializer(serializers.Serializer):
     """Organisation sponsorship payment history grouped by selected event."""

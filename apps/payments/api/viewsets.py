@@ -1054,6 +1054,8 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         """Validate user can create refund for this payment."""
         user = self.request.user
         payment = serializer.validated_data.get('payment')
+
+        print(f"Refund request creation attempt by user {user.username} for payment {payment.payment_reference}")
         
         # Check if user owns the payment or is admin
         if not (user.is_superuser or user.is_staff) and payment.user != user:
@@ -1064,10 +1066,28 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 event=payment.event,
                 role__category=EventRoleCategoryChoices.ADMINISTRATIVE
             ).exists()
+
+            print(f"User {user.username} is not payment owner. Checking event admin role: {is_event_admin}")
             
             if not is_event_admin:
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You can only create refund requests for your own payments.")
+            
+        payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
+
+        PaymentHistoryAction.objects.create(
+            payment=payment,
+            action='REFUND_REQUESTED',
+            description=f'Refund requested with {serializer.validated_data.get("amount")} for payment {
+                payment.payment_reference} by {user.username}',
+            metadata={
+                'requested_by_id': user.id,
+                'requested_by_username': user.username,
+                'bank_reference': payment.bank_transfer_reference,
+            },
+            notes="Refund request created and payment marked as pending refund.",
+            performed_by=user
+        )
         
         serializer.save()
     

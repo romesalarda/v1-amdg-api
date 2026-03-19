@@ -160,13 +160,14 @@ class PaymentListSerializer(serializers.ModelSerializer):
     method = serializers.SlugRelatedField(slug_field='method_id', read_only=True)
     amount = serializers.SerializerMethodField(help_text="Final modified payment amount")
     created_at = serializers.DateTimeField(read_only=True)
+    descriptor = serializers.SerializerMethodField(help_text="Type of the payment target (e.g., booking, order, ticket, donation, sponsorship)")
     
     class Meta:
         model = Payment
         fields = (
             'id', 'payment_id', 'payment_reference', 'user', 'user_name',
             'event', 'event_name', 'method', 'method_title', 'status',
-            'amount', 'created_at', '_links'
+            'amount', 'created_at', '_links', 'descriptor'
         )
         read_only_fields = ('id', 'payment_id', 'payment_reference', 'created_at')
         extra_kwargs = {
@@ -176,6 +177,16 @@ class PaymentListSerializer(serializers.ModelSerializer):
     def get_amount(self, obj) -> str:
         """Return the modified amount as string."""
         return str(obj.modified_amount)
+    
+    def get_descriptor(self, obj) -> Optional[str]:
+        """Return the descriptor as a string if available."""
+        if obj.target_type:
+            ttype = str(obj.target_type.model)
+            if ttype == "eventsponsor":
+                return "sponsorship"
+            return ttype
+        
+        return None
     
     @extend_schema_field({
         'type': 'object',
@@ -221,7 +232,7 @@ class PaymentDetailSerializer(PaymentListSerializer):
         fields = PaymentListSerializer.Meta.fields + (
             'description', 'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount',
             'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference',
-            'metadata', 'refund_requests', 'donations', 'history_actions', 'updated_at'
+            'metadata', 'refund_requests', 'donations', 'history_actions', 'updated_at', 'target_type'
         )
     
     def get_base_amount(self, obj) -> str:

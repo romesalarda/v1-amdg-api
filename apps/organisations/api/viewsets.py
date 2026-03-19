@@ -1113,6 +1113,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             total_completed_amount_value = str(getattr(total_completed_amount, 'amount', total_completed_amount))
             currency = str(getattr(total_completed_amount, 'currency', 'GBP'))
 
+
         timeline = [
             {
                 'payment_id': payment.payment_id,
@@ -1122,8 +1123,11 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
                 'currency': str(payment.base_amount.currency) if payment.base_amount else currency,
                 'method_type': payment.method.method_type if payment.method else None,
                 'method_title': payment.method.title if payment.method else None,
+                'method_provided_details': payment.method.provided_details if payment.method else None,
                 'created_at': payment.created_at,
                 'updated_at': payment.updated_at,
+                'bank_transfer_reference': payment.bank_transfer_reference if payment.method and payment.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER else None,
+
             }
             for payment in payment_queryset
         ]

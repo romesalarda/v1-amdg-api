@@ -168,6 +168,11 @@ class PaymentFilterSet(filters.FilterSet):
         method='filter_is_recent',
         help_text="Filter payments created in the last 7 days"
     )
+
+    descriptor = filters.CharFilter(
+        method='filter_descriptor',
+        help_text="Filter by payment descriptor (e.g., booking, order, ticket, donation, sponsorship)"
+    )
     
     class Meta:
         model = Payment
@@ -184,6 +189,25 @@ class PaymentFilterSet(filters.FilterSet):
             Q(user__email__icontains=value) |
             Q(user__username__icontains=value)
         )
+    
+    def filter_descriptor(self, queryset, name, value):
+        """Filter by payment descriptor (e.g., booking, order, ticket, donation, sponsorship)."""
+        if not value:
+            return queryset
+        
+        value = value.lower()
+        if value == "booking":
+            return queryset.filter(target_type__model='booking')
+        elif value == "order":
+            return queryset.filter(target_type__model='order')
+        elif value == "ticket":
+            return queryset.filter(target_type__model='ticket')
+        elif value == "donation":
+            return queryset.filter(target_type__model='donation')
+        elif value in ["sponsorship", "eventsponsor"]:
+            return queryset.filter(target_type__model='eventsponsor')
+        
+        return queryset.none()
     
     def filter_has_refund(self, queryset, name, value):
         """Filter payments that have refund requests."""
