@@ -1220,10 +1220,23 @@ class AttendeeDraftSerializer(serializers.Serializer):
     relationship_to_user = serializers.ChoiceField(
         choices=['self', 'spouse', 'child', 'friend', 'parent', 'sibling', 'other']
     )
-    area_from = serializers.IntegerField(required=False, allow_null=True)
+    area_from = serializers.IntegerField(required=True)
     personal_info = AttendeePersonalInfoDraftSerializer(required=False)
     consents = AttendeeConsentDraftSerializer(many=True, required=False)
     question_answers = EventQuestionAnswerDraftSerializer(many=True, required=False)
+
+    def validate_area_from(self, value):
+        """Ensure area_from points to an active AreaLocation."""
+        from apps.locations.models import AreaLocation
+
+        try:
+            area = AreaLocation.objects.get(id=value, active=True)
+        except AreaLocation.DoesNotExist:
+            raise serializers.ValidationError(
+                f'AreaLocation with id {value} does not exist or is not active.'
+            )
+
+        return area.id
 
 
 class AttendeeCheckoutSerializer(serializers.Serializer):
@@ -1380,6 +1393,15 @@ class CheckoutSerializer(serializers.Serializer):
         intent = BookingIntent.objects.get(booking_intent_id=intent_id)
         from apps.payments.models import PaymentMethod
         payment_method = PaymentMethod.objects.get(id=method_id)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+
+        # Validate intent ownership for non-admin users
+        if user and not user.is_staff and not user.is_superuser:
+            if not intent.made_by_id or intent.made_by_id != user.id:
+                raise serializers.ValidationError({
+                    'booking_intent_id': 'This booking intent does not belong to the authenticated user.'
+                })
         
         # Validate payment method belongs to same event
         if payment_method.event_id != intent.event_id:
@@ -1401,8 +1423,17 @@ class CheckoutSerializer(serializers.Serializer):
         for selection in attendee_selections:
             attendee = selection.get('_attendee')
             if attendee:
+                if not attendee.area_from_id:
+                    raise serializers.ValidationError({
+                        'attendees': f'Attendee {attendee.attendee_id} must have area_from set.'
+                    })
                 event_ids.add(attendee.event_id)
             else:
+                draft = selection.get('_attendee_draft') or {}
+                if not draft.get('area_from'):
+                    raise serializers.ValidationError({
+                        'attendees': 'Each draft attendee must include area_from.'
+                    })
                 event_ids.add(intent.event_id)
 
         if len(event_ids) > 1:

@@ -24,6 +24,21 @@ from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+# Import models
+from django.db import transaction
+from apps.products.models import Order, OrderStatusChoices
+from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
+from djmoney.money import Money
+from core.utils.display import generate_human_readable_id
+from decimal import Decimal
+from apps.attendee.models import Attendee, AttendeeRelationship
+from apps.attendee.models.personal.dietary import AttendeeDietaryRequirement
+from apps.attendee.models.personal.medical import AttendeeMedicalCondition
+from apps.attendee.models.personal.accessibility import AttendeeAccessibilityRequirement
+from apps.attendee.models.personal.emergency import EmergencyContact
+from apps.attendee.models.personal.consent import AttendeeConsent, Consent
+from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
+from apps.bookings.models.ticket import Ticket
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -417,21 +432,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         user = request.user
         idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
         
-        # Import models
-        from django.db import transaction
-        from apps.products.models import Order, OrderStatusChoices
-        from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
-        from djmoney.money import Money
-        from core.utils.display import generate_human_readable_id
-        from decimal import Decimal
-        from apps.attendee.models import Attendee, AttendeeRelationship
-        from apps.attendee.models.personal.dietary import AttendeeDietaryRequirement
-        from apps.attendee.models.personal.medical import AttendeeMedicalCondition
-        from apps.attendee.models.personal.accessibility import AttendeeAccessibilityRequirement
-        from apps.attendee.models.personal.emergency import EmergencyContact
-        from apps.attendee.models.personal.consent import AttendeeConsent, Consent
-        from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
-        from apps.bookings.models.ticket import Ticket
+        
 
         def build_existing_response(existing_booking):
             payment = existing_booking.payment
@@ -985,6 +986,89 @@ class BookingViewSet(viewsets.ModelViewSet):
                     'All changes have been rolled back. Please try again or contact support.'
                 )
             })
+        
+    @extend_schema(
+        summary="Ping booking intent to extend expiry",
+        description=(
+            "Internal endpoint to ping a booking intent and extend its expiry. "
+            "Used by frontend to keep intent alive during checkout."
+        ),
+        tags=["Booking Intents"],
+        responses={
+            200: OpenApiResponse(
+                description="Booking intent status",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'intent': {'type': 'string', 'format': 'uuid'},
+                        'exists': {'type': 'boolean'},
+                        'is_active': {'type': 'boolean'},
+                        'is_expired': {'type': 'boolean'},
+                        'status': {'type': 'string'},
+                        'expires_at': {'type': 'string', 'format': 'date-time', 'nullable': True},
+                        'seconds_remaining': {'type': 'integer'},
+                        'redirect_required': {'type': 'boolean'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description='Missing intent query parameter'),
+            404: OpenApiResponse(description='Booking intent not found'),
+        },
+        parameters=[
+            OpenApiParameter(
+                name='intent',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Booking intent ID to ping',
+            ),
+        ],
+    )
+    @action(detail=False, methods=['get'], url_path='ping-intent')
+    def ping_booking_intent(self, request):
+        """
+        Internal endpoint to ping a booking intent and extend its expiry.
+        Used by frontend to keep intent alive during checkout.
+        """
+        from django.utils import timezone
+
+        try:
+            booking_intent_id = request.query_params.get('intent')
+            if not booking_intent_id:
+                return Response({'detail': 'Query parameter "intent" is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            intent = BookingIntent.objects.get(booking_intent_id=booking_intent_id)
+
+            user = request.user
+            if not (user.is_staff or user.is_superuser):
+                if not intent.made_by_id or intent.made_by_id != user.id:
+                    return Response({'detail': 'Booking intent not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+            # Keep intent alive while user is actively progressing through checkout.
+            if intent.is_active:
+                intent.expires_at = timezone.now() + timezone.timedelta(minutes=20)
+                intent.save(update_fields=['expires_at'])
+
+            now = timezone.now()
+            seconds_remaining = 0
+            if intent.expires_at and intent.expires_at > now:
+                seconds_remaining = int((intent.expires_at - now).total_seconds())
+
+            return Response(
+                {
+                    'intent': str(intent.booking_intent_id),
+                    'exists': True,
+                    'is_active': intent.is_active,
+                    'is_expired': intent.is_expired,
+                    'status': intent.status,
+                    'expires_at': intent.expires_at,
+                    'seconds_remaining': max(seconds_remaining, 0),
+                    'redirect_required': not intent.is_active,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except BookingIntent.DoesNotExist:
+            return Response({'detail': 'Booking intent not found.'}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 # ============================================================================
