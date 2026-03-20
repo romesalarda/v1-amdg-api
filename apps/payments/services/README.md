@@ -77,10 +77,13 @@ python manage.py migrate payments
 # Install Stripe CLI: https://stripe.com/docs/stripe-cli
 stripe login
 
-# Forward webhooks to local server
-stripe listen --forward-to http://localhost:8000/api/payments/stripe/webhook/
+# Forward webhooks to local server (KEEP THIS RUNNING)
+stripe listen --forward-to http://localhost:8000/api/stripe/webhook/
 
 # Copy the webhook signing secret (whsec_xxx) to STRIPE_WEBHOOK_SECRET
+
+# To testm in ANOTHER console with the listen command still running in another console
+stipe trigger payment_intent.succeeded 
 ```
 
 #### Production
