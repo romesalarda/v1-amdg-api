@@ -232,6 +232,15 @@ class BookingIntentCreateSerializer(serializers.ModelSerializer):
         """Create a booking intent with the authenticated user."""
         validated_data['made_by'] = self.context['request'].user
         validated_data['status'] = BookingIntentStatusChoices.PENDING
+
+        # expire all existing pending intents for this user and event to prevent duplicates
+        BookingIntent.objects.filter(
+            event=validated_data['event'],
+            made_by=validated_data['made_by'],
+            status=BookingIntentStatusChoices.PENDING,
+            expires_at__gt=timezone.now()
+        ).update(status=BookingIntentStatusChoices.EXPIRED)
+
         return super().create(validated_data)
 
 
