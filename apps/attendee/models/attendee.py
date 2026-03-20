@@ -88,9 +88,13 @@ class Attendee(SoftDeleteModel):
         return f"<Attendee {self.attendee_display_id}: {self.full_name}>"
     
     def clean(self):        
-        if self.date_of_birth and self.date_of_birth > date.today():
-            raise ValidationError("Date of birth cannot be in the future.")
-        
+        if self.date_of_birth:
+            if not isinstance(self.date_of_birth, date):
+                self.date_of_birth = date_validation.parse_date(self.date_of_birth)
+
+            if self.date_of_birth > date.today():
+                raise ValidationError("Date of birth cannot be in the future.")
+
         if self.gender:
             if self.gender not in ['MALE', 'FEMALE', 'OTHER', 'PREFER_NOT_TO_SAY']:
                 raise ValidationError("Invalid gender value.")

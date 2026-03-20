@@ -17,3 +17,13 @@ def valid_date_of_birth(date_of_birth, raise_exception=True):
             raise ValueError("Date of birth is unrealistically old.")
         return False
     return True
+
+def parse_date(date_str):
+    '''
+    Parse a date string in ISO format (YYYY-MM-DD) and return a date object.
+    '''
+    from datetime import datetime
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError("Invalid date format. Expected YYYY-MM-DD.")

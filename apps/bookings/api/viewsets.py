@@ -527,7 +527,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             response_data = {
                 'booking_id': str(booking.id) if booking else None,
                 'booking_reference': booking.booking_reference if booking else None,
-                'payment_id': payment_obj.id,
+                'payment_id': payment_obj.payment_id,
                 'payment_reference': payment_obj.payment_reference,
                 'total_amount': str(payment_obj.base_amount.amount if payment_obj.base_amount else Decimal('0.00')),
                 'currency': payment_obj.base_amount.currency.code if payment_obj.base_amount else 'GBP',

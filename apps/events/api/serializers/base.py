@@ -20,6 +20,8 @@ from apps.common.api.serializers import (
     AvailabilityWindowSerializer, 
     ResourceSerializer
 )
+from core.utils.currency import format_price
+
 import pytz
 User = get_user_model()
 
@@ -238,6 +240,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
     landing_images = ResourceSerializer(many=True, read_only=True)
     main_landing_image = ResourceSerializer(read_only=True)
     is_deleted = serializers.SerializerMethodField()
+    general_price = serializers.SerializerMethodField(read_only=True)
     
     # User permissions context
     user_permissions = serializers.SerializerMethodField()
@@ -256,7 +259,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'settings', 'duration_days', 'is_ongoing', 'is_approved', 
             'can_participants_register', 'number_of_attendees',
             'availability_windows', 'resources', 'landing_images', 'main_landing_image',
-            'deleted_at', 'deleted_by', 'is_deleted', 'user_permissions',
+            'deleted_at', 'deleted_by', 'is_deleted', 'user_permissions', 'general_price',
             '_links'
         )
         read_only_fields = (
@@ -272,7 +275,23 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'end_datetime': {'default': None},
             'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
         }
-    
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_general_price(self, obj):
+        '''Returns price range from value_x - value_y if multiple packages, or single value if only one package.'''
+        packages = obj.booking_packages.order_by('base_amount').values("base_amount", "base_amount_currency")
+        if not packages.exists():
+            return None
+        elif packages.count() == 1:
+            return format_price(packages.first()['base_amount'], packages.first()['base_amount_currency'])
+        else:
+            min_price = packages.first()
+            max_price = packages.last()
+            if min_price["base_amount"] == max_price["base_amount"]:
+                return format_price(min_price["base_amount"], min_price["base_amount_currency"])
+            else:
+                return f"{format_price(min_price['base_amount'], min_price['base_amount_currency'])} - {format_price(max_price['base_amount'], max_price['base_amount_currency'])}"
+
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_is_deleted(self, obj):
         """Check if the event is soft-deleted."""
