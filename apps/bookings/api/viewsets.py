@@ -64,7 +64,7 @@ from .serializers import (
     BookingPackageRuleSerializer, BookingPackageRuleCreateUpdateSerializer,
     EventAlternativeSigninListSerializer, EventAlternativeSigninDetailSerializer, EventAlternativeSigninCreateUpdateSerializer,
     AttendeeAlternativeSigninListSerializer, AttendeeAlternativeSigninDetailSerializer, AttendeeAlternativeSigninCreateUpdateSerializer,
-    CheckoutSerializer,
+    CheckoutSerializer, CheckoutPreviewSerializer,
 )
 from .filtersets import (
     BookingFilterSet, BookingIntentFilterSet,
@@ -984,6 +984,255 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'checkout': (
                     'Checkout failed due to an unexpected error. '
                     'All changes have been rolled back. Please try again or contact support.'
+                )
+            })
+
+    @extend_schema(
+        summary="Preview checkout pricing",
+        description=(
+            "Calculate a pre-checkout pricing preview for booking packages and package products. "
+            "This endpoint validates an active booking intent, evaluates eligibility and discounts, "
+            "and returns a detailed line-item breakdown. "
+            "Stock checks are performed using temporary order-item reservations that are always rolled back."
+        ),
+        tags=["Bookings"],
+        request={'application/json': CheckoutPreviewSerializer},
+        responses={
+            200: OpenApiResponse(
+                description="Checkout preview generated",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'booking_intent_id': {'type': 'string', 'format': 'uuid'},
+                        'event_id': {'type': 'string', 'format': 'uuid'},
+                        'currency': {'type': 'string'},
+                        'total_amount': {'type': 'string'},
+                        'soft_stock_reservation': {'type': 'boolean'},
+                        'attendees': {'type': 'array'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description="Validation error"),
+        },
+        operation_id="bookings_checkout_preview",
+    )
+    @action(detail=False, methods=['post'], url_path='checkout-preview')
+    def checkout_preview(self, request):
+        """Preview booking checkout totals and discounts without persisting booking/payment data."""
+        import logging
+        from django.utils import timezone
+        from apps.payments.models import DiscountType
+        from apps.payments.evaluator import discount_applies
+
+        logger = logging.getLogger(__name__)
+
+        serializer = CheckoutPreviewSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        intent = serializer.validated_data['_intent']
+        attendee_selections = serializer.validated_data['attendees']
+
+        def applied_discount_breakdown(payable, discount_base, context):
+            percentage_total = Decimal('0.00')
+            fixed_total = Money(0, discount_base.currency)
+            applied_discounts = []
+
+            for discount in payable.discounts:
+                if not discount_applies(discount, context):
+                    continue
+
+                if discount.discount_type == DiscountType.PERCENTAGE:
+                    percentage_total += discount.percentage
+                    discount_amount = discount_base * (discount.percentage / Decimal('100'))
+                    value = str(discount.percentage)
+                else:
+                    fixed_total += discount.amount
+                    discount_amount = discount.amount
+                    value = str(discount.amount.amount)
+
+                applied_discounts.append({
+                    'discount_id': str(discount.discount_id),
+                    'name': discount.name,
+                    'discount_type': discount.discount_type,
+                    'value': value,
+                    'amount': str(discount_amount.amount),
+                    'currency': discount_base.currency.code,
+                })
+
+            percentage_discount = discount_base * (percentage_total / Decimal('100'))
+            total_discount = percentage_discount + fixed_total
+            if total_discount > discount_base:
+                total_discount = discount_base
+
+            return applied_discounts, total_discount
+
+        try:
+            with transaction.atomic():
+                intent = BookingIntent.objects.select_for_update().get(
+                    booking_intent_id=intent.booking_intent_id
+                )
+
+                intent.expires_at = timezone.now() + timezone.timedelta(minutes=30)
+                intent.save(update_fields=['expires_at'])
+
+                if not intent.is_active or not intent.can_create_booking():
+                    raise ValidationError({
+                        'booking_intent_id': 'Booking intent is no longer valid for checkout preview.'
+                    })
+
+                preview_savepoint = transaction.savepoint()
+                attendees_breakdown = []
+                total_amount = Money(0, 'GBP')
+
+                try:
+                    for selection in attendee_selections:
+                        package = selection['_package']
+                        product_selections = selection.get('product_selections', [])
+
+                        attendee = selection.get('_attendee')
+                        attendee_source = 'existing'
+                        if not attendee:
+                            attendee_source = 'draft'
+                            draft = selection.get('_attendee_draft') or {}
+                            relationship = draft.get('relationship_to_user')
+                            attendee_user = user if relationship == AttendeeRelationship.SELF else None
+                            attendee = Attendee.objects.create(
+                                event=intent.event,
+                                user=attendee_user,
+                                defined_by=user,
+                                first_name=draft.get('first_name'),
+                                last_name=draft.get('last_name'),
+                                email=draft.get('email') or None,
+                                phone_number=draft.get('phone_number') or None,
+                                date_of_birth=draft.get('date_of_birth'),
+                                gender=draft.get('gender') or None,
+                                relationship_to_user=relationship,
+                                area_from_id=draft.get('area_from'),
+                            )
+
+                        attendee_context = attendee.pricing_context()
+                        attendee_name = attendee.full_name
+                        if not package.can_use_package(user, attendee):
+                            raise ValidationError({
+                                'package_id': (
+                                    f'Attendee {attendee.attendee_id} is not eligible for package {package.name}.'
+                                )
+                            })
+
+                        package_base = package.modified_amount
+                        package_discounts, package_discount_total = applied_discount_breakdown(
+                            payable=package,
+                            discount_base=package_base,
+                            context=attendee_context,
+                        )
+                        package_final = max(
+                            package_base - package_discount_total,
+                            Money(0, package_base.currency)
+                        )
+
+                        attendee_total = package_final
+                        products_breakdown = []
+
+                        if product_selections:
+                            temp_order = Order.objects.create(
+                                customer=user,
+                                attendee=attendee,
+                                booking_package=package,
+                                status=OrderStatusChoices.DRAFT,
+                                total_amount=Money(0, package_base.currency.code),
+                                created_by=user,
+                            )
+
+                            for product_selection in product_selections:
+                                package_product = product_selection['_package_product']
+                                variant = product_selection['_variant']
+                                quantity = product_selection['quantity']
+
+                                try:
+                                    temp_order.add_order_item(product_variant=variant, quantity=quantity)
+                                except Exception as exc:
+                                    raise ValidationError({
+                                        'product_selections': (
+                                            f'Unable to reserve product stock for preview: {str(exc)}'
+                                        )
+                                    })
+
+                                variant_base = variant.modified_amount
+                                bundled_unit_price = variant_base * (
+                                    Decimal('1.00') + package_product.percentage_modifier / Decimal('100')
+                                )
+                                product_discounts, product_discount_total = applied_discount_breakdown(
+                                    payable=package_product,
+                                    discount_base=bundled_unit_price,
+                                    context=attendee_context,
+                                )
+                                product_final_unit = max(
+                                    bundled_unit_price - product_discount_total,
+                                    Money(0, bundled_unit_price.currency)
+                                )
+                                product_line_total = product_final_unit * quantity
+                                attendee_total += product_line_total
+
+                                products_breakdown.append({
+                                    'package_product_id': package_product.id,
+                                    'variant_id': str(variant.variant_id),
+                                    'product_title': package_product.product.title,
+                                    'quantity': quantity,
+                                    'unit_base_amount': str(variant_base.amount.quantize(Decimal('0.01'))),
+                                    'unit_bundled_amount': str(bundled_unit_price.amount.quantize(Decimal('0.01'))),
+                                    'unit_discount_total': str(product_discount_total.amount.quantize(Decimal('0.01'))),
+                                    'unit_final_amount': str(product_final_unit.amount.quantize(Decimal('0.01'))),
+                                    'line_total': str(product_line_total.amount.quantize(Decimal('0.01'))),
+                                    'currency': product_final_unit.currency.code,
+                                    'applied_discounts': product_discounts,
+                                })
+
+                        total_amount += attendee_total
+                        attendees_breakdown.append({
+                            'attendee_id': str(attendee.attendee_id) if attendee else None,
+                            'attendee_name': attendee_name,
+                            'source': attendee_source,
+                            'package': {
+                                'package_id': package.id,
+                                'package_name': package.name,
+                                'base_amount': str(package_base.amount.quantize(Decimal('0.01'))),
+                                'discount_total': str(package_discount_total.amount.quantize(Decimal('0.01'))),
+                                'final_amount': str(package_final.amount.quantize(Decimal('0.01'))),
+                                'currency': package_final.currency.code,
+                                'applied_discounts': package_discounts,
+                            },
+                            'products': products_breakdown,
+                            'attendee_total': str(attendee_total.amount.quantize(Decimal('0.01'))),
+                            'currency': attendee_total.currency.code,
+                        })
+
+                finally:
+                    transaction.savepoint_rollback(preview_savepoint)
+
+                return Response(
+                    {
+                        'booking_intent_id': str(intent.booking_intent_id),
+                        'event_id': str(intent.event.event_id),
+                        'currency': total_amount.currency.code,
+                        'total_amount': str(total_amount.amount.quantize(Decimal('0.01'))),
+                        'soft_stock_reservation': True,
+                        'attendees': attendees_breakdown,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        except ValidationError:
+            raise
+        except Exception as exc:
+            logger.error(
+                f"Checkout preview failed for user {user.id}, intent {intent.booking_intent_id}: {str(exc)}",
+                exc_info=True,
+            )
+            raise ValidationError({
+                'checkout_preview': (
+                    'Could not generate checkout preview due to an unexpected error. '
+                    'Please retry or contact support.'
                 )
             })
         
