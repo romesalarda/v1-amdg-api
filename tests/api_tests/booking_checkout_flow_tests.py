@@ -27,7 +27,7 @@ from apps.bookings.models import (
 )
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentMethodTypeChoices,
-    PaymentStatusChoices
+    PaymentStatusChoices, Discount, DiscountType, DiscountRule, DiscountRuleTypeChoices
 )
 from apps.events.models import (
     Event, EventType, EventStatusChoices, EventAuthorization, EventAuthorizationStatusChoices,
@@ -45,6 +45,11 @@ from apps.organisations.models import Organisation
 from apps.products.models import Product, ProductVariant, ProductSizeChoices
 from apps.bookings.models import PackageProduct
 from apps.common.models import Resource
+from apps.locations.models import (
+    CountryLocation, ClusterLocation, ChapterLocation, AreaLocation,
+    GeneralSectorType, SpecificSectorType,
+)
+from apps.products.models import Order
 
 import logging
 
@@ -98,6 +103,28 @@ class CheckoutAPITestCase(TestCase):
             end_datetime=timezone.now() + timedelta(days=32),
             status=EventStatusChoices.OPEN,
             organisation=self.organisation
+        )
+
+        self.country = CountryLocation.objects.create(
+            country='GB',
+            general_sector=GeneralSectorType.EUROPE,
+            specific_sector=SpecificSectorType.WEST_EUROPE,
+            active=True,
+        )
+        self.cluster = ClusterLocation.objects.create(
+            cluster_name='London Cluster',
+            country=self.country,
+            active=True,
+        )
+        self.chapter = ChapterLocation.objects.create(
+            chapter_name='London Chapter',
+            cluster=self.cluster,
+            active=True,
+        )
+        self.area = AreaLocation.objects.create(
+            area_name='Central Area',
+            chapter=self.chapter,
+            active=True,
         )
 
         EventAuthorization.objects.create(
@@ -171,8 +198,72 @@ class CheckoutAPITestCase(TestCase):
             user=self.user,
             booking=booking,
             relationship_to_user=AttendeeRelationship.SELF,
+            area_from=self.area,
             defined_by=self.user
         )
+
+    def test_checkout_preview_validates_required_fields(self):
+        """Test that checkout preview validates required fields."""
+        response = self.client.post('/api/bookings/list/checkout-preview/', {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('booking_intent_id', response.data)
+        self.assertIn('attendees', response.data)
+
+    def test_checkout_preview_returns_discount_breakdown(self):
+        """Test checkout preview returns package discount line items and total."""
+        intent = self.create_booking_intent(ticket_count=1)
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-PREVIEW-001',
+            made_by=self.user,
+        )
+        attendee = self.create_attendee(booking)
+
+        discount = Discount.objects.create(
+            name='Adult 10% Off',
+            discount_type=DiscountType.PERCENTAGE,
+            percentage=Decimal('10.00'),
+            active=True,
+            target_type=ContentType.objects.get_for_model(BookingPackage),
+            target_id=self.package.id,
+        )
+        DiscountRule.objects.create(
+            rule_type=DiscountRuleTypeChoices.IS_AGE_GT,
+            name='Age over 18',
+            discount=discount,
+            value='18',
+            active=True,
+        )
+
+        response = self.client.post(
+            '/api/bookings/list/checkout-preview/',
+            {
+                'booking_intent_id': str(intent.booking_intent_id),
+                'attendees': [
+                    {
+                        'attendee_id': str(attendee.attendee_id),
+                        'package_id': self.package.id,
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['total_amount'], '45.00')
+        self.assertEqual(response.data['currency'], 'GBP')
+        self.assertTrue(response.data['soft_stock_reservation'])
+        self.assertEqual(len(response.data['attendees']), 1)
+
+        package_breakdown = response.data['attendees'][0]['package']
+        self.assertEqual(package_breakdown['base_amount'], '50.00')
+        self.assertEqual(package_breakdown['discount_total'], '5.00')
+        self.assertEqual(package_breakdown['final_amount'], '45.00')
+        self.assertEqual(len(package_breakdown['applied_discounts']), 1)
+        self.assertEqual(package_breakdown['applied_discounts'][0]['name'], 'Adult 10% Off')
+
+        self.assertEqual(Order.objects.count(), 0)
 
     def create_required_questions(self):
         """Helper to create required questions for draft checkout."""

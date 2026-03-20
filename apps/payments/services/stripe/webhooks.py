@@ -321,7 +321,19 @@ class ChargeRefundedHandler(WebhookEventHandler):
         from apps.common.models.verification import VerificationStatus
         
         charge_id = self.data.id
-        refunds = self.data.refunds.data if hasattr(self.data.refunds, 'data') else []
+        refunds_container = getattr(self.data, 'refunds', None)
+
+        refunds = []
+        if isinstance(refunds_container, (list, tuple)):
+            refunds = list(refunds_container)
+        elif isinstance(refunds_container, dict):
+            data = refunds_container.get('data', [])
+            if isinstance(data, (list, tuple)):
+                refunds = list(data)
+        elif refunds_container is not None:
+            data = getattr(refunds_container, 'data', None)
+            if isinstance(data, (list, tuple)):
+                refunds = list(data)
         
         try:
             with transaction.atomic():
@@ -337,10 +349,9 @@ class ChargeRefundedHandler(WebhookEventHandler):
                     )
                     return {'status': 'ignored', 'message': 'Payment not found'}
                 
-                # Process each refund
+                # Process each refund object when expanded refunds are available.
                 for refund_data in refunds:
                     refund_id = refund_data.id
-                    refund_amount = refund_data.amount  # in cents
                     refund_status = refund_data.status  # succeeded, pending, failed, canceled
                     
                     if refund_status != 'succeeded':
@@ -371,7 +382,13 @@ class ChargeRefundedHandler(WebhookEventHandler):
                         )
                 
                 # Check if payment should be marked as refunded
-                total_refunded = sum(r.amount for r in refunds if r.status == 'succeeded')
+                if refunds:
+                    total_refunded = sum(r.amount for r in refunds if r.status == 'succeeded')
+                else:
+                    # Stripe may omit expanded refund objects from charge payloads.
+                    # amount_refunded is still authoritative for refund totals.
+                    total_refunded = int(getattr(self.data, 'amount_refunded', 0) or 0)
+
                 payment_amount_cents = int(payment.base_amount.amount * 100)
                 
                 if total_refunded >= payment_amount_cents:

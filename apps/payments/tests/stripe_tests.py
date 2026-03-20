@@ -405,6 +405,32 @@ class WebhookTestCase(TestCase):
         self.payment.refresh_from_db()
         self.assertEqual(self.payment.status, PaymentStatusChoices.COMPLETED)
 
+    def test_charge_refunded_handler_without_refunds_attribute(self):
+        """charge.refunded payloads without refunds list should still process via amount_refunded."""
+        # Arrange payment state for full refund transition
+        self.payment.status = PaymentStatusChoices.COMPLETED
+        self.payment.stripe_charge_id = 'ch_test123'
+        self.payment.save(update_fields=['status', 'stripe_charge_id'])
+
+        mock_event = Mock()
+        mock_event.id = 'evt_refund_no_list'
+        mock_event.type = 'charge.refunded'
+        mock_event.data = Mock()
+        mock_event.data.object = Mock()
+        mock_event.data.object.id = 'ch_test123'
+        mock_event.data.object.amount_refunded = 5000
+        # Intentionally no .refunds attribute
+
+        handler = ChargeRefundedHandler(mock_event)
+
+        # Act
+        result = handler.handle()
+
+        # Assert
+        self.assertEqual(result['status'], 'success')
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, PaymentStatusChoices.REFUNDED)
+
 
 class IdempotencyTestCase(TestCase):
     """Test idempotency of payment operations."""

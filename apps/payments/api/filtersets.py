@@ -606,6 +606,11 @@ class RefundRequestFilterSet(filters.FilterSet):
         field_name='payment__payment_id',
         help_text="Filter by payment UUID"
     )
+
+    payment__event__event_id = filters.UUIDFilter(
+        field_name='payment__event__event_id',
+        help_text="Filter by event UUID (filters refunds for payments associated with the event)"
+    )
     
     is_active = filters.BooleanFilter(
         field_name='is_active',

@@ -9,7 +9,11 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from apps.payments.models import Payment, PaymentStatusChoices
-from apps.bookings.services import TicketCreatorService
+from apps.bookings.services import (
+    TicketCreatorService,
+    BookingCheckoutFinalizer,
+    CheckoutFinalizationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,30 @@ def handle_payment_completion(sender, instance, created, **kwargs):
             f"with method {instance.method.method_type if instance.method else 'None'}"
         )
         return
+
+    # Deferred booking finalization path (two-phase checkout).
+    if instance.target is None and (instance.metadata or {}).get('checkout_intent_id'):
+        try:
+            result = BookingCheckoutFinalizer.finalize_from_payment(instance)
+            booking = result.get('booking')
+            if booking:
+                instance.refresh_from_db(fields=['target_type', 'target_id', 'metadata'])
+                logger.info(
+                    f"Finalized deferred checkout payment {instance.payment_reference} "
+                    f"into booking {booking.booking_reference}"
+                )
+        except CheckoutFinalizationError as e:
+            logger.error(
+                f"Failed deferred checkout finalization for payment {instance.payment_reference}: {str(e)}",
+                exc_info=True,
+            )
+            return
+        except Exception as e:
+            logger.error(
+                f"Unexpected deferred finalization error for payment {instance.payment_reference}: {str(e)}",
+                exc_info=True,
+            )
+            return
     
     target = instance.target
     
