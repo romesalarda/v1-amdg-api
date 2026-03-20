@@ -249,7 +249,7 @@ def calculate_booking_status_distribution(
         target_id__in=booking_ids
     ).values_list('target_id', flat=True)
     bookings_without_payment = queryset.exclude(
-        id__in=bookings_with_payment_ids
+        id__in=list(bookings_with_payment_ids)
     ).count()
     
     if bookings_without_payment > 0:

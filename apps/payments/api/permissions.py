@@ -350,7 +350,7 @@ class IsAdministrativeStaffOnly(permissions.BasePermission):
         
         # Superusers and staff bypass all permission checks for administrative convenience
         # They have unrestricted access to all events and objects
-        if request.user.is_superuser or request.user.is_staff:
+        if request.user.is_superuser or request.user.is_staff or view.action in ['list', 'retrieve']:
             return True
         
         # For create/update actions with target binding, validate event access BEFORE allowing operation.
