@@ -311,7 +311,6 @@ class AttendeeViewSet(viewsets.ModelViewSet):
                 PaymentStatusChoices.PENDING,
                 PaymentStatusChoices.COMPLETED,
                 PaymentStatusChoices.PENDING_REFUND,
-                PaymentStatusChoices.PARTIALLY_REFUNDED,
             ]
         )
 
@@ -326,7 +325,13 @@ class AttendeeViewSet(viewsets.ModelViewSet):
 
         blockers = []
 
-        if linked_payments.exists():
+        if linked_payments.filter(status__in=[
+            PaymentStatusChoices.DRAFTING,
+            PaymentStatusChoices.PENDING,
+            PaymentStatusChoices.COMPLETED,
+            PaymentStatusChoices.PENDING_REFUND,
+            # PaymentStatusChoices.PARTIALLY_REFUNDED,
+        ]).exists(): # ignore payments that are fully refunded or cancelled
             blockers.append({
                 'code': 'linked_payments',
                 'severity': 'high',
@@ -491,6 +496,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
                 'reason_code': drf_serializers.CharField(required=False),
                 'override_used_ticket_block': drf_serializers.BooleanField(required=False, default=False),
                 'override_reason': drf_serializers.CharField(required=False),
+                'attendee_ids': drf_serializers.ListField(child=drf_serializers.UUIDField(), required=False),
             },
         ),
         responses={
@@ -538,9 +544,9 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         payload = request.data.copy()
         payload['payment'] = str(payment.payment_id)
 
-        # Booking-linked refunds default to this attendee scope if not provided.
-        if attendee.booking_id and payment.target and getattr(payment.target, 'id', None) == attendee.booking_id:
-            payload.setdefault('attendee_ids', [str(attendee.attendee_id)])
+        # Always default to this attendee's ID if not provided
+        if not payload.get('attendee_ids'):
+            payload['attendee_ids'] = [str(attendee.attendee_id)]
 
         refund_serializer = RefundRequestCreateSerializer(data=payload, context={'request': request})
         refund_serializer.is_valid(raise_exception=True)

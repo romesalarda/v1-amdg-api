@@ -71,7 +71,7 @@ class AttendeeAdmin(admin.ModelAdmin):
     readonly_fields = ('attendee_id', 'created_at', 'updated_at', 'age', 'is_minor', 'deleted_at', 'deleted_by')
     autocomplete_fields = ('user', 'event')
     date_hierarchy = 'created_at'
-    
+
     inlines = [
         EmergencyContactInline,
         AttendeeDietaryRequirementInline,
@@ -81,6 +81,9 @@ class AttendeeAdmin(admin.ModelAdmin):
         AttendeeGuardianInline,
         AttendeeActionInline,
     ]
+
+    def get_queryset(self, request):
+        return self.model.all_objects.all()
     
     fieldsets = (
         ('Identifiers', {
