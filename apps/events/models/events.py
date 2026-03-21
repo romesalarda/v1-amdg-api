@@ -354,6 +354,11 @@ class EventSettings(models.Model):
 
     default_timezone = TimeZoneField(default=settings.TIME_ZONE)
 
+    max_attendees_per_booking = models.PositiveIntegerField(
+        default=10,
+        help_text="Maximum number of attendees that can be included in a single booking."
+    ) # maximum number of attendees that can be included in a single booking
+
     class Meta:
         verbose_name = "Event Setting"
         verbose_name_plural = "Event Settings"

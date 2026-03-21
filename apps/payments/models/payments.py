@@ -30,6 +30,7 @@ class PaymentStatusChoices(models.TextChoices):
     FAILED = 'FAILED', 'Failed'
     PENDING_REFUND = 'PENDING_REFUND', 'Pending Refund'
     REFUNDED = 'REFUNDED', 'Refunded'
+    PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED', 'Partially Refunded'
     
 ALLOWED_STATUS_TRANSITIONS = {
     PaymentStatusChoices.DRAFTING: [
@@ -43,8 +44,12 @@ ALLOWED_STATUS_TRANSITIONS = {
     ],
     PaymentStatusChoices.COMPLETED: [
         PaymentStatusChoices.PENDING_REFUND, # pending full refund
+        PaymentStatusChoices.PARTIALLY_REFUNDED, # pending partial refund
     ],
     PaymentStatusChoices.PENDING_REFUND: [
+        PaymentStatusChoices.REFUNDED, # full refund completed
+    ],
+    PaymentStatusChoices.PARTIALLY_REFUNDED: [
         PaymentStatusChoices.REFUNDED, # full refund completed
     ],
 }
@@ -53,7 +58,10 @@ MAX_PAYMENT_GENERATION_ATTEMPTS = 5
 MAX_LENGTH_BANK_REF = 12
 
 class Payment(PayableModel):
-    
+    '''
+    Centralised payment model to track all payments across the system, linked to specific events and users, with support for multiple payment methods and integration with Stripe. 
+    Payment records are immutable once completed to ensure data integrity, with a separate PaymentHistoryAction model to track any changes or actions taken on payments for audit purposes.
+    '''
     payment_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     payment_reference = models.CharField(max_length=30, unique=True, blank=True)
     user = models.ForeignKey(
@@ -127,6 +135,14 @@ class Payment(PayableModel):
     
     def __repr__(self):
         return f"<Payment id={self.payment_id} reference={self.payment_reference} user={self.user}>"
+
+    @property
+    def is_partially_refunded(self):
+        return self.status == PaymentStatusChoices.PARTIALLY_REFUNDED
+    
+    @property
+    def is_refunded(self):
+        return self.status == PaymentStatusChoices.REFUNDED
     
     def save(self, *args, **kwargs):
         

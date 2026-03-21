@@ -211,6 +211,14 @@ class Attendee(SoftDeleteModel):
         )
         
         return booking_oustanding
+
+    def invalidate(self):
+        '''
+        Invalidate all important data related to this attendee including:
+        1. tickets
+        2. orders
+        '''
+        # TODO, check orders and tickets related to this attendee, mark them as invalid or cancelled to prevent entry after attendee is deleted or marked as cancelled.
     
     def latest_action(self):
         '''

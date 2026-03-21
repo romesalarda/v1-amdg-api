@@ -117,6 +117,7 @@ class EventListSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     landing_images = ResourceSerializer(many=True, read_only=True)
     main_landing_image = ResourceSerializer(read_only=True)
+    # TODO: field that shows if a user can register - check available windows and registration settings, show details with how many days until registration opens/closes if applicable
 
     timezone = serializers.CharField()
     _links = serializers.SerializerMethodField()
@@ -244,6 +245,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
     
     # User permissions context
     user_permissions = serializers.SerializerMethodField()
+    # TODO: return a field in which we can see the registration availability dates
     
     _links = serializers.SerializerMethodField()
     
