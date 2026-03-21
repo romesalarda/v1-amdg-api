@@ -254,12 +254,27 @@ class ProductAPITestCase(APITestCase):
             'base_amount_currency': 'GBP',
             'verified': False,
             'is_active': False,
-            'category_ids': [self.category1.id]
         }
         response = self.client.post('/api/products/list/', data)
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Product.objects.filter(title='Event Hoodie').count(), 1)
+
+        created_product = Product.objects.get(title='Event Hoodie')
+        mapping_response = self.client.post('/api/products/event-categories/', {
+            'event': self.event.id,
+            'category': self.category1.id,
+            'product': created_product.id,
+        })
+
+        self.assertEqual(mapping_response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            EventProductCategory.objects.filter(
+                event=self.event,
+                category=self.category1,
+                product=created_product,
+            ).exists()
+        )
     
     def test_create_product_with_main_image(self):
         """Test creating product with main image upload."""
