@@ -24,9 +24,10 @@ logger = logging.getLogger(__name__)
 ORDER_STATUS_TRANSITIONS = {
     'draft': ['pending', 'cancelled'],
     'pending': ['processing', 'cancelled'],
-    'processing': ['completed', 'refunded'],
-    'completed': ['refunded'],
+    'processing': ['completed', 'pending_refund', 'refunded'],
+    'completed': ['pending_refund', 'refunded'],
     'cancelled': [],
+    'pending_refund': ['refunded', 'cancelled'],
     'refunded': [],
 }
 class OrderStatusChoices(models.TextChoices):

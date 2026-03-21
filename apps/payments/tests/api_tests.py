@@ -24,10 +24,10 @@ from apps.payments.models import (
 )
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
-from apps.bookings.models import Booking
-from apps.products.models import Order
+from apps.bookings.models import Booking, BookingPackage, TicketType, Ticket, TicketScopeChoices, TicketStatusChoices
+from apps.products.models import Order, OrderStatusChoices
 from apps.organisations.models import EventSponsor, EventSponsorPackage
-from apps.attendee.models import Attendee
+from apps.attendee.models import Attendee, AttendeeRelationship
 
 import datetime
 User = get_user_model()
@@ -568,19 +568,137 @@ class RefundRequestAPITestCase(APITestCase):
         )
         
         self.client = APIClient()
+
+    def _create_booking_payment_fixture(self, ticket_status=TicketStatusChoices.ACTIVE):
+        booking = Booking.objects.create(event=self.event, made_by=self.regular_user)
+
+        attendee = Attendee.objects.create(
+            first_name='Alex',
+            last_name='Doe',
+            event=self.event,
+            user=self.regular_user,
+            booking=booking,
+            date_of_birth=datetime.date(1990, 1, 1),
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.regular_user,
+        )
+
+        ticket_type = TicketType.objects.create(
+            event=self.event,
+            code=f'TICKET-{str(timezone.now().timestamp()).replace(".", "")[:10]}',
+            title='General Admission',
+            scope=TicketScopeChoices.FULL_EVENT,
+            created_by=self.admin_user,
+        )
+
+        booking_package = BookingPackage.objects.create(
+            name=f'Package-{timezone.now().timestamp()}',
+            event=self.event,
+            ticket_type=ticket_type,
+            base_amount=Money(50, 'GBP'),
+            created_by=self.admin_user,
+        )
+
+        booking_payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(50, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=ContentType.objects.get_for_model(Booking),
+            target_id=str(booking.id),
+            metadata={
+                'ticket_breakdown': {}
+            }
+        )
+
+        ticket = Ticket.objects.create(
+            ticket_type=ticket_type,
+            attendee=attendee,
+            package=booking_package,
+            payment=booking_payment,
+            status=ticket_status,
+        )
+
+        booking_payment.metadata['ticket_breakdown'][str(ticket.ticket_id)] = {
+            'amount': '50.00',
+            'currency': 'GBP',
+        }
+        booking_payment.save(update_fields=['metadata'])
+
+        return booking_payment, attendee, ticket
+
+    def _create_attendee_for_booking(self, booking, first_name, last_name):
+        return Attendee.objects.create(
+            first_name=first_name,
+            last_name=last_name,
+            event=self.event,
+            booking=booking,
+            date_of_birth=datetime.date(1990, 1, 1),
+            relationship_to_user=AttendeeRelationship.OTHER,
+            defined_by=self.regular_user,
+        )
+
+    def _create_ticket_for_attendee(self, attendee, payment, amount='50.00'):
+        suffix = str(timezone.now().timestamp()).replace('.', '')[-8:]
+        ticket_type = TicketType.objects.create(
+            event=self.event,
+            code=f'TKT-{attendee.id}-{suffix}',
+            title=f'Admission-{attendee.id}',
+            scope=TicketScopeChoices.FULL_EVENT,
+            created_by=self.admin_user,
+        )
+        booking_package = BookingPackage.objects.create(
+            name=f'Pkg-{attendee.id}-{suffix}',
+            event=self.event,
+            ticket_type=ticket_type,
+            base_amount=Money(amount, 'GBP'),
+            created_by=self.admin_user,
+        )
+        ticket = Ticket.objects.create(
+            ticket_type=ticket_type,
+            attendee=attendee,
+            package=booking_package,
+            payment=payment,
+            status=TicketStatusChoices.ACTIVE,
+        )
+        payment.metadata = payment.metadata or {}
+        payment.metadata.setdefault('ticket_breakdown', {})
+        payment.metadata['ticket_breakdown'][str(ticket.ticket_id)] = {
+            'amount': amount,
+            'currency': 'GBP',
+        }
+        payment.save(update_fields=['metadata'])
+        return ticket
+
+    def _create_order_for_attendee(self, attendee, payment, amount='30.00'):
+        order = Order.objects.create(
+            customer=self.regular_user,
+            attendee=attendee,
+            created_by=self.regular_user,
+            total_amount=Money(amount, 'GBP'),
+            status=OrderStatusChoices.DRAFT,
+            payment=payment,
+        )
+        order.recalculate_total_amount()
+        order.transition_to(OrderStatusChoices.PENDING)
+        order.transition_to(OrderStatusChoices.PROCESSING)
+        order.transition_to(OrderStatusChoices.COMPLETED)
+        order.refresh_from_db()
+        return order
     
     def test_create_refund_request(self):
         """User can request refund for their payment."""
         self.client.force_authenticate(user=self.regular_user)
         url = reverse('payments:refundrequest-list')
         data = {
-            'payment': self.payment.id,
+            'payment': self.payment.payment_id,
             'amount': '100.00',
             'amount_currency': 'GBP',
             'reason': 'Cannot attend the event due to personal reasons.'
         }
         response = self.client.post(url, data)
-        
+        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(RefundRequest.objects.count(), 1)
     
@@ -595,7 +713,7 @@ class RefundRequestAPITestCase(APITestCase):
         self.client.force_authenticate(user=other_user)
         url = reverse('payments:refundrequest-list')
         data = {
-            'payment': self.payment.id,
+            'payment': self.payment.payment_id,
             'amount': '100.00',
             'amount_currency': 'GBP',
             'reason': 'Cannot attend the event.'
@@ -672,6 +790,214 @@ class RefundRequestAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         for refund in response.data['results']:
             self.assertEqual(refund['verification_status'], VerificationStatus.PENDING)
+
+    def test_partial_booking_refund_requires_attendee_ids(self):
+        """Partial booking refunds must include attendee_ids."""
+        booking_payment, _, _ = self._create_booking_payment_fixture()
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:refundrequest-list')
+        data = {
+            'payment': booking_payment.payment_id,
+            'amount': '20.00',
+            'amount_currency': 'GBP',
+            'reason': 'Attendee cannot attend and requests a partial refund.',
+        }
+        response = self.client.post(url, data)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('attendee_ids', response.data)
+
+    def test_used_ticket_refund_blocked_without_override(self):
+        """Used tickets are blocked for attendee-scoped booking refunds by default."""
+        booking_payment, attendee, _ = self._create_booking_payment_fixture(ticket_status=TicketStatusChoices.USED)
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:refundrequest-list')
+        data = {
+            'payment': booking_payment.payment_id,
+            'amount': '50.00',
+            'amount_currency': 'GBP',
+            'reason': 'Attendee cannot attend and requests refund for booked items.',
+            'attendee_ids': [str(attendee.attendee_id)],
+        }
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('attendee_ids', response.data)
+
+    def test_scenario_single_attendee_full_refund_invalidates_ticket_and_order(self):
+        """Scenario 1: one attendee full refund invalidates linked ticket and order."""
+        booking = Booking.objects.create(event=self.event, made_by=self.regular_user)
+        attendee = self._create_attendee_for_booking(booking, 'Solo', 'User')
+
+        payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money('80.00', 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=ContentType.objects.get_for_model(Booking),
+            target_id=str(booking.id),
+            metadata={'ticket_breakdown': {}},
+        )
+        ticket = self._create_ticket_for_attendee(attendee, payment, amount='50.00')
+        order = self._create_order_for_attendee(attendee, payment, amount='30.00')
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:refundrequest-list')
+        create_data = {
+            'payment': payment.payment_id,
+            'amount': '80.00',
+            'amount_currency': 'GBP',
+            'reason': 'Full attendee cancellation refund for single booking attendee.',
+            'reason_code': 'single_attendee_full',
+        }
+        with self.assertLogs('apps.payments.api.viewsets', level='INFO') as create_logs:
+            create_response = self.client.post(url, create_data, format='json')
+
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(any('Refund request created' in entry for entry in create_logs.output))
+
+        refund = RefundRequest.objects.get(payment=payment)
+        self.client.force_authenticate(user=self.admin_user)
+        verify_url = reverse('payments:refundrequest-verify', kwargs={'refund_id': refund.refund_id})
+        verify_response = self.client.post(verify_url)
+        self.assertEqual(verify_response.status_code, status.HTTP_200_OK)
+
+        process_url = reverse('payments:refundrequest-process', kwargs={'refund_id': refund.refund_id})
+        with self.assertLogs('apps.payments.services.attendee_refunds', level='INFO') as finalize_logs:
+            process_response = self.client.post(process_url)
+
+        self.assertEqual(process_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(any('Refund finalized' in entry for entry in finalize_logs.output))
+
+        ticket.refresh_from_db()
+        order.refresh_from_db()
+        payment.refresh_from_db()
+
+        self.assertEqual(ticket.status, TicketStatusChoices.CANCELLED)
+        self.assertEqual(ticket.uses, 0)
+        self.assertEqual(order.status, OrderStatusChoices.REFUNDED)
+        self.assertEqual(payment.status, PaymentStatusChoices.REFUNDED)
+
+    def test_scenario_two_attendees_full_refund_invalidates_both(self):
+        """Scenario 2: two-attendee booking full refund invalidates both attendees' tickets."""
+        booking = Booking.objects.create(event=self.event, made_by=self.regular_user)
+        attendee_one = self._create_attendee_for_booking(booking, 'Parent', 'One')
+        attendee_two = self._create_attendee_for_booking(booking, 'Child', 'Two')
+
+        payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money('100.00', 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=ContentType.objects.get_for_model(Booking),
+            target_id=str(booking.id),
+            metadata={'ticket_breakdown': {}},
+        )
+
+        ticket_one = self._create_ticket_for_attendee(attendee_one, payment, amount='50.00')
+        ticket_two = self._create_ticket_for_attendee(attendee_two, payment, amount='50.00')
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '100.00',
+                'amount_currency': 'GBP',
+                'reason': 'Full booking refund for two attendees due to cancellation.',
+                'reason_code': 'two_attendee_full',
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        self.client.force_authenticate(user=self.admin_user)
+        self.assertEqual(
+            self.client.post(reverse('payments:refundrequest-verify', kwargs={'refund_id': refund.refund_id})).status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(
+            self.client.post(reverse('payments:refundrequest-process', kwargs={'refund_id': refund.refund_id})).status_code,
+            status.HTTP_200_OK,
+        )
+
+        ticket_one.refresh_from_db()
+        ticket_two.refresh_from_db()
+        payment.refresh_from_db()
+
+        self.assertEqual(ticket_one.status, TicketStatusChoices.CANCELLED)
+        self.assertEqual(ticket_two.status, TicketStatusChoices.CANCELLED)
+        self.assertEqual(payment.status, PaymentStatusChoices.REFUNDED)
+
+    def test_scenario_two_attendees_partial_refund_selected_attendee_only(self):
+        """Scenario 3: partial booking refund only affects selected attendee and marks payment partial."""
+        booking = Booking.objects.create(event=self.event, made_by=self.regular_user)
+        attendee_one = self._create_attendee_for_booking(booking, 'Selected', 'Attendee')
+        attendee_two = self._create_attendee_for_booking(booking, 'Unaffected', 'Attendee')
+
+        payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money('100.00', 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=ContentType.objects.get_for_model(Booking),
+            target_id=str(booking.id),
+            metadata={'ticket_breakdown': {}},
+        )
+
+        selected_ticket = self._create_ticket_for_attendee(attendee_one, payment, amount='50.00')
+        unaffected_ticket = self._create_ticket_for_attendee(attendee_two, payment, amount='50.00')
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '50.00',
+                'amount_currency': 'GBP',
+                'reason': 'Partial attendee refund selecting one attendee from booking.',
+                'reason_code': 'two_attendee_partial',
+                'attendee_ids': [str(attendee_one.attendee_id)],
+            },
+            format='json',
+        )
+        print(create_response.data)
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        self.client.force_authenticate(user=self.admin_user)
+        self.assertEqual(
+            self.client.post(reverse('payments:refundrequest-verify', kwargs={'refund_id': refund.refund_id})).status_code,
+            status.HTTP_200_OK,
+        )
+
+        selected_ticket.refresh_from_db()
+        unaffected_ticket.refresh_from_db()
+        payment.refresh_from_db()
+
+        # Verify-stage blocking means selected ticket cannot be used, but is not finalized yet.
+        self.assertFalse(selected_ticket.is_valid)
+        self.assertTrue(unaffected_ticket.is_valid)
+        self.assertEqual(payment.status, PaymentStatusChoices.PARTIALLY_REFUNDED)
+
+        self.assertEqual(
+            self.client.post(reverse('payments:refundrequest-process', kwargs={'refund_id': refund.refund_id})).status_code,
+            status.HTTP_200_OK,
+        )
+
+        selected_ticket.refresh_from_db()
+        unaffected_ticket.refresh_from_db()
+        payment.refresh_from_db()
+
+        self.assertEqual(selected_ticket.status, TicketStatusChoices.CANCELLED)
+        self.assertEqual(unaffected_ticket.status, TicketStatusChoices.ACTIVE)
+        self.assertEqual(payment.status, PaymentStatusChoices.PARTIALLY_REFUNDED)
 
 
 class DiscountAPITestCase(APITestCase):

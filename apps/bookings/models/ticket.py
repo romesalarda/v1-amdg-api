@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 
@@ -216,7 +217,22 @@ class Ticket(models.Model):
         :return: True if the ticket is active and has remaining uses, False otherwise.
         :rtype: bool
         '''
-        return self.status == TicketStatusChoices.ACTIVE and self.uses > 0
+        if not (self.status == TicketStatusChoices.ACTIVE and self.uses > 0):
+            return False
+
+        # Two-phase invalidation: verified active refunds temporarily block ticket usage
+        # before final process status transitions are applied.
+        from apps.common.models import VerificationStatus
+        from apps.payments.models.refunds import RefundAssociation
+
+        ticket_type = ContentType.objects.get_for_model(Ticket)
+        has_verified_refund_block = RefundAssociation.objects.filter(
+            target_type=ticket_type,
+            target_id=str(self.ticket_id),
+            refund_request__verification_status=VerificationStatus.VERIFIED,
+            refund_request__is_active=True,
+        ).exists()
+        return not has_verified_refund_block
         
     def use_ticket(self):
         '''

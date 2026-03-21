@@ -43,11 +43,13 @@ ALLOWED_STATUS_TRANSITIONS = {
         PaymentStatusChoices.CANCELLED,
     ],
     PaymentStatusChoices.COMPLETED: [
+        PaymentStatusChoices.REFUNDED, # full refund
         PaymentStatusChoices.PENDING_REFUND, # pending full refund
         PaymentStatusChoices.PARTIALLY_REFUNDED, # pending partial refund
     ],
     PaymentStatusChoices.PENDING_REFUND: [
         PaymentStatusChoices.REFUNDED, # full refund completed
+        PaymentStatusChoices.PARTIALLY_REFUNDED
     ],
     PaymentStatusChoices.PARTIALLY_REFUNDED: [
         PaymentStatusChoices.REFUNDED, # full refund completed

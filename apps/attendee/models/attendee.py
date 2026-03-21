@@ -27,6 +27,12 @@ class AttendeeRelationship(models.TextChoices):
     SIBLING = 'sibling', 'Sibling'
     OTHER = 'other', 'Other'
 
+class AttendeeStatus(models.TextChoices):
+    REGISTERED = 'registered', 'Registered'
+    CHECKED_IN = 'checked_in', 'Checked In'
+    CANCELLED = 'cancelled', 'Cancelled'
+    WHITELISTED = 'whitelisted', 'Whitelisted'
+
 class Attendee(SoftDeleteModel):
     
     attendee_id = models.UUIDField(default=uuid.uuid4, editable=False) # url-safe unique identifier
@@ -41,6 +47,8 @@ class Attendee(SoftDeleteModel):
     
     email = models.EmailField(blank=True, null=True, validators=[validators.EmailValidator()])
     phone_number = models.CharField(max_length=20, null=True, blank=True, validators=[PhoneNumberValidator()])
+
+    status = models.CharField(max_length=20, choices=AttendeeStatus.choices, default=AttendeeStatus.REGISTERED)
     
     date_of_birth = models.DateField(null=True)
     gender = models.CharField(max_length=50, null=True, blank=True)
@@ -212,13 +220,49 @@ class Attendee(SoftDeleteModel):
         
         return booking_oustanding
 
-    def invalidate(self):
+    def invalidate(self, payment=None, final=False):
         '''
         Invalidate all important data related to this attendee including:
         1. tickets
         2. orders
         '''
-        # TODO, check orders and tickets related to this attendee, mark them as invalid or cancelled to prevent entry after attendee is deleted or marked as cancelled.
+        from apps.bookings.models import TicketStatusChoices
+        from apps.products.models import OrderStatusChoices
+
+        tickets = self.tickets.all()
+        orders = self.orders.all()
+
+        if payment is not None:
+            tickets = tickets.filter(payment=payment)
+            orders = orders.filter(payment=payment)
+
+        invalidated_tickets = 0
+        invalidated_orders = 0
+
+        if final:
+            for ticket in tickets:
+                if ticket.status != TicketStatusChoices.CANCELLED:
+                    ticket.status = TicketStatusChoices.CANCELLED
+                    ticket.uses = 0
+                    ticket.save(update_fields=['status', 'uses'])
+                    invalidated_tickets += 1
+
+            for order in orders:
+                if order.status in [OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED]:
+                    continue
+                order.transition_to(OrderStatusChoices.REFUNDED)
+                invalidated_orders += 1
+        else:
+            for order in orders:
+                if order.status in [OrderStatusChoices.PROCESSING, OrderStatusChoices.COMPLETED]:
+                    order.transition_to(OrderStatusChoices.PENDING_REFUND)
+                    invalidated_orders += 1
+
+        return {
+            'tickets': invalidated_tickets,
+            'orders': invalidated_orders,
+            'final': final,
+        }
     
     def latest_action(self):
         '''

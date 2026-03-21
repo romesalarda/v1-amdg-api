@@ -4,10 +4,11 @@ ViewSets for the attendee app.
 Provides comprehensive API endpoints for attendee management with HATEOAS,
 nested resources, and proper schema documentation.
 """
-from rest_framework import viewsets, status, filters
+from rest_framework import viewsets, status, filters, serializers as drf_serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import ValidationError, PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Prefetch
 from django.shortcuts import get_object_or_404
@@ -16,6 +17,7 @@ from drf_spectacular.utils import (
     extend_schema_view,
     OpenApiParameter,
     OpenApiResponse,
+    inline_serializer,
 )
 from drf_spectacular.types import OpenApiTypes
 
@@ -272,23 +274,325 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         # Otherwise save normally (admin can specify user, or non-SELF relationships)
         serializer.save()
 
+    def _get_linked_payments(self, attendee):
+        """Get payments linked to attendee via booking, tickets, or orders."""
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import Booking
+        from apps.payments.models import Payment
+
+        booking_payment_ids = []
+        if attendee.booking_id:
+            booking_ct = ContentType.objects.get_for_model(Booking)
+            booking_payment_ids = Payment.objects.filter(
+                target_type=booking_ct,
+                target_id=str(attendee.booking_id),
+            ).values_list('id', flat=True)
+
+        ticket_payment_ids = attendee.tickets.exclude(payment__isnull=True).values_list('payment_id', flat=True)
+        order_payment_ids = attendee.orders.exclude(payment__isnull=True).values_list('payment_id', flat=True)
+
+        return Payment.objects.filter(
+            Q(id__in=booking_payment_ids) |
+            Q(id__in=ticket_payment_ids) |
+            Q(id__in=order_payment_ids)
+        ).select_related('event', 'user').distinct()
+
+    def _is_payment_linked_to_attendee(self, attendee, payment):
+        return self._get_linked_payments(attendee).filter(id=payment.id).exists()
+
+    def _build_pre_removal_summary(self, attendee):
+        """Build comprehensive summary for deletion blockers and frontend guidance."""
+        from apps.payments.models import PaymentStatusChoices
+
+        linked_payments = self._get_linked_payments(attendee)
+        outstanding_payments = linked_payments.filter(
+            status__in=[
+                PaymentStatusChoices.DRAFTING,
+                PaymentStatusChoices.PENDING,
+                PaymentStatusChoices.COMPLETED,
+                PaymentStatusChoices.PENDING_REFUND,
+                PaymentStatusChoices.PARTIALLY_REFUNDED,
+            ]
+        )
+
+        active_refund_requests = linked_payments.filter(refund_requests__is_active=True).distinct()
+        active_tickets = attendee.tickets.filter(status='ACTIVE').select_related('ticket_type')
+        unresolved_orders = attendee.orders.exclude(status__in=['cancelled', 'refunded'])
+        open_attendance = attendee.event_attendances.filter(
+            check_in_time__isnull=False,
+            check_out_time__isnull=True,
+        ).select_related('event')
+        family_memberships = FamilyAttendee.objects.filter(attendee=attendee).select_related('family_group')
+
+        blockers = []
+
+        if linked_payments.exists():
+            blockers.append({
+                'code': 'linked_payments',
+                'severity': 'high',
+                'count': linked_payments.count(),
+                'message': 'Attendee has linked payment history. Resolve or archive payment associations before deletion.',
+                'items': [
+                    {
+                        'payment_id': str(payment.payment_id),
+                        'payment_reference': payment.payment_reference,
+                        'status': payment.status,
+                    }
+                    for payment in linked_payments[:25]
+                ],
+                'action_hint': 'Use attendee cancellation refund flow or resolve payment links.',
+            })
+
+        if outstanding_payments.exists():
+            blockers.append({
+                'code': 'outstanding_payments',
+                'severity': 'critical',
+                'count': outstanding_payments.count(),
+                'message': 'Attendee has outstanding or in-flight payments that block deletion.',
+                'items': [
+                    {
+                        'payment_id': str(payment.payment_id),
+                        'payment_reference': payment.payment_reference,
+                        'status': payment.status,
+                    }
+                    for payment in outstanding_payments[:25]
+                ],
+                'action_hint': 'Complete payment settlement, cancellation, or refund processing first.',
+            })
+
+        if active_refund_requests.exists():
+            blockers.append({
+                'code': 'active_refunds',
+                'severity': 'critical',
+                'count': active_refund_requests.count(),
+                'message': 'Active refund requests exist for attendee-linked payments.',
+                'items': [
+                    {
+                        'payment_id': str(payment.payment_id),
+                        'payment_reference': payment.payment_reference,
+                    }
+                    for payment in active_refund_requests[:25]
+                ],
+                'action_hint': 'Process or reject refund requests before deletion.',
+            })
+
+        if active_tickets.exists():
+            blockers.append({
+                'code': 'active_tickets',
+                'severity': 'high',
+                'count': active_tickets.count(),
+                'message': 'Attendee has active tickets that must be cancelled or refunded.',
+                'items': [
+                    {
+                        'ticket_id': str(ticket.ticket_id),
+                        'ticket_code': ticket.ticket_code,
+                        'ticket_type': ticket.ticket_type.title if ticket.ticket_type else None,
+                        'status': ticket.status,
+                    }
+                    for ticket in active_tickets[:25]
+                ],
+                'action_hint': 'Cancel/refund tickets through payment workflow before deletion.',
+            })
+
+        if unresolved_orders.exists():
+            blockers.append({
+                'code': 'unresolved_orders',
+                'severity': 'high',
+                'count': unresolved_orders.count(),
+                'message': 'Attendee has unresolved orders that are not cancelled/refunded.',
+                'items': [
+                    {
+                        'order_id': str(order.order_id),
+                        'order_reference': order.order_reference_id,
+                        'status': order.status,
+                    }
+                    for order in unresolved_orders[:25]
+                ],
+                'action_hint': 'Resolve orders to cancelled/refunded before deletion.',
+            })
+
+        if open_attendance.exists():
+            blockers.append({
+                'code': 'open_attendance',
+                'severity': 'high',
+                'count': open_attendance.count(),
+                'message': 'Attendee has open attendance records (checked-in without check-out).',
+                'items': [
+                    {
+                        'event_id': str(attendance.event.event_id),
+                        'event_title': attendance.event.title,
+                        'check_in_time': attendance.check_in_time.isoformat() if attendance.check_in_time else None,
+                    }
+                    for attendance in open_attendance[:25]
+                ],
+                'action_hint': 'Complete check-out records before deletion.',
+            })
+
+        can_delete = len(blockers) == 0
+        return {
+            'attendee': {
+                'attendee_id': str(attendee.attendee_id),
+                'attendee_display_id': attendee.attendee_display_id,
+                'full_name': attendee.full_name,
+            },
+            'can_delete': can_delete,
+            'blockers': blockers,
+            'summary_counts': {
+                'linked_payments': linked_payments.count(),
+                'outstanding_payments': outstanding_payments.count(),
+                'active_refund_requests': active_refund_requests.count(),
+                'active_tickets': active_tickets.count(),
+                'unresolved_orders': unresolved_orders.count(),
+                'open_attendance': open_attendance.count(),
+                'family_memberships': family_memberships.count(),
+            },
+            'suggested_actions': [
+                {
+                    'code': blocker['code'],
+                    'message': blocker['action_hint'],
+                }
+                for blocker in blockers
+            ],
+        }
+
     # TODO: add safety checks when attempting to delete an attendee, check booking -> then payment attached (if applicable) -> if payment is completed, i.e. not refunded or drafting or pending, then prevent delete for integrity failure.
 
     
     def perform_destroy(self, instance):
         """Perform soft delete by setting deleted_at and deleted_by instead of hard delete."""
+        pre_removal = self._build_pre_removal_summary(instance)
+        if not pre_removal['can_delete']:
+            raise ValidationError({
+                'detail': 'Attendee cannot be deleted while unresolved linked objects exist.',
+                'pre_removal_summary': pre_removal,
+            })
+
         instance.deleted_at = timezone.now()
         instance.deleted_by = self.request.user
         instance.save(update_fields=['deleted_at', 'deleted_by'])
 
         # todo: invalidate all related tickets, bookings, and access passes for this attendee to prevent entry after deletion
 
+    @extend_schema(
+        summary='Request Attendee Cancellation Refund',
+        description=(
+            'Create a refund request for a specific attendee with attendee-scoped defaults. '
+            'For booking payments, attendee_ids defaults to the current attendee when omitted. '
+            'Uses the payments refund validation flow (amount integrity, policy checks, and used-ticket safeguards).'
+        ),
+        tags=['Attendees'],
+        request=inline_serializer(
+            name='AttendeeCancellationRefundRequest',
+            fields={
+                'payment_id': drf_serializers.UUIDField(required=True),
+                'amount': drf_serializers.DecimalField(max_digits=10, decimal_places=2, required=True),
+                'amount_currency': drf_serializers.CharField(required=False, default='GBP'),
+                'reason': drf_serializers.CharField(required=True),
+                'reason_code': drf_serializers.CharField(required=False),
+                'override_used_ticket_block': drf_serializers.BooleanField(required=False, default=False),
+                'override_reason': drf_serializers.CharField(required=False),
+            },
+        ),
+        responses={
+            201: inline_serializer(
+                name='AttendeeCancellationRefundResponse',
+                fields={
+                    'refund_id': drf_serializers.UUIDField(),
+                    'tracking_reference': drf_serializers.CharField(),
+                    'verification_status': drf_serializers.CharField(),
+                    'payment_id': drf_serializers.UUIDField(),
+                    'amount': drf_serializers.CharField(),
+                    'selected_attendee_ids': drf_serializers.ListField(child=drf_serializers.UUIDField()),
+                },
+            ),
+            400: OpenApiResponse(description='Validation error'),
+            403: OpenApiResponse(description='Permission denied'),
+        },
+    )
+    @action(detail=True, methods=['post'], url_path='request-cancellation-refund')
+    def request_cancellation_refund(self, request, attendee_id=None):
+        """Create refund request for a specific attendee with strict attendee-payment linkage checks."""
+        attendee = self.get_object()
+
+        payment_id = request.data.get('payment_id')
+        if not payment_id:
+            raise ValidationError({'payment_id': 'payment_id is required.'})
+
+        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+        from apps.payments.models import Payment, PaymentHistoryAction, PaymentStatusChoices
+        from apps.payments.api.serializers import RefundRequestCreateSerializer
+
+        payment = get_object_or_404(Payment, payment_id=payment_id)
+        if not self._is_payment_linked_to_attendee(attendee, payment):
+            raise ValidationError({'payment_id': 'Payment is not linked to the selected attendee.'})
+
+        user = request.user
+        is_event_admin = EventRoleAssignment.objects.filter(
+            user=user,
+            event=payment.event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).exists()
+        if not (user.is_superuser or user.is_staff or payment.user_id == user.id or is_event_admin):
+            raise PermissionDenied('You do not have permission to request this attendee refund.')
+
+        payload = request.data.copy()
+        payload['payment'] = str(payment.payment_id)
+
+        # Booking-linked refunds default to this attendee scope if not provided.
+        if attendee.booking_id and payment.target and getattr(payment.target, 'id', None) == attendee.booking_id:
+            payload.setdefault('attendee_ids', [str(attendee.attendee_id)])
+
+        refund_serializer = RefundRequestCreateSerializer(data=payload, context={'request': request})
+        refund_serializer.is_valid(raise_exception=True)
+        refund_request = refund_serializer.save()
+
+        if payment.status == PaymentStatusChoices.COMPLETED:
+            payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
+
+        PaymentHistoryAction.objects.create(
+            payment=payment,
+            action='REFUND_REQUESTED_ATTENDEE',
+            description=f'Attendee scoped refund requested for {attendee.full_name}',
+            metadata={
+                'attendee_id': str(attendee.attendee_id),
+                'attendee_display_id': attendee.attendee_display_id,
+                'refund_id': str(refund_request.refund_id),
+                'requested_by_id': request.user.id,
+                'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+            },
+            notes='Refund requested through attendee endpoint.',
+            performed_by=request.user,
+        )
+
+        return Response(
+            {
+                'refund_id': str(refund_request.refund_id),
+                'tracking_reference': refund_request.tracking_reference,
+                'verification_status': refund_request.verification_status,
+                'payment_id': str(payment.payment_id),
+                'amount': str(refund_request.amount),
+                'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        summary='Get Attendee Pre-Removal Summary',
+        description=(
+            'Return a comprehensive blocker report explaining why an attendee can or cannot be deleted. '
+            'Includes linked payments, outstanding states, active tickets/orders, open attendance, and actionable hints '
+            'so frontend can guide the user through required resolution steps.'
+        ),
+        tags=['Attendees'],
+        responses={200: OpenApiResponse(description='Comprehensive pre-removal summary payload')},
+    )
     @action(detail=True, methods=['get'], url_path='pre-removal-summary')
     def pre_removal_summary(self, request, attendee_id=None):
         '''
         Returns related objects before allowing deletion of an attendee. Returns a summary of related records that would be affected by deletion.
         '''
         attendee = self.get_object()
+        return Response(self._build_pre_removal_summary(attendee), status=status.HTTP_200_OK)
 
 
 

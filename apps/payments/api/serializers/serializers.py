@@ -39,6 +39,7 @@ from apps.payments.models import (
     Donation, PaymentHistoryAction
 )
 from apps.common.models import VerificationStatus
+from apps.payments.services.attendee_refunds import AttendeeRefundService
 
 User = get_user_model()
 
@@ -1051,10 +1052,29 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
     
     amount = MoneyField(max_digits=10, decimal_places=2)
     payment = serializers.SlugRelatedField(slug_field='payment_id', queryset=Payment.objects.all())
+    attendee_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        write_only=True,
+        required=False,
+        allow_empty=False,
+        help_text="Required for PARTIAL booking refunds. List of attendee UUIDs to refund."
+    )
+    reason_code = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=64,
+        write_only=True,
+        help_text="Short reason code for immutable audit metadata."
+    )
+    override_used_ticket_block = serializers.BooleanField(required=False, default=False, write_only=True)
+    override_reason = serializers.CharField(required=False, allow_blank=False, max_length=500, write_only=True)
     
     class Meta:
         model = RefundRequest
-        fields = ('payment', 'amount', 'amount_currency', 'reason')
+        fields = (
+            'payment', 'amount', 'amount_currency', 'reason',
+            'attendee_ids', 'reason_code', 'override_used_ticket_block', 'override_reason'
+        )
     
     def validate_payment(self, value):
         """Ensure payment is completed and eligible for refund."""
@@ -1089,12 +1109,88 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         """Cross-field validation for refund request."""
         payment = attrs.get('payment')
         amount = attrs.get('amount')
+        request = self.context.get('request')
+        actor = request.user if request else None
+        attendee_ids_raw = attrs.get('attendee_ids') or []
+        attendee_ids = [str(att_id) for att_id in attendee_ids_raw]
+        override_used_ticket_block = attrs.get('override_used_ticket_block', False)
+        override_reason = attrs.get('override_reason')
+        reason_code = attrs.get('reason_code', 'unspecified')
+        refund_context = {
+            'is_booking_payment': AttendeeRefundService.is_booking_payment(payment),
+            'selected_attendee_ids': attendee_ids,
+            'breakdown': None,
+        }
         
         # Ensure amount doesn't exceed payment
         if amount > payment.base_amount:
             raise serializers.ValidationError({
                 'amount': f"Refund amount cannot exceed payment amount ({payment.base_amount})."
             })
+
+        # Partial booking refunds must explicitly select attendees.
+        if refund_context['is_booking_payment'] and amount < payment.base_amount and not attendee_ids:
+            raise serializers.ValidationError({
+                'attendee_ids': "attendee_ids is required for partial refunds on booking payments."
+            })
+
+        if not refund_context['is_booking_payment'] and attendee_ids:
+            raise serializers.ValidationError({
+                'attendee_ids': "attendee_ids is only valid for booking-linked payments."
+            })
+
+        if override_used_ticket_block and not override_reason:
+            raise serializers.ValidationError({
+                'override_reason': "override_reason is required when override_used_ticket_block=true."
+            })
+
+        if override_used_ticket_block and actor:
+            from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+
+            is_event_admin = actor.is_superuser or actor.is_staff or EventRoleAssignment.objects.filter(
+                user=actor,
+                event=payment.event,
+                role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+            ).exists()
+            if not is_event_admin:
+                raise serializers.ValidationError({
+                    'override_used_ticket_block': (
+                        "Only event administrative users may override the used-ticket refund block."
+                    )
+                })
+
+        if refund_context['is_booking_payment']:
+            if not attendee_ids and amount == payment.base_amount:
+                attendee_ids = list(
+                    payment.target.attendees.filter(deleted_at__isnull=True).values_list('attendee_id', flat=True)
+                )
+                attendee_ids = [str(att_id) for att_id in attendee_ids]
+
+            attendees = AttendeeRefundService.resolve_booking_attendees(payment, attendee_ids)
+
+            if AttendeeRefundService.has_used_ticket(payment, attendees) and not override_used_ticket_block:
+                raise serializers.ValidationError({
+                    'attendee_ids': (
+                        "One or more selected attendees already have a used ticket. "
+                        "Set override_used_ticket_block=true with override_reason if admin override is intended."
+                    )
+                })
+
+            breakdown = AttendeeRefundService.calculate_breakdown(payment, attendees)
+            refund_context['selected_attendee_ids'] = attendee_ids
+            refund_context['breakdown'] = breakdown
+
+            # Explicitly enforce amount integrity for partial booking refunds.
+            breakdown_total = breakdown['total']
+            breakdown_total_amount = Decimal(str(getattr(breakdown_total, 'amount', breakdown_total))).quantize(Decimal('0.01'))
+            requested_amount = Decimal(str(amount.amount)).quantize(Decimal('0.01'))
+
+            if amount < payment.base_amount and requested_amount != breakdown_total_amount:
+                raise serializers.ValidationError({
+                    'amount': (
+                        f"Partial booking refund amount must match selected attendee entity total ({breakdown_total_amount})."
+                    )
+                })
         
         # Check refund policy if exists
         if hasattr(payment.event, 'refund_policy'):
@@ -1103,13 +1199,45 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "This payment is not eligible for refund according to the event's refund policy."
                 )
+
+        attrs['_attendee_refund_context'] = {
+            **refund_context,
+            'reason_code': reason_code,
+            'override_used_ticket_block': override_used_ticket_block,
+            'override_reason': override_reason,
+            'requested_by_id': actor.id if actor else None,
+            'requested_by_username': actor.username if actor else None,
+        }
         
         return attrs
     
     def create(self, validated_data):
         """Create refund request with requesting user."""
+        refund_context = validated_data.pop('_attendee_refund_context', {})
+        validated_data.pop('attendee_ids', None)
+        validated_data.pop('reason_code', None)
+        validated_data.pop('override_used_ticket_block', None)
+        validated_data.pop('override_reason', None)
         validated_data['requested_by'] = self.context.get('request').user if self.context.get('request') else None
-        return super().create(validated_data)
+        refund_request = super().create(validated_data)
+
+        metadata = refund_request.metadata or {}
+        metadata.update(
+            {
+                'selected_attendee_ids': refund_context.get('selected_attendee_ids', []),
+                'reason_code': refund_context.get('reason_code', 'unspecified'),
+                'requested_by_id': refund_context.get('requested_by_id'),
+                'requested_by_username': refund_context.get('requested_by_username'),
+                'override_used_ticket_block': refund_context.get('override_used_ticket_block', False),
+                'override_reason': refund_context.get('override_reason'),
+                'frozen_breakdown': refund_context.get('breakdown'),
+            }
+        )
+        refund_request.metadata = metadata
+        refund_request.save(update_fields=['metadata'])
+
+        AttendeeRefundService.attach_associations(refund_request)
+        return refund_request
 
 
 class RefundRequestUpdateSerializer(serializers.ModelSerializer):
