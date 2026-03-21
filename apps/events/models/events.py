@@ -200,6 +200,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             self.status == EventStatusChoices.OPEN and 
             self.is_approved and 
             not self.max_capacity_reached
+            and self.registration_open_from_window
             )
 
     @property
@@ -208,7 +209,94 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             EventStatusChoices.DRAFTING,
             EventStatusChoices.POSTPONED,
             EventStatusChoices.CANCELLED
+        ] and self.has_registration_window
+    
+    @property
+    def outstanding_tasks(self):
+        '''
+        Returns a list of REQUIRED setup tasks that are incomplete for this event.
+        1. Event authorization is pending approval.
+        2. No registration availability window defined.
+        3. No booking packages defined (if event includes bookable products)
+        4. No landing image set 
+        5. If payments enabled, no payment methods configured
+        6. No Venue defined
+
+        :return: 
+        [
+            {
+                "title": "Event authorization pending",
+                "description": "This event is pending approval by an administrator. Once approved, you can publish,
+                and participants will be able to register."
+                "hint": "Event authorization is pending review by an administrator. You will receive a notification once the review is complete."
+                "code": "AUTHORIZATION_PENDING"
+            }
         ]
+        '''
+        from apps.payments.models import PaymentMethod
+        from apps.locations.models import Venue
+
+        tasks = []
+
+        if self.status == EventStatusChoices.DRAFTING and not self.is_approved:
+            tasks.append({
+                "title": "Event authorization pending",
+                "description": "This event is pending approval by an administrator. Once approved, you can publish, and participants will be able to register.",
+                "hint": "Event authorization is pending review by an administrator. You will receive a notification once the review is complete.",
+                "code": "AUTHORIZATION_PENDING"
+            })
+        
+        if self.can_event_be_published is False:
+            tasks = []
+            if not self.has_registration_window:
+                tasks.append({
+                    "title": "Define registration availability window",
+                    "description": "You need to define at least one registration availability window for this event before it can be published.",
+                    "hint": "Go to the Availability section and add a registration availability window to specify when participants can register for this event.",
+                    "code": "REGISTRATION_WINDOW_REQUIRED"
+                })
+            if not self.landing_images.exists():
+                tasks.append({
+                    "title": "Set landing image",
+                    "description": "You should set a landing image for this event to make it visually appealing when published.",
+                    "hint": "Go to the Landing Image section and upload an image that represents your event.",
+                    "code": "LANDING_IMAGE_RECOMMENDED"
+                })
+            return tasks
+        
+        if self.status == EventStatusChoices.OPEN and self.max_capacity_reached:
+            tasks.append({
+                "title": "Event at full capacity",
+                "description": "This event has reached its maximum capacity and cannot accept more registrations.",
+                "hint": "You can increase the maximum attendance in the event settings to allow more participants to register.",
+                "code": "MAX_CAPACITY_REACHED"
+            })
+        
+        if self.status == EventStatusChoices.OPEN and self.registration_open_from_window is False:
+            tasks.append({
+                "title": "Registration not open",
+                "description": "The current date is outside of the defined registration availability windows for this event.",
+                "hint": "Check the Availability section to see the defined registration windows and ensure that the current date falls within one of them.",
+                "code": "REGISTRATION_NOT_OPEN"
+            })
+
+        if self.booking_packages.exists() and not self.booking_packages.filter(is_active=True).exists():
+            tasks.append({
+                "title": "No active booking packages",
+                "description": "This event includes bookable products but does not have any active booking packages available.",
+                "hint": "Go to the Booking Packages section and ensure that at least one booking package is active to allow participants to book.",
+                "code": "NO_ACTIVE_BOOKING_PACKAGES"
+            })
+        
+        if self.payment_settings.payment_enabled and not PaymentMethod.objects.filter(events=self, is_active=True).exists():
+            tasks.append({
+                "title": "No active payment methods",
+                "description": "Payment processing is enabled for this event, but there are no active payment methods configured.",
+                "hint": "Go to the Payment Methods section and ensure that at least one payment method is active to allow participants to make payments.",
+                "code": "NO_ACTIVE_PAYMENT_METHODS"
+            })
+        
+        return tasks
     
     @property
     def max_capacity_reached(self) -> bool:
@@ -260,6 +348,58 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         
         used_capacity = self.number_of_attendees + self.pending_intent_capacity
         return max(0, self.maximum_attendance - used_capacity)
+    
+    @property
+    def registration_open_from_window(self):
+        '''
+        Returns boolean indicating whether the current date falls within any registration availability windows for the event.
+        '''
+        from apps.common.models import AvailabilityTypeChoices
+
+        windows = self.availability_windows.filter(
+            availability_type=AvailabilityTypeChoices.REGISTRATION
+        )
+        # check current date and see if it falls within any of the registration windows
+        now = timezone.now()
+        for window in windows:
+            if window.within_window(now):
+                return True
+        return False
+
+    @property
+    def registration_open_date(self):
+        '''
+        Returns the start date of the first registration availability window for the event, or None if no such window exists.
+        '''
+        from apps.common.models import AvailabilityTypeChoices
+
+        window = self.availability_windows.filter(
+            availability_type=AvailabilityTypeChoices.REGISTRATION
+        ).order_by('available_from').first()
+        return window.available_from if window else None
+    
+    @property
+    def registration_close_date(self):
+        '''
+        Returns the end date of the last registration availability window for the event, or None if no such window exists.
+        '''
+        from apps.common.models import AvailabilityTypeChoices
+
+        window = self.availability_windows.filter(
+            availability_type=AvailabilityTypeChoices.REGISTRATION
+        ).order_by('-available_to').first()
+        return window.available_to if window else None
+    
+    @property
+    def has_registration_window(self):
+        '''
+        Returns boolean indicating whether the event has any registration availability windows defined.
+        '''
+        from apps.common.models import AvailabilityTypeChoices
+
+        return self.availability_windows.filter(
+            availability_type=AvailabilityTypeChoices.REGISTRATION
+        ).exists()
     
     @property
     def extended_availability_windows(self):

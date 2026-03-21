@@ -160,6 +160,9 @@ class PaymentListSerializer(serializers.ModelSerializer):
     method_title = serializers.CharField(source='method.title', read_only=True, allow_null=True)
     method = serializers.SlugRelatedField(slug_field='method_id', read_only=True)
     amount = serializers.SerializerMethodField(help_text="Final modified payment amount")
+    amount_value = serializers.FloatField(source='base_amount.amount', read_only=True, help_text="Base amount as float for easier frontend handling")
+    amount_currency = serializers.CharField(source='base_amount_currency', read_only=True)
+
     created_at = serializers.DateTimeField(read_only=True)
     descriptor = serializers.SerializerMethodField(help_text="Type of the payment target (e.g., booking, order, ticket, donation, sponsorship)")
     
@@ -168,17 +171,19 @@ class PaymentListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'payment_id', 'payment_reference', 'user', 'user_name',
             'event', 'event_name', 'method', 'method_title', 'status',
-            'amount', 'created_at', '_links', 'descriptor'
+            'amount', 'amount_currency', 'created_at', '_links', 'descriptor', 'base_amount', 'amount_value'
         )
         read_only_fields = ('id', 'payment_id', 'payment_reference', 'created_at')
         extra_kwargs = {
             'created_at': {'default': None},
         }
     
+    @extend_schema_field(OpenApiTypes.STR)
     def get_amount(self, obj) -> str:
         """Return the modified amount as string."""
-        return str(obj.modified_amount)
+        return str(obj.base_amount)
     
+    @extend_schema_field(OpenApiTypes.STR)
     def get_descriptor(self, obj) -> Optional[str]:
         """Return the descriptor as a string if available."""
         if obj.target_type:

@@ -283,10 +283,14 @@ class Attendee(SoftDeleteModel):
     
     @property
     def has_outstanding_payments(self):
-        if not self.user: # only users with linked accounts can have payments
+        '''
+        Determine if the attendee has any outstanding payments.
+        '''
+        if not self.user:
             return False
-        # TODO: implement payment logic
-        
+        return self.get_outstanding_payments().exists()
+
+
     def pricing_context(self): # DEPRECATE in favour of get_base_context
         '''
         @param payable: An instance of a PayableModel (e.g., ticket, registration fee)

@@ -222,6 +222,12 @@ class SponsorableEventListSerializer(EventListSerializer):
         )
 
 
+class EventOutstandingTaskSerializer(serializers.Serializer):
+    title = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True)
+    hint = serializers.CharField(read_only=True)
+    code = serializers.CharField(read_only=True)
+
 class EventDetailSerializer(serializers.ModelSerializer):
     event_type_details = EventTypeSerializer(source='event_type', read_only=True)
     settings = EventSettingsSerializer(read_only=True)
@@ -233,7 +239,9 @@ class EventDetailSerializer(serializers.ModelSerializer):
     is_ongoing = serializers.BooleanField(read_only=True)
     is_approved = serializers.BooleanField(read_only=True)
     can_participants_register = serializers.BooleanField(read_only=True)
+    can_event_be_published = serializers.BooleanField(read_only=True)
     number_of_attendees = serializers.IntegerField(read_only=True)
+    outstanding_tasks = serializers.SerializerMethodField(read_only=True)
     
     # New fields for availability, resources, and landing images
     availability_windows = AvailabilityWindowSerializer(many=True, read_only=True)
@@ -242,6 +250,9 @@ class EventDetailSerializer(serializers.ModelSerializer):
     main_landing_image = ResourceSerializer(read_only=True)
     is_deleted = serializers.SerializerMethodField()
     general_price = serializers.SerializerMethodField(read_only=True)
+
+    registration_open_date = serializers.SerializerMethodField(read_only=True)
+    registration_close_date = serializers.SerializerMethodField(read_only=True)
     
     # User permissions context
     user_permissions = serializers.SerializerMethodField()
@@ -261,7 +272,8 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'settings', 'duration_days', 'is_ongoing', 'is_approved', 
             'can_participants_register', 'number_of_attendees',
             'availability_windows', 'resources', 'landing_images', 'main_landing_image',
-            'deleted_at', 'deleted_by', 'is_deleted', 'user_permissions', 'general_price',
+            'deleted_at', 'deleted_by', 'is_deleted', 'user_permissions', 'general_price', 'outstanding_tasks',
+            'can_event_be_published', 'registration_open_date', 'registration_close_date',
             '_links'
         )
         read_only_fields = (
@@ -277,6 +289,18 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'end_datetime': {'default': None},
             'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
         }
+
+    @extend_schema_field(EventOutstandingTaskSerializer(many=True))
+    def get_outstanding_tasks(self, obj):
+        return obj.outstanding_tasks
+    
+    @extend_schema_field(OpenApiTypes.DATETIME)
+    def get_registration_open_date(self, obj):
+        return obj.registration_open_date
+    
+    @extend_schema_field(OpenApiTypes.DATETIME)
+    def get_registration_close_date(self, obj):
+        return obj.registration_close_date
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_general_price(self, obj):

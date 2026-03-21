@@ -78,9 +78,6 @@ class TicketType(models.Model): # e.g. VIP, General Admission, Early Bird
             except Exception:
                 raise ValidationError("Could not generate unique ticket type code. Please try saving again.")
                 
-
-        # todo: override datetimes based on event dates and timezone?
-        # todo: autoset code: mix of event name and ticket type title?
         self.clean()
 
         super().save(*args, **kwargs)

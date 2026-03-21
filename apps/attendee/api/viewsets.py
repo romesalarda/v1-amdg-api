@@ -459,9 +459,6 @@ class AttendeeViewSet(viewsets.ModelViewSet):
                 for blocker in blockers
             ],
         }
-
-    # TODO: add safety checks when attempting to delete an attendee, check booking -> then payment attached (if applicable) -> if payment is completed, i.e. not refunded or drafting or pending, then prevent delete for integrity failure.
-
     
     def perform_destroy(self, instance):
         """Perform soft delete by setting deleted_at and deleted_by instead of hard delete."""
@@ -475,9 +472,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         instance.deleted_at = timezone.now()
         instance.deleted_by = self.request.user
         instance.save(update_fields=['deleted_at', 'deleted_by'])
-
-        # todo: invalidate all related tickets, bookings, and access passes for this attendee to prevent entry after deletion
-
+        
     @extend_schema(
         summary='Request Attendee Cancellation Refund',
         description=(
