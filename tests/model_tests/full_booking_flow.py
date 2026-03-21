@@ -838,13 +838,17 @@ class FullBookingFlowIntegrationTest(TestCase):
             booking_reference='BKG-PKG-VAR-001',
             made_by=self.sam
         )
+
+        # Keep this test deterministic across calendar years by forcing Sarah to be 25.
+        today = timezone.now().date()
+        sarah_dob = date(today.year - 25, today.month, max(1, today.day - 1))
         
         # Sarah (25, student) - will choose blue medium variant, gets 10% discount
         sarah = Attendee.objects.create(
             first_name='Sarah',
             last_name='Williams',
             email='sarah@example.com',
-            date_of_birth=date(2000, 3, 20),  # 25 years old (born March 2000, it's Jan 2026)
+            date_of_birth=sarah_dob,
             event=self.event,
             user=self.sam,
             booking=booking,

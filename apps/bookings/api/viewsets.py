@@ -53,7 +53,7 @@ from typing import Any
 
 from apps.bookings.models import (
     Booking, BookingIntent, BookingIntentStatusChoices,
-    BookingPackage, BookingPackageRule,
+    BookingPackage, BookingPackageRule, PackageProduct,
     TicketType, Ticket,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
@@ -65,6 +65,7 @@ from .serializers import (
     TicketListSerializer, TicketDetailSerializer,
     BookingPackageListSerializer, BookingPackageDetailSerializer, BookingPackageCreateUpdateSerializer,
     BookingPackageRuleSerializer, BookingPackageRuleCreateUpdateSerializer,
+    PackageProductSerializer, PackageProductCreateUpdateSerializer,
     EventAlternativeSigninListSerializer, EventAlternativeSigninDetailSerializer, EventAlternativeSigninCreateUpdateSerializer,
     AttendeeAlternativeSigninListSerializer, AttendeeAlternativeSigninDetailSerializer, AttendeeAlternativeSigninCreateUpdateSerializer,
     CheckoutSerializer, CheckoutPreviewSerializer,
@@ -1548,6 +1549,126 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
         rules = package.rules.filter(active=True)
         serializer = BookingPackageRuleSerializer(rules, many=True, context={'request': request})
         return Response(serializer.data)
+
+    @extend_schema(
+        methods=['GET'],
+        summary="List package products",
+        description="Retrieve products linked to this booking package.",
+        tags=["Booking Packages"],
+        responses={200: PackageProductSerializer(many=True)},
+        operation_id="bookings_package_products_list",
+    )
+    @extend_schema(
+        methods=['POST'],
+        summary="Add product to booking package",
+        description="Link an event product to this booking package with quantity and package-specific percentage modifier.",
+        tags=["Booking Packages"],
+        request=PackageProductCreateUpdateSerializer,
+        responses={
+            201: PackageProductSerializer,
+            400: OpenApiResponse(description='Validation error'),
+            403: OpenApiResponse(description='Permission denied')
+        },
+        operation_id="bookings_package_products_create",
+    )
+    @action(detail=True, methods=['get', 'post'], url_path='products', permission_classes=[permissions.IsAuthenticated])
+    def package_products(self, request, pk=None):
+        """List or create package-product links for the booking package."""
+        package = self.get_object()
+
+        if request.method == 'GET':
+            products = package.package_products.select_related('product', 'booking_package', 'added_by').order_by('-added_at')
+            paginated = self.paginate_queryset(products)
+            if paginated is not None:
+                serializer = PackageProductSerializer(paginated, many=True, context={'request': request})
+                return self.get_paginated_response(serializer.data)
+            serializer = PackageProductSerializer(products, many=True, context={'request': request})
+            return Response(serializer.data)
+
+        if not IsAdministrativeStaff().has_permission(request, self):
+            return Response({'detail': 'You do not have permission to perform this action.'}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = PackageProductCreateUpdateSerializer(
+            data=request.data,
+            context={'request': request, 'booking_package': package},
+        )
+        serializer.is_valid(raise_exception=True)
+        package_product = serializer.save()
+        response_serializer = PackageProductSerializer(package_product, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        methods=['PATCH'],
+        summary="Partially update package product",
+        description="Partially update a linked product for this booking package.",
+        tags=["Booking Packages"],
+        request=PackageProductCreateUpdateSerializer,
+        responses={
+            200: PackageProductSerializer,
+            400: OpenApiResponse(description='Validation error'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Package product not found'),
+        },
+        operation_id="bookings_package_products_partial_update",
+    )
+    @extend_schema(
+        methods=['PUT'],
+        summary="Update package product",
+        description="Fully update a linked product for this booking package.",
+        tags=["Booking Packages"],
+        request=PackageProductCreateUpdateSerializer,
+        responses={
+            200: PackageProductSerializer,
+            400: OpenApiResponse(description='Validation error'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Package product not found'),
+        },
+        operation_id="bookings_package_products_update",
+    )
+    @extend_schema(
+        methods=['DELETE'],
+        summary="Remove product from booking package",
+        description="Delete a linked package product from this booking package.",
+        tags=["Booking Packages"],
+        responses={
+            204: OpenApiResponse(description='Deleted successfully'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Package product not found'),
+        },
+        operation_id="bookings_package_products_destroy",
+    )
+    @action(
+        detail=True,
+        methods=['patch', 'put', 'delete'],
+        url_path=r'products/(?P<package_product_id>[^/.]+)',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def package_product_detail(self, request, pk=None, package_product_id=None):
+        """Update or delete a specific package-product link."""
+        if not IsAdministrativeStaff().has_permission(request, self):
+            return Response({'detail': 'You do not have permission to perform this action.'}, status=status.HTTP_403_FORBIDDEN)
+
+        package = self.get_object()
+        package_product = get_object_or_404(
+            PackageProduct.objects.select_related('product', 'booking_package', 'added_by'),
+            id=package_product_id,
+            booking_package=package,
+        )
+
+        if request.method == 'DELETE':
+            package_product.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        serializer = PackageProductCreateUpdateSerializer(
+            package_product,
+            data=request.data,
+            partial=(request.method == 'PATCH'),
+            context={'request': request, 'booking_package': package},
+        )
+        serializer.is_valid(raise_exception=True)
+        updated = serializer.save()
+        response_serializer = PackageProductSerializer(updated, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
     
     @extend_schema(
         summary="Add discount to booking package",

@@ -30,7 +30,7 @@ import pytz
 
 from apps.bookings.models import (
     Booking, BookingIntent, BookingIntentStatusChoices,
-    BookingPackage, BookingPackageRule, PackageRuleTypeChoices,
+    BookingPackage, BookingPackageRule, PackageProduct, PackageRuleTypeChoices,
     TicketType, Ticket, TicketScopeChoices, TicketStatusChoices,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
@@ -542,6 +542,129 @@ class BookingPackageRuleCreateUpdateSerializer(serializers.ModelSerializer):
                 })
         
         return attrs
+
+
+# ============================================================================
+# BOOKING PACKAGE PRODUCT SERIALIZERS
+# ============================================================================
+
+class PackageProductSerializer(serializers.ModelSerializer):
+    """Read serializer for products linked to booking packages."""
+
+    product_title = serializers.CharField(source='product.title', read_only=True)
+    product_display_code = serializers.CharField(source='product.display_code', read_only=True)
+    product_public_id = serializers.UUIDField(source='product.product_id', read_only=True)
+    added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
+    base_amount = serializers.SerializerMethodField()
+    base_amount_currency = serializers.SerializerMethodField()
+    modified_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PackageProduct
+        fields = (
+            'id',
+            'booking_package',
+            'product',
+            'product_public_id',
+            'product_display_code',
+            'product_title',
+            'quantity_per_attendee',
+            'base_amount',
+            'base_amount_currency',
+            'percentage_modifier',
+            'modified_amount',
+            'added_at',
+            'added_by',
+            'added_by_name',
+            'updated_at',
+        )
+        read_only_fields = (
+            'id',
+            'booking_package',
+            'base_amount',
+            'base_amount_currency',
+            'modified_amount',
+            'added_at',
+            'added_by',
+            'added_by_name',
+            'updated_at',
+        )
+
+    def _resolve_base_money(self, obj):
+        """Resolve a safe base Money object for response serialization."""
+        if getattr(obj, 'product', None) and getattr(obj.product, 'base_amount', None) is not None:
+            return obj.product.base_amount
+        return getattr(obj, 'base_amount', None)
+
+    def get_base_amount(self, obj):
+        base_money = self._resolve_base_money(obj)
+        if base_money is None:
+            return '0.00'
+        return str(base_money.amount.quantize(Decimal('0.01')))
+
+    def get_base_amount_currency(self, obj):
+        base_money = self._resolve_base_money(obj)
+        if base_money is None:
+            return 'GBP'
+        return base_money.currency.code
+
+    def get_modified_amount(self, obj):
+        base_money = self._resolve_base_money(obj)
+        if base_money is None:
+            return '0.00'
+
+        modifier = getattr(obj, 'percentage_modifier', Decimal('0.00')) or Decimal('0.00')
+        modified = base_money * (Decimal('1.00') + (modifier / Decimal('100')))
+        return str(modified.amount.quantize(Decimal('0.01')))
+
+
+class PackageProductCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/update serializer for booking package product links."""
+
+    class Meta:
+        model = PackageProduct
+        fields = (
+            'booking_package',
+            'product',
+            'quantity_per_attendee',
+            'percentage_modifier',
+        )
+        extra_kwargs = {
+            'booking_package': {'required': False},
+        }
+
+    def validate(self, attrs):
+        booking_package = (
+            self.context.get('booking_package')
+            or attrs.get('booking_package')
+            or (self.instance.booking_package if self.instance else None)
+        )
+        product = attrs.get('product') or (self.instance.product if self.instance else None)
+
+        if booking_package is None:
+            raise serializers.ValidationError({'booking_package': 'Booking package is required.'})
+
+        if product and booking_package.event_id != product.event_id:
+            raise serializers.ValidationError({
+                'product': 'Product must belong to the same event as the booking package.'
+            })
+
+        return attrs
+
+    def create(self, validated_data):
+        booking_package = self.context.get('booking_package')
+        if booking_package is not None:
+            validated_data['booking_package'] = booking_package
+
+        request = self.context.get('request')
+        if request and request.user:
+            validated_data['added_by'] = request.user
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        validated_data.pop('booking_package', None)
+        return super().update(instance, validated_data)
 
 
 # ============================================================================
