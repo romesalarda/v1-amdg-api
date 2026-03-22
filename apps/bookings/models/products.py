@@ -62,7 +62,7 @@ class PackageProduct(PayableModel): # discounts can be applied to package produc
         ordering = ['-added_at']
 
     def __str__(self):
-        return f"{self.booking_package} - {self.product} (x{self.quantity})"
+        return f"{self.booking_package} - {self.product}"
     
     def __repr__(self):
         return f"<PackageProducts(booking_package={self.booking_package}, product={self.product}, quantity={self.quantity})>"

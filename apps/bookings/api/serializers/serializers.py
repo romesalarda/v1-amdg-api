@@ -590,25 +590,25 @@ class PackageProductSerializer(serializers.ModelSerializer):
             'updated_at',
         )
 
-    def _resolve_base_money(self, obj):
+    def _resolve_base_money(self, obj) -> Optional[Money]:
         """Resolve a safe base Money object for response serialization."""
         if getattr(obj, 'product', None) and getattr(obj.product, 'base_amount', None) is not None:
             return obj.product.base_amount
         return getattr(obj, 'base_amount', None)
 
-    def get_base_amount(self, obj):
+    def get_base_amount(self, obj) -> str:
         base_money = self._resolve_base_money(obj)
         if base_money is None:
             return '0.00'
         return str(base_money.amount.quantize(Decimal('0.01')))
 
-    def get_base_amount_currency(self, obj):
+    def get_base_amount_currency(self, obj) -> str:
         base_money = self._resolve_base_money(obj)
         if base_money is None:
             return 'GBP'
         return base_money.currency.code
 
-    def get_modified_amount(self, obj):
+    def get_modified_amount(self, obj) -> str:
         base_money = self._resolve_base_money(obj)
         if base_money is None:
             return '0.00'
@@ -1256,6 +1256,11 @@ class ProductSelectionSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'variant_id': f'Variant does not belong to product {package_product.product.title}'
             })
+
+        if not variant.is_purchasable:
+            raise serializers.ValidationError({
+                'variant_id': f'Variant {variant_id} is not currently purchasable.'
+            })
         
         # Strict enforcement: quantity must not exceed package limit
         if quantity > package_product.quantity_per_attendee:
@@ -1433,6 +1438,12 @@ class AttendeeCheckoutSerializer(serializers.Serializer):
 
         # Validate product selections match package products
         if product_selections:
+            selected_product_ids = [ps['package_product_id'] for ps in product_selections]
+            if len(selected_product_ids) != len(set(selected_product_ids)):
+                raise serializers.ValidationError({
+                    'product_selections': 'Duplicate package_product_id entries are not allowed.'
+                })
+
             package_product_ids = set(ps['package_product_id'] for ps in product_selections)
             actual_package_products = package.package_products.values_list('id', flat=True)
 

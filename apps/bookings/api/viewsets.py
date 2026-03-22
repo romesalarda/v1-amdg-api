@@ -29,7 +29,7 @@ from django.shortcuts import get_object_or_404
 from django.core.serializers.json import DjangoJSONEncoder
 # Import models
 from django.db import transaction
-from apps.products.models import Order, OrderStatusChoices
+from apps.products.models import Order
 from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 from djmoney.money import Money
 from core.utils.display import generate_human_readable_id
@@ -506,19 +506,35 @@ class BookingViewSet(viewsets.ModelViewSet):
                     total_amount += package_price
 
                     if product_selections:
-                        temp_order = Order.objects.create(
-                            customer=user,
-                            attendee=attendee,
-                            booking_package=package,
-                            status=OrderStatusChoices.DRAFT,
-                            total_amount=Money(0, package_price.currency.code),
-                            created_by=user,
-                        )
                         for prod_selection in product_selections:
+                            package_product = prod_selection['_package_product']
                             variant = prod_selection['_variant']
                             quantity = int(prod_selection['quantity'])
-                            temp_order.add_order_item(product_variant=variant, quantity=quantity)
-                        total_amount += temp_order.total_amount
+
+                            if package_product.booking_package_id != package.id:
+                                raise ValidationError({
+                                    'product_selections': (
+                                        f'Package product {package_product.id} does not belong to package {package.id}.'
+                                    )
+                                })
+
+                            if not variant.can_attendee_purchase(attendee):
+                                raise ValidationError({
+                                    'product_selections': (
+                                        f'Attendee {attendee.attendee_id} is not eligible for selected variant {variant.variant_id}.'
+                                    )
+                                })
+
+                            try:
+                                variant.can_attendee_purchase_quantity(attendee, quantity, raise_exception=True)
+                            except Exception as exc:
+                                raise ValidationError({'product_selections': str(exc)})
+
+                            line_total = package_product.total_amount_with_variant(
+                                variant=variant,
+                                context=attendee_context,
+                            ) * quantity
+                            total_amount += line_total
             finally:
                 transaction.savepoint_rollback(preview_savepoint)
 
@@ -917,22 +933,27 @@ class BookingViewSet(viewsets.ModelViewSet):
                         products_breakdown = []
 
                         if product_selections:
-                            temp_order = Order.objects.create(
-                                customer=user,
-                                attendee=attendee,
-                                booking_package=package,
-                                status=OrderStatusChoices.DRAFT,
-                                total_amount=Money(0, package_base.currency.code),
-                                created_by=user,
-                            )
-
                             for product_selection in product_selections:
                                 package_product = product_selection['_package_product']
                                 variant = product_selection['_variant']
                                 quantity = product_selection['quantity']
 
+                                if package_product.booking_package_id != package.id:
+                                    raise ValidationError({
+                                        'product_selections': (
+                                            f'Package product {package_product.id} does not belong to package {package.id}.'
+                                        )
+                                    })
+
+                                if not variant.can_attendee_purchase(attendee):
+                                    raise ValidationError({
+                                        'product_selections': (
+                                            f'Attendee {attendee.attendee_id} is not eligible for selected variant {variant.variant_id}.'
+                                        )
+                                    })
+
                                 try:
-                                    temp_order.add_order_item(product_variant=variant, quantity=quantity)
+                                    variant.can_attendee_purchase_quantity(attendee, quantity, raise_exception=True)
                                 except Exception as exc:
                                     raise ValidationError({
                                         'product_selections': (
@@ -1602,6 +1623,15 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
         summary="Partially update package product",
         description="Partially update a linked product for this booking package.",
         tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='package_product_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='Database ID of the PackageProduct link to update.',
+            )
+        ],
         request=PackageProductCreateUpdateSerializer,
         responses={
             200: PackageProductSerializer,
@@ -1616,6 +1646,15 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
         summary="Update package product",
         description="Fully update a linked product for this booking package.",
         tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='package_product_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='Database ID of the PackageProduct link to update.',
+            )
+        ],
         request=PackageProductCreateUpdateSerializer,
         responses={
             200: PackageProductSerializer,
@@ -1630,6 +1669,15 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
         summary="Remove product from booking package",
         description="Delete a linked package product from this booking package.",
         tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='package_product_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='Database ID of the PackageProduct link to delete.',
+            )
+        ],
         responses={
             204: OpenApiResponse(description='Deleted successfully'),
             403: OpenApiResponse(description='Permission denied'),
