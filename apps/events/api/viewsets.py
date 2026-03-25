@@ -43,8 +43,10 @@ from apps.events.api.serializers import (
     EventStaffAvailabilitySerializer, EventReviewSerializer,
     EventQuestionSerializer, EventQuestionOptionSerializer,
     EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer,
-    EventVenueSerializer, EventStaffInviteSerializer, EventStaffInviteListSerializer
+    EventVenueSerializer, EventStaffInviteSerializer, EventStaffInviteListSerializer,
+    EventMyBookingResponseSerializer,
 )
+from apps.bookings.models import Booking
 
 from apps.events.api.filtersets import (
     EventQuestionAnswerFilterSet
@@ -345,6 +347,79 @@ class EventViewSet(viewsets.ModelViewSet):
             serializer = EventListSerializer(page, many=True, context={'request': request})
             return self.get_paginated_response(serializer.data)
         serializer = EventListSerializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Get Current User Booking For Event",
+        description=(
+            "Retrieve the current authenticated user's booking for this event, including "
+            "attendees, tickets, and payments in a single payload. "
+            "Selection precedence is: booking created by current user, otherwise latest booking "
+            "where user is linked as an attendee."
+        ),
+        tags=["Events"],
+        responses={
+            200: EventMyBookingResponseSerializer,
+            401: OpenApiResponse(description='Authentication required'),
+            404: OpenApiResponse(description='No booking found for the current user in this event'),
+        }
+    )
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='my-booking',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def my_booking(self, request, event_id=None):
+        event = self.get_object()
+
+        base_queryset = Booking.objects.filter(event=event).select_related(
+            'event',
+            'made_by',
+        ).prefetch_related(
+            'attendees__tickets',
+        )
+
+        owner_bookings = list(
+            base_queryset.filter(made_by=request.user).order_by('-booked_at', '-id')
+        )
+        owner_booking_ids = [booking.id for booking in owner_bookings]
+
+        attendee_bookings = list(
+            base_queryset.filter(attendees__user=request.user)
+            .exclude(id__in=owner_booking_ids)
+            .distinct()
+            .order_by('-booked_at')
+        )
+
+        ordered_bookings = owner_bookings + attendee_bookings
+
+        if not ordered_bookings:
+            return Response(
+                {'detail': 'No booking found for the current user in this event.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        booking_items = []
+        for booking in ordered_bookings:
+            is_owner = booking.made_by_id == request.user.id
+            booking_items.append(
+                {
+                    'booking': booking,
+                    'is_booking_owner': is_owner,
+                    'selection_reason': 'made_by' if is_owner else 'attendee_linked',
+                    'can_manage_all_attendees': is_owner,
+                }
+            )
+
+        serializer = EventMyBookingResponseSerializer(
+            {
+                'event': event,
+                'primary_booking_reference': ordered_bookings[0].booking_reference,
+                'bookings': booking_items,
+            },
+            context={'request': request, 'event': event},
+        )
         return Response(serializer.data)
 
     @extend_schema(

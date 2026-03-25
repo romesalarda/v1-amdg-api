@@ -20,6 +20,7 @@ from apps.common.api.serializers import (
     AvailabilityWindowSerializer, 
     ResourceSerializer
 )
+from apps.bookings.api.serializers.serializers import BookingDetailSerializer
 from core.utils.currency import format_price
 
 import pytz
@@ -521,6 +522,43 @@ class EventDetailSerializer(serializers.ModelSerializer):
             )
         
         return links
+
+
+class EventMyBookingEventSerializer(serializers.ModelSerializer):
+
+    timezone = serializers.CharField()
+
+    class Meta:
+        model = Event
+        fields = (
+            'event_id',
+            'display_identifier',
+            'title',
+            'status',
+            'start_datetime',
+            'end_datetime',
+            'timezone',
+        )
+        read_only_fields = fields
+        extra_kwargs = {
+            'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
+        }
+
+
+class EventMyBookingBookingSerializer(serializers.Serializer):
+    booking = BookingDetailSerializer(read_only=True)
+    is_booking_owner = serializers.BooleanField(read_only=True)
+    selection_reason = serializers.ChoiceField(
+        choices=['made_by', 'attendee_linked'],
+        read_only=True,
+    )
+    can_manage_all_attendees = serializers.BooleanField(read_only=True)
+
+
+class EventMyBookingResponseSerializer(serializers.Serializer):
+    event = EventMyBookingEventSerializer(read_only=True)
+    primary_booking_reference = serializers.CharField(read_only=True)
+    bookings = EventMyBookingBookingSerializer(many=True, read_only=True)
 
 class EventCreateUpdateSerializer(serializers.ModelSerializer):
     timezone = serializers.CharField()
