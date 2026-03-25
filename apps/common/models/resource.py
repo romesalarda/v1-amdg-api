@@ -127,3 +127,6 @@ class Resource(models.Model):
             if self.image:
                 return self.image.url
         return None
+
+# TODO create new resource display model that can be used for frontend display, with fields like thumbnail, preview_url, etc. 
+# # that can be generated based on the resource type and content. This will allow for more flexible and rich display of resources in the frontend without needing to add too many fields to the base Resource model.

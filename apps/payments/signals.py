@@ -44,14 +44,6 @@ def handle_payment_completion(sender, instance, created, **kwargs):
     if instance.status != PaymentStatusChoices.COMPLETED:
         return
     
-    # Check if we should auto-process this payment method
-    if not TicketCreatorService.should_create_tickets_for_payment(instance):
-        logger.info(
-            f"Skipping auto-processing for payment {instance.payment_reference} "
-            f"with method {instance.method.method_type if instance.method else 'None'}"
-        )
-        return
-
     # Deferred booking finalization path (two-phase checkout).
     if instance.target is None and (instance.metadata or {}).get('checkout_intent_id'):
         try:
@@ -75,6 +67,14 @@ def handle_payment_completion(sender, instance, created, **kwargs):
                 exc_info=True,
             )
             return
+
+    # Check if we should auto-process this payment method
+    if not TicketCreatorService.should_create_tickets_for_payment(instance):
+        logger.info(
+            f"Skipping auto-processing for payment {instance.payment_reference} "
+            f"with method {instance.method.method_type if instance.method else 'None'}"
+        )
+        return
     
     target = instance.target
     

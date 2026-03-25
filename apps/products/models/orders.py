@@ -13,6 +13,7 @@ from apps.common.models.verification import RequiresVerificationModel
 from apps.common.models.softdelete import SoftDeleteModel
 
 from .product import ProductVariant
+from apps.bookings.models.products import PackageProduct
 
 import uuid
 from decimal import Decimal
@@ -24,9 +25,10 @@ logger = logging.getLogger(__name__)
 ORDER_STATUS_TRANSITIONS = {
     'draft': ['pending', 'cancelled'],
     'pending': ['processing', 'cancelled'],
-    'processing': ['completed', 'refunded'],
-    'completed': ['refunded'],
+    'processing': ['completed', 'pending_refund', 'refunded'],
+    'completed': ['pending_refund', 'refunded'],
     'cancelled': [],
+    'pending_refund': ['refunded', 'cancelled'],
     'refunded': [],
 }
 class OrderStatusChoices(models.TextChoices):
@@ -269,6 +271,72 @@ class Order(SoftDeleteModel): # no admin model
             self.total_amount = self.get_total_amount()
             self.full_clean()
             self.save() # persist changes
+
+        order_item.refresh_from_db()
+        return order_item
+
+    def add_package_order_item(
+        self,
+        package_product: 'PackageProduct',
+        product_variant: 'ProductVariant',
+        quantity: int,
+    ) -> 'OrderItem':
+        """
+        Adds an OrderItem from a booking package product selection.
+
+        Pricing source of truth:
+        - PackageProduct.total_amount_with_variant(variant, attendee_context)
+        """
+        from apps.products.models.product import ProductVariant
+        from apps.attendee.models.attendee import Attendee
+        self.attendee: Attendee  # type: ignore
+
+        if not isinstance(package_product, PackageProduct):
+            raise exceptions.ValidationError("The provided package_product is not a valid PackageProduct instance.")
+        if not isinstance(product_variant, ProductVariant):
+            raise exceptions.ValidationError("The provided product_variant is not a valid ProductVariant instance.")
+        if quantity <= 0:
+            raise exceptions.ValidationError("Quantity must be at least 1.")
+        if not self.can_add_products:
+            raise exceptions.ValidationError("Cannot add products to an order that is not in 'draft' status.")
+        if product_variant.product_id != package_product.product_id:
+            raise exceptions.ValidationError("Selected variant does not belong to selected package product.")
+        if quantity > package_product.quantity_per_attendee:
+            raise exceptions.ValidationError(
+                f"Quantity {quantity} exceeds package limit of {package_product.quantity_per_attendee}."
+            )
+
+        with transaction.atomic():
+            if not product_variant.can_attendee_purchase(self.attendee):
+                raise exceptions.ValidationError("The attendee is not eligible to purchase the selected product variant.")
+
+            product_variant.can_attendee_purchase_quantity(self.attendee, quantity, raise_exception=True)
+
+            attendee_context = self.attendee.pricing_context()
+            unit_price_money = package_product.total_amount_with_variant(
+                variant=product_variant,
+                context=attendee_context,
+            )
+            unit_price = unit_price_money.amount.quantize(Decimal("0.01"))
+            total_price = (unit_price * Decimal(quantity)).quantize(Decimal("0.01"))
+
+            order_item = OrderItem(
+                order=self,
+                product_variant=product_variant,
+                package_product=package_product,
+                quantity=quantity,
+                unit_price=unit_price,
+                total_price=total_price,
+            )
+            order_item.clean()
+            order_item.save()
+
+            product_variant.decrement_stock(quantity)
+
+            self.refresh_from_db()
+            self.total_amount = self.get_total_amount()
+            self.full_clean()
+            self.save()
 
         order_item.refresh_from_db()
         return order_item

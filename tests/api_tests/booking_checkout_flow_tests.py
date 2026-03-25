@@ -45,6 +45,7 @@ from apps.organisations.models import Organisation
 from apps.products.models import Product, ProductVariant, ProductSizeChoices
 from apps.bookings.models import PackageProduct
 from apps.common.models import Resource
+from apps.common.models.availability import AvailabilityWindow, AvailabilityTypeChoices
 from apps.locations.models import (
     CountryLocation, ClusterLocation, ChapterLocation, AreaLocation,
     GeneralSectorType, SpecificSectorType,
@@ -103,6 +104,15 @@ class CheckoutAPITestCase(TestCase):
             end_datetime=timezone.now() + timedelta(days=32),
             status=EventStatusChoices.OPEN,
             organisation=self.organisation
+        )
+
+        AvailabilityWindow.objects.create(
+            name='Registration Window',
+            availability_type=AvailabilityTypeChoices.REGISTRATION,
+            target_type=ContentType.objects.get_for_model(Event),
+            target_id=self.event.id,
+            available_from=timezone.now() - timedelta(days=1),
+            available_to=timezone.now() + timedelta(days=60),
         )
 
         self.country = CountryLocation.objects.create(
@@ -558,6 +568,11 @@ class CheckoutAPITestCase(TestCase):
         from apps.products.models import Order
         order = Order.objects.get(order_id=order_id)
         self.assertEqual(order.order_items.count(), 1)
+        order_item = order.order_items.first()
+        self.assertIsNotNone(order_item)
+        self.assertEqual(order_item.package_product_id, package_product.id)
+        self.assertEqual(order_item.unit_price, Money('18.00', 'GBP'))
+        self.assertEqual(order_item.total_price, Money('18.00', 'GBP'))
         
         # Verify stock was decremented
         variant.refresh_from_db()
@@ -979,6 +994,15 @@ class CheckoutEdgeCasesTest(TestCase):
             end_datetime=timezone.now() + timedelta(days=32),
             status=EventStatusChoices.OPEN,
             organisation=self.organisation
+        )
+
+        AvailabilityWindow.objects.create(
+            name='Registration Window',
+            availability_type=AvailabilityTypeChoices.REGISTRATION,
+            target_type=ContentType.objects.get_for_model(Event),
+            target_id=self.event.id,
+            available_from=timezone.now() - timedelta(days=1),
+            available_to=timezone.now() + timedelta(days=60),
         )
         
         self.ticket_type = TicketType.objects.create(

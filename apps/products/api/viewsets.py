@@ -48,7 +48,7 @@ from apps.payments.api.serializers import (
     DiscountListSerializer, DiscountDetailSerializer, DiscountCreateUpdateSerializer
 )
 from .serializers import (
-    ProductCategorySerializer, ProductCategoryCreateUpdateSerializer,
+    ProductCategorySerializer,
     EventProductCategorySerializer, EventProductCategoryCreateUpdateSerializer,
     ProductListSerializer, ProductDetailSerializer, ProductCreateSerializer, ProductUpdateSerializer,
     ProductVariantListSerializer, ProductVariantDetailSerializer, ProductVariantCreateUpdateSerializer,
@@ -90,34 +90,13 @@ class StandardPagination(PageNumberPagination):
         description="Get detailed information about a specific product category.",
         tags=["Product Categories"],
     ),
-    create=extend_schema(
-        summary="Create product category",
-        description="Create a new product category. Only superusers and staff can create global categories.",
-        tags=["Product Categories"],
-    ),
-    update=extend_schema(
-        summary="Update product category",
-        description="Update an existing product category. Only superusers and staff can modify categories.",
-        tags=["Product Categories"],
-    ),
-    partial_update=extend_schema(
-        summary="Partially update product category",
-        description="Partially update a product category.",
-        tags=["Product Categories"],
-    ),
-    destroy=extend_schema(
-        summary="Delete product category",
-        description="Delete a product category. Only allowed if no products are using this category.",
-        tags=["Product Categories"],
-    ),
 )
-class ProductCategoryViewSet(viewsets.ModelViewSet):
+class ProductCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet for managing product categories.
     
     Provides:
     - List/Retrieve: All authenticated users
-    - Create/Update/Delete: Superusers and staff only
     
     Categories are global and can be associated with events through EventProductCategory.
     """
@@ -130,12 +109,8 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'created_at']
     ordering = ['name']
-    
-    def get_serializer_class(self):
-        """Return appropriate serializer based on action."""
-        if self.action in ['create', 'update', 'partial_update']:
-            return ProductCategoryCreateUpdateSerializer
-        return ProductCategorySerializer
+    serializer_class = ProductCategorySerializer
+    http_method_names = ['get', 'head', 'options']
 
 
 @extend_schema_view(
@@ -231,7 +206,6 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
                     'percentage_modifier': {'type': 'number'},
                     'verified': {'type': 'boolean'},
                     'is_active': {'type': 'boolean'},
-                    'category_ids': {'type': 'array', 'items': {'type': 'integer'}},
                     'main_image': {'type': 'string', 'format': 'binary'},
                     'additional_images': {'type': 'array', 'items': {'type': 'string', 'format': 'binary'}},
                 }
@@ -253,7 +227,6 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
                     'percentage_modifier': {'type': 'number'},
                     'verified': {'type': 'boolean'},
                     'is_active': {'type': 'boolean'},
-                    'category_ids': {'type': 'array', 'items': {'type': 'integer'}},
                     'main_image': {'type': 'string', 'format': 'binary'},
                     'additional_images': {'type': 'array', 'items': {'type': 'string', 'format': 'binary'}},
                 }
@@ -275,7 +248,6 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
                     'percentage_modifier': {'type': 'number'},
                     'verified': {'type': 'boolean'},
                     'is_active': {'type': 'boolean'},
-                    'category_ids': {'type': 'array', 'items': {'type': 'integer'}},
                     'main_image': {'type': 'string', 'format': 'binary'},
                     'additional_images': {'type': 'array', 'items': {'type': 'string', 'format': 'binary'}},
                 }
@@ -2481,7 +2453,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     queryset = Order.objects.select_related(
         'customer', 'attendee', 'attendee__event', 'payment', 'created_by', 'updated_by'
-    ).prefetch_related('order_items__product_variant__product')
+    )
     permission_classes = [permissions.IsAuthenticated, IsOrderOwnerOrAdministrative]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]

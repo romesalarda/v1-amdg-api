@@ -29,7 +29,7 @@ from django.shortcuts import get_object_or_404
 from django.core.serializers.json import DjangoJSONEncoder
 # Import models
 from django.db import transaction
-from apps.products.models import Order, OrderStatusChoices
+from apps.products.models import Order
 from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 from djmoney.money import Money
 from core.utils.display import generate_human_readable_id
@@ -53,7 +53,7 @@ from typing import Any
 
 from apps.bookings.models import (
     Booking, BookingIntent, BookingIntentStatusChoices,
-    BookingPackage, BookingPackageRule,
+    BookingPackage, BookingPackageRule, PackageProduct,
     TicketType, Ticket,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
@@ -65,6 +65,7 @@ from .serializers import (
     TicketListSerializer, TicketDetailSerializer,
     BookingPackageListSerializer, BookingPackageDetailSerializer, BookingPackageCreateUpdateSerializer,
     BookingPackageRuleSerializer, BookingPackageRuleCreateUpdateSerializer,
+    PackageProductSerializer, PackageProductCreateUpdateSerializer,
     EventAlternativeSigninListSerializer, EventAlternativeSigninDetailSerializer, EventAlternativeSigninCreateUpdateSerializer,
     AttendeeAlternativeSigninListSerializer, AttendeeAlternativeSigninDetailSerializer, AttendeeAlternativeSigninCreateUpdateSerializer,
     CheckoutSerializer, CheckoutPreviewSerializer,
@@ -505,19 +506,35 @@ class BookingViewSet(viewsets.ModelViewSet):
                     total_amount += package_price
 
                     if product_selections:
-                        temp_order = Order.objects.create(
-                            customer=user,
-                            attendee=attendee,
-                            booking_package=package,
-                            status=OrderStatusChoices.DRAFT,
-                            total_amount=Money(0, package_price.currency.code),
-                            created_by=user,
-                        )
                         for prod_selection in product_selections:
+                            package_product = prod_selection['_package_product']
                             variant = prod_selection['_variant']
                             quantity = int(prod_selection['quantity'])
-                            temp_order.add_order_item(product_variant=variant, quantity=quantity)
-                        total_amount += temp_order.total_amount
+
+                            if package_product.booking_package_id != package.id:
+                                raise ValidationError({
+                                    'product_selections': (
+                                        f'Package product {package_product.id} does not belong to package {package.id}.'
+                                    )
+                                })
+
+                            if not variant.can_attendee_purchase(attendee):
+                                raise ValidationError({
+                                    'product_selections': (
+                                        f'Attendee {attendee.attendee_id} is not eligible for selected variant {variant.variant_id}.'
+                                    )
+                                })
+
+                            try:
+                                variant.can_attendee_purchase_quantity(attendee, quantity, raise_exception=True)
+                            except Exception as exc:
+                                raise ValidationError({'product_selections': str(exc)})
+
+                            line_total = package_product.total_amount_with_variant(
+                                variant=variant,
+                                context=attendee_context,
+                            ) * quantity
+                            total_amount += line_total
             finally:
                 transaction.savepoint_rollback(preview_savepoint)
 
@@ -916,22 +933,27 @@ class BookingViewSet(viewsets.ModelViewSet):
                         products_breakdown = []
 
                         if product_selections:
-                            temp_order = Order.objects.create(
-                                customer=user,
-                                attendee=attendee,
-                                booking_package=package,
-                                status=OrderStatusChoices.DRAFT,
-                                total_amount=Money(0, package_base.currency.code),
-                                created_by=user,
-                            )
-
                             for product_selection in product_selections:
                                 package_product = product_selection['_package_product']
                                 variant = product_selection['_variant']
                                 quantity = product_selection['quantity']
 
+                                if package_product.booking_package_id != package.id:
+                                    raise ValidationError({
+                                        'product_selections': (
+                                            f'Package product {package_product.id} does not belong to package {package.id}.'
+                                        )
+                                    })
+
+                                if not variant.can_attendee_purchase(attendee):
+                                    raise ValidationError({
+                                        'product_selections': (
+                                            f'Attendee {attendee.attendee_id} is not eligible for selected variant {variant.variant_id}.'
+                                        )
+                                    })
+
                                 try:
-                                    temp_order.add_order_item(product_variant=variant, quantity=quantity)
+                                    variant.can_attendee_purchase_quantity(attendee, quantity, raise_exception=True)
                                 except Exception as exc:
                                     raise ValidationError({
                                         'product_selections': (
@@ -1548,6 +1570,153 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
         rules = package.rules.filter(active=True)
         serializer = BookingPackageRuleSerializer(rules, many=True, context={'request': request})
         return Response(serializer.data)
+
+    @extend_schema(
+        methods=['GET'],
+        summary="List package products",
+        description="Retrieve products linked to this booking package.",
+        tags=["Booking Packages"],
+        responses={200: PackageProductSerializer(many=True)},
+        operation_id="bookings_package_products_list",
+    )
+    @extend_schema(
+        methods=['POST'],
+        summary="Add product to booking package",
+        description="Link an event product to this booking package with quantity and package-specific percentage modifier.",
+        tags=["Booking Packages"],
+        request=PackageProductCreateUpdateSerializer,
+        responses={
+            201: PackageProductSerializer,
+            400: OpenApiResponse(description='Validation error'),
+            403: OpenApiResponse(description='Permission denied')
+        },
+        operation_id="bookings_package_products_create",
+    )
+    @action(detail=True, methods=['get', 'post'], url_path='products', permission_classes=[permissions.IsAuthenticated])
+    def package_products(self, request, pk=None):
+        """List or create package-product links for the booking package."""
+        package = self.get_object()
+
+        if request.method == 'GET':
+            products = package.package_products.select_related('product', 'booking_package', 'added_by').order_by('-added_at')
+            paginated = self.paginate_queryset(products)
+            if paginated is not None:
+                serializer = PackageProductSerializer(paginated, many=True, context={'request': request})
+                return self.get_paginated_response(serializer.data)
+            serializer = PackageProductSerializer(products, many=True, context={'request': request})
+            return Response(serializer.data)
+
+        if not IsAdministrativeStaff().has_permission(request, self):
+            return Response({'detail': 'You do not have permission to perform this action.'}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = PackageProductCreateUpdateSerializer(
+            data=request.data,
+            context={'request': request, 'booking_package': package},
+        )
+        serializer.is_valid(raise_exception=True)
+        package_product = serializer.save()
+        response_serializer = PackageProductSerializer(package_product, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        methods=['PATCH'],
+        summary="Partially update package product",
+        description="Partially update a linked product for this booking package.",
+        tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='package_product_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='Database ID of the PackageProduct link to update.',
+            )
+        ],
+        request=PackageProductCreateUpdateSerializer,
+        responses={
+            200: PackageProductSerializer,
+            400: OpenApiResponse(description='Validation error'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Package product not found'),
+        },
+        operation_id="bookings_package_products_partial_update",
+    )
+    @extend_schema(
+        methods=['PUT'],
+        summary="Update package product",
+        description="Fully update a linked product for this booking package.",
+        tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='package_product_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='Database ID of the PackageProduct link to update.',
+            )
+        ],
+        request=PackageProductCreateUpdateSerializer,
+        responses={
+            200: PackageProductSerializer,
+            400: OpenApiResponse(description='Validation error'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Package product not found'),
+        },
+        operation_id="bookings_package_products_update",
+    )
+    @extend_schema(
+        methods=['DELETE'],
+        summary="Remove product from booking package",
+        description="Delete a linked package product from this booking package.",
+        tags=["Booking Packages"],
+        parameters=[
+            OpenApiParameter(
+                name='package_product_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='Database ID of the PackageProduct link to delete.',
+            )
+        ],
+        responses={
+            204: OpenApiResponse(description='Deleted successfully'),
+            403: OpenApiResponse(description='Permission denied'),
+            404: OpenApiResponse(description='Package product not found'),
+        },
+        operation_id="bookings_package_products_destroy",
+    )
+    @action(
+        detail=True,
+        methods=['patch', 'put', 'delete'],
+        url_path=r'products/(?P<package_product_id>[^/.]+)',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def package_product_detail(self, request, pk=None, package_product_id=None):
+        """Update or delete a specific package-product link."""
+        if not IsAdministrativeStaff().has_permission(request, self):
+            return Response({'detail': 'You do not have permission to perform this action.'}, status=status.HTTP_403_FORBIDDEN)
+
+        package = self.get_object()
+        package_product = get_object_or_404(
+            PackageProduct.objects.select_related('product', 'booking_package', 'added_by'),
+            id=package_product_id,
+            booking_package=package,
+        )
+
+        if request.method == 'DELETE':
+            package_product.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        serializer = PackageProductCreateUpdateSerializer(
+            package_product,
+            data=request.data,
+            partial=(request.method == 'PATCH'),
+            context={'request': request, 'booking_package': package},
+        )
+        serializer.is_valid(raise_exception=True)
+        updated = serializer.save()
+        response_serializer = PackageProductSerializer(updated, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
     
     @extend_schema(
         summary="Add discount to booking package",

@@ -1,10 +1,368 @@
 from django_filters import rest_framework as filters
 from django.db.models import Q
+from django.contrib.contenttypes.models import ContentType
 from apps.events.models import (
     Event, EventType, EventAuthorization, EventPermission,
     EventRole, EventStaff, EventReview, EventQuestion,
     EventQuestionAnswer
 )
+from django.utils import timezone
+from datetime import timedelta
+from apps.bookings.models import Booking
+from apps.payments.models import Payment, PaymentStatusChoices
+
+
+class EventMyBookingFilterSet(filters.FilterSet):
+    """
+    Filterset for user's own bookings within an event.
+
+    Supports filtering by:
+    - Outstanding payments status
+    - Booking date range (absolute and relative)
+    - Attendee name search
+    - Booking reference
+
+    Uses OR logic for combining filters.
+
+    Example queries:
+        ?has_outstanding_payments=true
+        ?booked_after=2025-01-01
+        ?booked_in_days=7
+        ?attendee_name=John
+        ?booking_reference=BKG-FAM-001
+    """
+
+    # Payment status filter
+    has_outstanding_payments = filters.BooleanFilter(
+        method='filter_has_outstanding_payments',
+        help_text="Filter by outstanding payment status (true/false)"
+    )
+
+    # Date filters
+    booked_after = filters.DateTimeFilter(
+        field_name='booked_at',
+        lookup_expr='gte',
+        help_text="Filter bookings made after this date (ISO 8601 format)"
+    )
+    booked_before = filters.DateTimeFilter(
+        field_name='booked_at',
+        lookup_expr='lte',
+        help_text="Filter bookings made before this date (ISO 8601 format)"
+    )
+    booked_in_days = filters.CharFilter(
+        method='filter_booked_in_days',
+        help_text="Filter bookings from last N days (e.g., 7, 30, 90)"
+    )
+
+    # Attendee filter
+    attendee_name = filters.CharFilter(
+        method='filter_attendee_name',
+        help_text="Filter by attendee name (first or last, case-insensitive)"
+    )
+
+    # Booking reference filter
+    booking_reference = filters.CharFilter(
+        field_name='booking_reference',
+        lookup_expr='icontains',
+        help_text="Filter by booking reference (contains, case-insensitive)"
+    )
+
+    class Meta:
+        model = Booking
+        fields = []
+
+    def _get_booking_target_ids_with_statuses(self, statuses):
+        booking_type = ContentType.objects.get_for_model(Booking)
+        return list(
+            Payment.objects.filter(
+                target_type=booking_type,
+                status__in=statuses,
+            ).values_list('target_id', flat=True)
+        )
+
+    def _is_filter_applied(self, field_name):
+        value = self.form.cleaned_data.get(field_name)
+        return value not in (None, '', [])
+
+    def filter_has_outstanding_payments(self, queryset, name, value):
+        """Filter bookings that have outstanding (non-completed) payments."""
+        outstanding_target_ids = self._get_booking_target_ids_with_statuses([
+            PaymentStatusChoices.PENDING,
+            PaymentStatusChoices.DRAFTING,
+        ])
+
+        if value:
+            return queryset.filter(id__in=outstanding_target_ids).distinct()
+
+        # All payments completed or booking has no payments
+        return queryset.exclude(id__in=outstanding_target_ids).distinct()
+
+    def filter_booked_in_days(self, queryset, name, value):
+        """Filter bookings from the last N days."""
+        try:
+            days = int(value)
+            if days < 0:
+                return queryset
+            cutoff_date = timezone.now() - timedelta(days=days)
+            return queryset.filter(booked_at__gte=cutoff_date).distinct()
+        except (ValueError, TypeError):
+            return queryset
+
+    def filter_attendee_name(self, queryset, name, value):
+        """Filter by attendee first name or last name."""
+        return queryset.filter(
+            Q(attendees__first_name__icontains=value) |
+            Q(attendees__last_name__icontains=value)
+        ).distinct()
+
+    def filter_queryset(self, queryset):
+        """
+        Override filter_queryset to apply OR logic across all active filters.
+
+        Default behavior combines filters with AND. This override combines all
+        applied filters with OR to get broader results.
+        """
+        # Get the parent filtered queryset first
+        filterset = super().filter_queryset(queryset)
+
+        # Check if any filters are actually applied
+        filters_applied = any(self._is_filter_applied(f) for f in self.filters.keys())
+
+        if not filters_applied:
+            return filterset
+
+        # Build OR query manually
+        q_objects = Q()
+
+        # has_outstanding_payments filter
+        if self._is_filter_applied('has_outstanding_payments'):
+            outstanding_target_ids = self._get_booking_target_ids_with_statuses([
+                PaymentStatusChoices.PENDING,
+                PaymentStatusChoices.DRAFTING,
+            ])
+            if self.form.cleaned_data.get('has_outstanding_payments') is True:
+                q_objects |= Q(id__in=outstanding_target_ids)
+            else:
+                q_objects |= ~Q(id__in=outstanding_target_ids)
+
+        # booked_after filter
+        if self.form.cleaned_data.get('booked_after'):
+            q_objects |= Q(booked_at__gte=self.form.cleaned_data['booked_after'])
+
+        # booked_before filter
+        if self.form.cleaned_data.get('booked_before'):
+            q_objects |= Q(booked_at__lte=self.form.cleaned_data['booked_before'])
+
+        # booked_in_days filter
+        if self.form.cleaned_data.get('booked_in_days'):
+            try:
+                days = int(self.form.cleaned_data['booked_in_days'])
+                if days >= 0:
+                    cutoff_date = timezone.now() - timedelta(days=days)
+                    q_objects |= Q(booked_at__gte=cutoff_date)
+            except (ValueError, TypeError):
+                pass
+
+        # attendee_name filter
+        if self.form.cleaned_data.get('attendee_name'):
+            q_objects |= Q(
+                Q(attendees__first_name__icontains=self.form.cleaned_data['attendee_name']) |
+                Q(attendees__last_name__icontains=self.form.cleaned_data['attendee_name'])
+            )
+
+        # booking_reference filter
+        if self.form.cleaned_data.get('booking_reference'):
+            q_objects |= Q(booking_reference__icontains=self.form.cleaned_data['booking_reference'])
+
+        # Apply the OR query and return distinct results
+        return queryset.filter(q_objects).distinct()
+
+
+class EventMyOutstandingPaymentsFilterSet(filters.FilterSet):
+    """
+    Filterset for user's outstanding (unpaid) payments within an event.
+
+    Filters payments that are:
+    - Status: PENDING or DRAFTING
+    - Linked to a Booking OR have a pending checkout intent
+
+    Supports filtering by:
+    - Payment status
+    - Booking date range (absolute and relative)
+    - Attendee name search
+    - Payment method
+
+    Uses OR logic for combining filters.
+
+    Example queries:
+        ?payment_status=PENDING
+        ?booked_after=2025-01-01
+        ?booked_in_days=7
+        ?attendee_name=John
+        ?payment_method=stripe
+    """
+
+    # Payment status filter
+    payment_status = filters.MultipleChoiceFilter(
+        field_name='status',
+        choices=PaymentStatusChoices.choices,
+        help_text="Filter by payment status (PENDING, DRAFTING, etc.)"
+    )
+
+    # Date filters (for booking date or payment creation date)
+    booked_after = filters.DateTimeFilter(
+        method='filter_booked_after',
+        help_text="Filter payments for bookings made after this date (ISO 8601 format)"
+    )
+    booked_before = filters.DateTimeFilter(
+        method='filter_booked_before',
+        help_text="Filter payments for bookings made before this date (ISO 8601 format)"
+    )
+    booked_in_days = filters.CharFilter(
+        method='filter_booked_in_days',
+        help_text="Filter payments for bookings from last N days (e.g., 7, 30, 90)"
+    )
+
+    # Attendee filter (for associated bookings)
+    attendee_name = filters.CharFilter(
+        method='filter_attendee_name',
+        help_text="Filter by attendee name in associated booking (first or last, case-insensitive)"
+    )
+
+    class Meta:
+        model = Payment
+        fields = []
+
+    def _booking_target_q(self):
+        booking_type = ContentType.objects.get_for_model(Booking)
+        return Q(target_type=booking_type, target_id__isnull=False)
+
+    def _booking_target_ids_by(self, **booking_filters):
+        ids = Booking.objects.filter(**booking_filters).values_list('id', flat=True)
+        return [str(v) for v in ids]
+
+    def _is_filter_applied(self, field_name):
+        value = self.form.cleaned_data.get(field_name)
+        return value not in (None, '', [])
+
+    def filter_booked_after(self, queryset, name, value):
+        """Filter payments for bookings made after this date."""
+        booking_target_ids = self._booking_target_ids_by(booked_at__gte=value)
+        return queryset.filter(
+            (self._booking_target_q() & Q(target_id__in=booking_target_ids)) |
+            Q(target_type__isnull=True, created_at__gte=value)
+        ).distinct()
+
+    def filter_booked_before(self, queryset, name, value):
+        """Filter payments for bookings made before this date."""
+        booking_target_ids = self._booking_target_ids_by(booked_at__lte=value)
+        return queryset.filter(
+            (self._booking_target_q() & Q(target_id__in=booking_target_ids)) |
+            Q(target_type__isnull=True, created_at__lte=value)
+        ).distinct()
+
+    def filter_booked_in_days(self, queryset, name, value):
+        """Filter payments for bookings from the last N days."""
+        try:
+            days = int(value)
+            if days < 0:
+                return queryset
+            cutoff_date = timezone.now() - timedelta(days=days)
+            booking_target_ids = self._booking_target_ids_by(booked_at__gte=cutoff_date)
+            return queryset.filter(
+                (self._booking_target_q() & Q(target_id__in=booking_target_ids)) |
+                Q(target_type__isnull=True, created_at__gte=cutoff_date)
+            ).distinct()
+        except (ValueError, TypeError):
+            return queryset
+
+    def filter_attendee_name(self, queryset, name, value):
+        """Filter payments by attendee name in booking or checkout metadata."""
+        booking_target_ids = [
+            str(v) for v in Booking.objects.filter(
+                Q(attendees__first_name__icontains=value) |
+                Q(attendees__last_name__icontains=value)
+            ).distinct().values_list('id', flat=True)
+        ]
+
+        return queryset.filter(
+            (self._booking_target_q() & Q(target_id__in=booking_target_ids)) |
+            Q(target_type__isnull=True, metadata__icontains=value)
+        ).distinct()
+
+    def filter_queryset(self, queryset):
+        """
+        Override filter_queryset to apply OR logic across all active filters.
+
+        Default behavior combines filters with AND. This override combines all
+        applied filters with OR to get broader results.
+        """
+        # Get the parent filtered queryset first
+        filterset = super().filter_queryset(queryset)
+
+        # Check if any filters are actually applied
+        filters_applied = any(self._is_filter_applied(f) for f in self.filters.keys())
+
+        if not filters_applied:
+            return filterset
+
+        # Build OR query manually
+        q_objects = Q()
+
+        # payment_status filter
+        if self._is_filter_applied('payment_status'):
+            q_objects |= Q(status__in=self.form.cleaned_data['payment_status'])
+
+        # booked_after filter
+        if self._is_filter_applied('booked_after'):
+            booking_target_ids = self._booking_target_ids_by(
+                booked_at__gte=self.form.cleaned_data['booked_after']
+            )
+            q_objects |= Q(
+                (self._booking_target_q() & Q(target_id__in=booking_target_ids)) |
+                Q(target_type__isnull=True, created_at__gte=self.form.cleaned_data['booked_after'])
+            )
+
+        # booked_before filter
+        if self._is_filter_applied('booked_before'):
+            booking_target_ids = self._booking_target_ids_by(
+                booked_at__lte=self.form.cleaned_data['booked_before']
+            )
+            q_objects |= Q(
+                (self._booking_target_q() & Q(target_id__in=booking_target_ids)) |
+                Q(target_type__isnull=True, created_at__lte=self.form.cleaned_data['booked_before'])
+            )
+
+        # booked_in_days filter
+        if self._is_filter_applied('booked_in_days'):
+            try:
+                days = int(self.form.cleaned_data['booked_in_days'])
+                if days >= 0:
+                    cutoff_date = timezone.now() - timedelta(days=days)
+                    booking_target_ids = self._booking_target_ids_by(booked_at__gte=cutoff_date)
+                    q_objects |= Q(
+                        (self._booking_target_q() & Q(target_id__in=booking_target_ids)) |
+                        Q(target_type__isnull=True, created_at__gte=cutoff_date)
+                    )
+            except (ValueError, TypeError):
+                pass
+
+        # attendee_name filter
+        if self._is_filter_applied('attendee_name'):
+            attendee_name = self.form.cleaned_data['attendee_name']
+            booking_target_ids = [
+                str(v) for v in Booking.objects.filter(
+                    Q(attendees__first_name__icontains=attendee_name) |
+                    Q(attendees__last_name__icontains=attendee_name)
+                ).distinct().values_list('id', flat=True)
+            ]
+            q_objects |= Q(
+                (self._booking_target_q() & Q(target_id__in=booking_target_ids)) |
+                Q(target_type__isnull=True, metadata__icontains=attendee_name)
+            )
+
+        # Apply the OR query and return distinct results
+        return queryset.filter(q_objects).distinct()
 
 
 class EventTypeFilterSet(filters.FilterSet):

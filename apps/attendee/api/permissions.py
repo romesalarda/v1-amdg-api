@@ -49,6 +49,10 @@ class IsAttendeeOwnerOrStaff(permissions.BasePermission):
                 user=request.user
             ).exists():
                 return True
+
+        # Booking owner can manage all attendees in their own booking
+        if hasattr(obj, 'booking') and obj.booking and obj.booking.made_by_id == request.user.id:
+            return True
         
         # Read-only for safe methods, deny write methods
         return request.method in permissions.SAFE_METHODS and False

@@ -276,6 +276,11 @@ class TicketFilterSet(filters.FilterSet):
         field_name='attendee__id',
         help_text="Filter by attendee database ID"
     )
+
+    event = filters.UUIDFilter(
+        field_name='attendee__booking__event__event_id',
+        help_text="Filter by event UUID (through attendee's booking)"
+    )
     
     # Ticket type filter
     ticket_type = filters.NumberFilter(

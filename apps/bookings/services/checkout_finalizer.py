@@ -125,6 +125,8 @@ class BookingCheckoutFinalizer:
                         created_by=actor or payment.user,
                     )
 
+                    product_lines = []
+
                     for product_selection in product_selections:
                         package_product_id = product_selection.get('package_product_id')
                         variant_uuid = product_selection.get('variant_id')
@@ -133,6 +135,10 @@ class BookingCheckoutFinalizer:
                         package_product = PackageProduct.objects.filter(id=package_product_id).first()
                         if not package_product:
                             raise CheckoutFinalizationError(f'PackageProduct {package_product_id} not found')
+                        if package_product.booking_package_id != package.id:
+                            raise CheckoutFinalizationError(
+                                f'PackageProduct {package_product_id} does not belong to package {package.id}'
+                            )
 
                         variant = ProductVariant.objects.filter(variant_id=variant_uuid).first()
                         if not variant:
@@ -142,9 +148,22 @@ class BookingCheckoutFinalizer:
                             raise CheckoutFinalizationError('Selected variant does not belong to selected package product')
 
                         try:
-                            order.add_order_item(variant, quantity)
+                            order_item = order.add_package_order_item(
+                                package_product=package_product,
+                                product_variant=variant,
+                                quantity=quantity,
+                            )
                         except DjangoValidationError as exc:
                             raise CheckoutFinalizationError(str(exc)) from exc
+
+                        product_lines.append({
+                            'package_product_id': package_product.id,
+                            'variant_id': str(variant.variant_id),
+                            'quantity': quantity,
+                            'unit_final_amount': str(order_item.unit_price.amount),
+                            'line_total': str(order_item.total_price.amount),
+                            'currency': order_item.total_price.currency.code,
+                        })
 
                     order.transition_to(OrderStatusChoices.PENDING)
                     order.payment = payment
@@ -154,6 +173,7 @@ class BookingCheckoutFinalizer:
                     total_amount += order.total_amount
                     selection_metadata['order_id'] = str(order.order_id)
                     selection_metadata['order_total'] = str(order.total_amount.amount)
+                    selection_metadata['product_lines'] = product_lines
 
                 attendee_selection_metadata.append(selection_metadata)
 

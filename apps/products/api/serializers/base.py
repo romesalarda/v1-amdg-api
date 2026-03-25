@@ -151,13 +151,14 @@ class EventProductCategorySerializer(serializers.ModelSerializer):
     _links = serializers.SerializerMethodField()
     event_name = serializers.CharField(source='event.title', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
+    product_id = serializers.UUIDField(source='product.product_id', read_only=True, allow_null=True)
     added_at = EventTimezoneField(read_only=True)
     
     class Meta:
         model = EventProductCategory
         fields = (
             'id', 'event', 'event_name', 'category', 'category_name',
-            'added_at', '_links'
+            'product', 'product_id', 'added_at', '_links'
         )
         read_only_fields = ('id', 'added_at')
     
@@ -183,23 +184,36 @@ class EventProductCategorySerializer(serializers.ModelSerializer):
 
 class EventProductCategoryCreateUpdateSerializer(serializers.ModelSerializer):
     """Create/Update serializer for EventProductCategory with validation."""
+
+    product = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text="Optional product ID for product-specific category mapping"
+    )
     
     class Meta:
         model = EventProductCategory
-        fields = ('event', 'category')
+        fields = ('event', 'category', 'product')
     
     def validate(self, attrs):
-        """Ensure unique event-category combination."""
-        event = attrs.get('event')
-        category = attrs.get('category')
-        
-        queryset = EventProductCategory.objects.filter(event=event, category=category)
+        """Ensure unique event-category-product combination and event consistency."""
+        event = attrs.get('event') or (self.instance.event if self.instance else None)
+        category = attrs.get('category') or (self.instance.category if self.instance else None)
+        product = attrs.get('product') if 'product' in attrs else (self.instance.product if self.instance else None)
+
+        if product and product.event_id != event.id:
+            raise serializers.ValidationError(
+                "Selected product does not belong to the specified event."
+            )
+
+        queryset = EventProductCategory.objects.filter(event=event, category=category, product=product)
         if self.instance:
             queryset = queryset.exclude(pk=self.instance.pk)
         
         if queryset.exists():
             raise serializers.ValidationError(
-                "This category is already associated with the event."
+                "This category mapping already exists for the selected scope."
             )
         
         return attrs
@@ -451,6 +465,7 @@ class ProductDetailSerializer(ProductListSerializer):
             'stock_quantity': v.stock_quantity,
             'is_active': v.is_active,
             'url': request.build_absolute_uri(f"/api/products/list/{obj.product_id}/variants/{v.variant_id}/") if request else None,
+            'image_url': request.build_absolute_uri(v.resources.filter(tag='VARIANT_PHOTO_MAIN').first().image.url) if request and v.resources.filter(tag='VARIANT_PHOTO_MAIN').exists() else None,
         } for v in variants]
 
 
@@ -458,13 +473,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     """Create serializer for Product with validation and image handling."""
     
     base_amount = MoneyField(max_digits=10, decimal_places=2)
-    category_ids = serializers.ListField(
-        child=serializers.IntegerField(),
-        write_only=True,
-        required=False,
-        allow_empty=True,
-        help_text="List of category IDs to associate with this product"
-    )
     main_image = serializers.ImageField(
         write_only=True,
         required=False,
@@ -483,7 +491,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         model = Product
         fields = (
             'title', 'description', 'event', 'base_amount', 'base_amount_currency', 'percentage_modifier',
-            'verified', 'is_active', 'category_ids', 'main_image', 'additional_images'
+            'verified', 'is_active', 'main_image', 'additional_images'
         )
     
     def validate_event(self, value):
@@ -531,15 +539,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError("Only JPEG, PNG, GIF, and WebP images are allowed.")
         return value
     
-    def validate_category_ids(self, value):
-        """Validate categories exist."""
-        if value:
-            existing_ids = set(ProductCategory.objects.filter(id__in=value).values_list('id', flat=True))
-            missing_ids = set(value) - existing_ids
-            if missing_ids:
-                raise serializers.ValidationError(f"Categories {missing_ids} do not exist.")
-        return value
-    
     def validate(self, attrs):
         """Cross-field validation."""
         # Validate percentage modifier if provided
@@ -564,8 +563,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         return attrs
     
     def create(self, validated_data):
-        """Create product with categories and images."""
-        category_ids = validated_data.pop('category_ids', [])
+        """Create product with images."""
         main_image = validated_data.pop('main_image', None)
         additional_images = validated_data.pop('additional_images', [])
         
@@ -581,18 +579,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         
         # Get content type for product
         content_type = ContentType.objects.get_for_model(Product)
-        
-        # Associate categories through EventProductCategory
-        for category_id in category_ids:
-            try:
-                category = ProductCategory.objects.get(id=category_id)
-                EventProductCategory.objects.create(
-                    event=product.event,
-                    category=category,
-                    product=product
-                )
-            except ProductCategory.DoesNotExist:
-                pass  # Already validated
         
         # Add main image
         if main_image:
@@ -641,13 +627,6 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
     """Update serializer for Product with validation."""
     
     base_amount = MoneyField(max_digits=10, decimal_places=2, required=False)
-    category_ids = serializers.ListField(
-        child=serializers.IntegerField(),
-        write_only=True,
-        required=False,
-        allow_empty=True,
-        help_text="List of category IDs to associate with this product (replaces existing)"
-    )
     main_image = serializers.ImageField(
         write_only=True,
         required=False,
@@ -666,7 +645,7 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         model = Product
         fields = (
             'title', 'description', 'base_amount', 'base_amount_currency', 'percentage_modifier',
-            'verified', 'is_active', 'category_ids', 'main_image', 'additional_images'
+            'verified', 'is_active', 'main_image', 'additional_images'
         )
     
     def validate_base_amount(self, value):
@@ -708,15 +687,6 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError("Only JPEG, PNG, GIF, and WebP images are allowed.")
         return value
     
-    def validate_category_ids(self, value):
-        """Validate categories exist."""
-        if value:
-            existing_ids = set(ProductCategory.objects.filter(id__in=value).values_list('id', flat=True))
-            missing_ids = set(value) - existing_ids
-            if missing_ids:
-                raise serializers.ValidationError(f"Categories {missing_ids} do not exist.")
-        return value
-    
     def validate(self, attrs):
         """Cross-field validation."""
         percentage_modifier = attrs.get('percentage_modifier')
@@ -728,8 +698,7 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         return attrs
     
     def update(self, instance, validated_data):
-        """Update product with categories and images."""
-        category_ids = validated_data.pop('category_ids', None)
+        """Update product with images."""
         main_image = validated_data.pop('main_image', None)
         additional_images = validated_data.pop('additional_images', [])
         
@@ -747,23 +716,6 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         
         # Get content type for product
         content_type = ContentType.objects.get_for_model(Product)
-        
-        # Update categories if provided
-        if category_ids is not None:
-            # Remove existing category associations
-            EventProductCategory.objects.filter(product=instance).delete()
-            
-            # Add new category associations
-            for category_id in category_ids:
-                try:
-                    category = ProductCategory.objects.get(id=category_id)
-                    EventProductCategory.objects.create(
-                        event=instance.event,
-                        category=category,
-                        product=instance
-                    )
-                except ProductCategory.DoesNotExist:
-                    pass  # Already validated
         
         # Update main image if provided
         if main_image:
@@ -1117,17 +1069,42 @@ class OrderItemSerializer(serializers.ModelSerializer):
         return str(obj.total_price)
     
     @extend_schema_field({'type': 'object'})
-    def get_product_variant_details(self, obj) -> dict:
+    def get_product_variant_details(self, obj) -> Optional[dict]:
         """Return product variant details."""
         if not obj.product_variant:
             return None
-        
+
+        def _build_image_url(resource: Optional[Resource]) -> Optional[str]:
+            if not resource:
+                return None
+
+            image_field = getattr(resource, 'image', None) or getattr(resource, 'file', None)
+            if not image_field:
+                return None
+
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(image_field.url)
+            return image_field.url
+
         v = obj.product_variant
+        variant_main_image = v.resources.filter(tag='VARIANT_PHOTO_MAIN').first()
+        product_main_image = v.product.product_images.filter(tag='PRODUCT_PHOTO_MAIN').first()
+
+        variant_image_url = _build_image_url(variant_main_image)
+        product_image_url = _build_image_url(product_main_image)
+
         return {
             'variant_id': str(v.variant_id),
+            'variant_db_id': v.id,
+            'product_id': str(v.product.product_id),
+            'product_display_code': v.product.display_code,
             'product_title': v.product.title,
             'size': v.size,
             'color': v.color,
+            'image_url': variant_image_url or product_image_url,
+            'variant_image_url': variant_image_url,
+            'product_image_url': product_image_url,
         }
 
 
@@ -1156,13 +1133,14 @@ class OrderListSerializer(serializers.ModelSerializer):
     total_amount = serializers.SerializerMethodField()
     item_count = serializers.IntegerField(source='order_items.count', read_only=True)
     created_at = EventTimezoneField(read_only=True)
+    order_items = OrderItemSerializer(many=True, read_only=True)
     
     class Meta:
         model = Order
         fields = (
             'id', 'order_id', 'order_reference_id', 'customer', 'customer_name',
             'attendee', 'attendee_name', 'status', 'status_display',
-            'total_amount', 'item_count', 'created_at', '_links'
+            'total_amount', 'item_count', 'created_at', '_links', 'order_items'
         )
         read_only_fields = ('id', 'order_id', 'order_reference_id', 'created_at')
     

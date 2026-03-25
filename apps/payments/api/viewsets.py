@@ -36,6 +36,7 @@ from drf_spectacular.utils import (
 from drf_spectacular.types import OpenApiTypes
 from djmoney.contrib.django_rest_framework import MoneyField
 from typing import Any
+import logging
 
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
@@ -63,6 +64,10 @@ from .permissions import (
     IsAdministrativeStaff, IsAdministrativeStaffOnly, IsPaymentOwnerOrAdministrative,
     IsRefundRequestOwnerOrAdministrative, IsReadOnly
 )
+from apps.payments.services.attendee_refunds import AttendeeRefundService
+
+
+logger = logging.getLogger(__name__)
 
 
 class StandardPagination(PageNumberPagination):
@@ -1054,8 +1059,6 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         """Validate user can create refund for this payment."""
         user = self.request.user
         payment = serializer.validated_data.get('payment')
-
-        print(f"Refund request creation attempt by user {user.username} for payment {payment.payment_reference}")
         
         # Check if user owns the payment or is admin
         if not (user.is_superuser or user.is_staff) and payment.user != user:
@@ -1066,30 +1069,39 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 event=payment.event,
                 role__category=EventRoleCategoryChoices.ADMINISTRATIVE
             ).exists()
-
-            print(f"User {user.username} is not payment owner. Checking event admin role: {is_event_admin}")
             
             if not is_event_admin:
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You can only create refund requests for your own payments.")
-            
+        print(serializer.validated_data)
+        refund_request = serializer.save()
         payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
 
         PaymentHistoryAction.objects.create(
             payment=payment,
             action='REFUND_REQUESTED',
-            description=f'Refund requested with {serializer.validated_data.get("amount")} for payment {
-                payment.payment_reference} by {user.username}',
+            description=(
+                f"Refund requested with {refund_request.amount} for payment "
+                f"{payment.payment_reference} by {user.username}"
+            ),
             metadata={
                 'requested_by_id': user.id,
                 'requested_by_username': user.username,
                 'bank_reference': payment.bank_transfer_reference,
+                'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
             },
             notes="Refund request created and payment marked as pending refund.",
             performed_by=user
         )
-        
-        serializer.save()
+
+        logger.info(
+            "Refund request created",
+            extra={
+                'payment_reference': payment.payment_reference,
+                'refund_tracking_reference': refund_request.tracking_reference,
+                'requested_by': user.username,
+            }
+        )
     
     @extend_schema(
         summary="Verify refund request",
@@ -1110,7 +1122,9 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
         
         refund_request.mark_verified(request.user)
-        refund_request.payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
+        blocked_summary = AttendeeRefundService.apply_verify_block(refund_request)
+        verify_status = AttendeeRefundService.determine_payment_status_after_verify(refund_request)
+        refund_request.payment.transition_to(verify_status)
 
         PaymentHistoryAction.objects.create(
             payment=refund_request.payment,
@@ -1120,6 +1134,8 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 'verified_by_id': request.user.id,
                 'requested_by': request.user.username,
                 'bank_reference': refund_request.payment.bank_transfer_reference,
+                'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+                'blocked_orders': blocked_summary.get('blocked_orders', 0),
             },
             notes="Refund request marked as verified and payment marked as pending refund.",
             performed_by=request.user
@@ -1147,18 +1163,28 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
         
         refund_request.mark_processed(request.user)
-        refund_request.payment.transition_to(PaymentStatusChoices.REFUNDED)
+        finalized_summary = AttendeeRefundService.apply_process_finalize(refund_request)
+        target_status = AttendeeRefundService.determine_payment_status_after_process(refund_request)
+        refund_request.payment.transition_to(target_status)
+
+        action_name = 'REFUND_FULLY_PROCESSED' if refund_request.is_full else 'REFUND_PARTIALLY_PROCESSED'
 
         PaymentHistoryAction.objects.create(
                 payment=refund_request.payment,
-                action='REFUND_FULLY_PROCESSED',
-                description=f'Refund fully processed with {refund_request.amount} for payment {refund_request.payment.payment_reference}',
+                action=action_name,
+                description=(
+                    f"Refund processed with {refund_request.amount} for payment "
+                    f"{refund_request.payment.payment_reference}"
+                ),
                 metadata={
                     'processed_by_id': request.user.id,
                     'requested_by': request.user.username,
                     'bank_reference': refund_request.payment.bank_transfer_reference,
+                    'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+                    'finalized_tickets': finalized_summary.get('finalized_tickets', 0),
+                    'finalized_orders': finalized_summary.get('finalized_orders', 0),
                 },
-                notes="Refund request marked as processed and payment marked as refunded.",
+                notes="Refund request marked as processed and entities invalidated for selected attendees.",
                 performed_by=request.user
             )
         

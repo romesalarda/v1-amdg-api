@@ -184,6 +184,7 @@ class PaymentFilterSet(filters.FilterSet):
             return queryset
         
         return queryset.filter(
+            Q(payment_id__icontains=value) |
             Q(payment_reference__icontains=value) |
             Q(bank_transfer_reference__icontains=value) |
             Q(user__email__icontains=value) |
