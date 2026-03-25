@@ -95,10 +95,9 @@ class OutstandingPaymentsService:
         # 1. A booking target (they went through the full checkout flow)
         # 2. A valid checkout intent in metadata
         result_qs = outstanding_qs.filter(
-            Q(target_type=booking_type, target_id__isnull=False) |
-            Q(target_type__isnull=True, metadata__checkout_intent_id__in=valid_checkout_intent_ids)
+            # Q(target_type=booking_type, target_id__isnull=False) |
+            # Q(target_type__isnull=True, metadata__checkout_intent_id__in=valid_checkout_intent_ids)
         ).distinct()
-
         return result_qs
 
     @staticmethod
