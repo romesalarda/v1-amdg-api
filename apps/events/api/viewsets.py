@@ -45,11 +45,15 @@ from apps.events.api.serializers import (
     EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer,
     EventVenueSerializer, EventStaffInviteSerializer, EventStaffInviteListSerializer,
     EventMyBookingResponseSerializer,
+        EventMyOutstandingPaymentSerializer,
 )
 from apps.bookings.models import Booking
 
+from apps.events.services import OutstandingPaymentsService
 from apps.events.api.filtersets import (
-    EventQuestionAnswerFilterSet
+    EventQuestionAnswerFilterSet,
+    EventMyBookingFilterSet,
+    EventMyOutstandingPaymentsFilterSet,
 )
 
 from apps.events.api.pagination import StandardPagination
@@ -350,18 +354,63 @@ class EventViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @extend_schema(
-        summary="Get Current User Booking For Event",
+        summary="Get Current User Bookings For Event (Paginated)",
         description=(
-            "Retrieve the current authenticated user's booking for this event, including "
-            "attendees, tickets, and payments in a single payload. "
-            "Selection precedence is: booking created by current user, otherwise latest booking "
-            "where user is linked as an attendee."
+            "Retrieve all of the current authenticated user's bookings for this event with "
+            "pagination and filtering support. Results include attendees, tickets, and payments. "
+            "Selection precedence is: bookings created by current user first, then bookings "
+            "where user is linked as an attendee. Supports filtering by outstanding payments, "
+            "booking dates, attendee names, and more. Uses OR logic for combining filters."
         ),
         tags=["Events"],
+        parameters=[
+            OpenApiParameter(
+                name='has_outstanding_payments',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description='Filter by outstanding payment status (true/false)'
+            ),
+            OpenApiParameter(
+                name='booked_after',
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                description='Filter bookings made after this date (ISO 8601 format)'
+            ),
+            OpenApiParameter(
+                name='booked_before',
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                description='Filter bookings made before this date (ISO 8601 format)'
+            ),
+            OpenApiParameter(
+                name='booked_in_days',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter bookings from last N days (e.g., 7, 30, 90)'
+            ),
+            OpenApiParameter(
+                name='attendee_name',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by attendee name (first or last, case-insensitive)'
+            ),
+            OpenApiParameter(
+                name='booking_reference',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by booking reference (contains, case-insensitive)'
+            ),
+            OpenApiParameter(
+                name='page',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Page number (defaults to 1, 20 results per page)'
+            ),
+        ],
         responses={
-            200: EventMyBookingResponseSerializer,
+            200: OpenApiResponse(description='Paginated list of user bookings'),
             401: OpenApiResponse(description='Authentication required'),
-            404: OpenApiResponse(description='No booking found for the current user in this event'),
+            404: OpenApiResponse(description='Event not found'),
         }
     )
     @action(
@@ -371,37 +420,42 @@ class EventViewSet(viewsets.ModelViewSet):
         permission_classes=[permissions.IsAuthenticated],
     )
     def my_booking(self, request, event_id=None):
+        """Get all user's bookings for an event with pagination and filtering."""
         event = self.get_object()
 
-        base_queryset = Booking.objects.filter(event=event).select_related(
+        # Query all bookings where user is owner or attendee
+        base_queryset = Booking.objects.filter(
+            event=event,
+        ).filter(
+            Q(made_by=request.user) | Q(attendees__user=request.user)
+        ).select_related(
             'event',
             'made_by',
         ).prefetch_related(
             'attendees__tickets',
+            'attendees__user',
+        ).distinct().order_by('-booked_at', '-id')
+
+        # Apply filters
+        filterset = EventMyBookingFilterSet(
+            request.GET,
+            queryset=base_queryset,
+            request=request
+        )
+        filtered_queryset = filterset.qs
+
+        # Apply pagination
+        paginator = StandardPagination()
+        paginated_queryset = paginator.paginate_queryset(
+            filtered_queryset,
+            request
         )
 
-        owner_bookings = list(
-            base_queryset.filter(made_by=request.user).order_by('-booked_at', '-id')
-        )
-        owner_booking_ids = [booking.id for booking in owner_bookings]
-
-        attendee_bookings = list(
-            base_queryset.filter(attendees__user=request.user)
-            .exclude(id__in=owner_booking_ids)
-            .distinct()
-            .order_by('-booked_at')
-        )
-
-        ordered_bookings = owner_bookings + attendee_bookings
-
-        if not ordered_bookings:
-            return Response(
-                {'detail': 'No booking found for the current user in this event.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        if paginated_queryset is None:
+            paginated_queryset = filtered_queryset
 
         booking_items = []
-        for booking in ordered_bookings:
+        for booking in paginated_queryset:
             is_owner = booking.made_by_id == request.user.id
             booking_items.append(
                 {
@@ -415,12 +469,112 @@ class EventViewSet(viewsets.ModelViewSet):
         serializer = EventMyBookingResponseSerializer(
             {
                 'event': event,
-                'primary_booking_reference': ordered_bookings[0].booking_reference,
+                'primary_booking_reference': paginated_queryset[0].booking_reference if paginated_queryset else None,
                 'bookings': booking_items,
             },
             context={'request': request, 'event': event},
         )
-        return Response(serializer.data)
+        return paginator.get_paginated_response(serializer.data)
+
+    @extend_schema(
+        summary="Get Outstanding Booking Payments",
+        description=(
+            "Retrieve all outstanding (unpaid) payment records for the current authenticated user "
+            "in this event. Outstanding payments include both payments linked to existing bookings "
+            "and payments with pending checkout intents (bookings not yet created). "
+            "Supports pagination and comprehensive filtering by payment status, booking dates, "
+            "attendee names, and more. Uses OR logic for combining filters to show broader results."
+        ),
+        tags=["Events"],
+        parameters=[
+            OpenApiParameter(
+                name='payment_status',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by payment status (PENDING, DRAFTING, etc.)'
+            ),
+            OpenApiParameter(
+                name='booked_after',
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                description='Filter payments for bookings made after this date (ISO 8601 format)'
+            ),
+            OpenApiParameter(
+                name='booked_before',
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                description='Filter payments for bookings made before this date (ISO 8601 format)'
+            ),
+            OpenApiParameter(
+                name='booked_in_days',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter payments for bookings from last N days (e.g., 7, 30, 90)'
+            ),
+            OpenApiParameter(
+                name='attendee_name',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by attendee name in associated booking (first or last, case-insensitive)'
+            ),
+            OpenApiParameter(
+                name='page',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Page number (defaults to 1, 20 results per page)'
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(description='Paginated list of outstanding payments'),
+            401: OpenApiResponse(description='Authentication required'),
+            404: OpenApiResponse(description='Event not found'),
+        }
+    )
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='my-outstanding-booking-payments',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def my_outstanding_booking_payments(self, request, event_id=None):
+        """Get all outstanding (unpaid) payments for an event with pagination and filtering."""
+        event = self.get_object()
+
+        # Get outstanding payments using the service
+        outstanding_qs = OutstandingPaymentsService.get_user_outstanding_payments_with_validation(
+            request.user, event
+        )
+
+        # Sort by created_at descending (most recent first)
+        outstanding_qs = outstanding_qs.order_by('-created_at')
+
+        # Apply filters
+        filterset = EventMyOutstandingPaymentsFilterSet(
+            request.GET,
+            queryset=outstanding_qs,
+            request=request
+        )
+        filtered_queryset = filterset.qs
+
+        # Apply pagination
+        paginator = StandardPagination()
+        paginated_queryset = paginator.paginate_queryset(
+            filtered_queryset,
+            request
+        )
+
+        if paginated_queryset is None:
+            paginated_queryset = filtered_queryset
+
+        # Serialize payments with their associated bookings
+        serializer = EventMyOutstandingPaymentSerializer(
+            paginated_queryset,
+            many=True,
+            context={'request': request, 'event': event},
+        )
+
+        # Return paginated response
+        return paginator.get_paginated_response(serializer.data)
 
     @extend_schema(
         summary="Get sponsorable events",
