@@ -191,6 +191,9 @@ class PaymentListSerializer(serializers.ModelSerializer):
             if ttype == "eventsponsor":
                 return "sponsorship"
             return ttype
+        if obj.metadata and 'payment_type' in obj.metadata:
+            if obj.metadata['payment_type'] in ['booking_checkout_pending_finalization']:
+                return 'pending booking'
         
         return None
     
