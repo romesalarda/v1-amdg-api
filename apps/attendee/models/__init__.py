@@ -1,4 +1,4 @@
-from .attendee import Attendee, AttendeeGuardian, AttendeeRelationship, AttendeeAction, AttendeeActionChoices
+from .attendee import Attendee, AttendeeGuardian, AttendeeRelationship, AttendeeAction, AttendeeActionChoices, AttendeeStatus
 from .groups import FamilyAttendee, FamilyGroup
 from .messages import AttendeeMessage, AttendeeMessagePriority
 
@@ -10,6 +10,8 @@ __all__ = [
     'AttendeeGuardian',
     'AttendeeRelationship',
     'FamilyAttendee',
+    'AttendeeAction',
+    'AttendeeStatus',
     'FamilyGroup',
     'AttendeeMessage',
     'AttendeeActionChoices',
