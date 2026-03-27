@@ -50,7 +50,8 @@ class BookingCheckoutFinalizer:
     @classmethod
     def _finalize_internal(cls, payment: Payment, actor=None, create_tickets: bool = True) -> dict:
         with transaction.atomic():
-            payment = Payment.objects.select_for_update().select_related("event", "user", "method").get(pk=payment.pk)
+            # Lock only the payment row; joined nullable relations can break FOR UPDATE on PostgreSQL.
+            payment = Payment.objects.select_for_update().get(pk=payment.pk)
 
             metadata = payment.metadata or {}
             if metadata.get("booking_finalized") and payment.target:

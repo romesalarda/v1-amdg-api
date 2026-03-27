@@ -215,7 +215,7 @@ class CheckoutValidationService:
     def validate_package_eligibility(
         package: BookingPackage,
         user: CommunityUser,
-        attendee: Attendee
+        attendee: Optional[Attendee]
     ) -> None:
         """
         Validate attendee is eligible for the selected package.
@@ -228,6 +228,10 @@ class CheckoutValidationService:
         Raises:
             ValidationError with 'package_id' field error
         """
+        # Draft attendees are validated later in checkout when a concrete attendee instance exists.
+        if attendee is None:
+            return
+
         if not package.can_use_package(user, attendee):
             raise ValidationError({
                 'package_id': (
@@ -239,7 +243,7 @@ class CheckoutValidationService:
     def validate_product_selections(
         product_selections: List[Dict[str, Any]],
         package: BookingPackage,
-        attendee: Attendee,
+        attendee: Optional[Attendee],
         context_obj: Optional[Any] = None
     ) -> None:
         """
@@ -292,22 +296,22 @@ class CheckoutValidationService:
                     )
                 })
             
-            # Validate attendee can purchase this variant
-            if not variant.can_attendee_purchase(attendee):
-                raise ValidationError({
-                    'product_selections': (
-                        f'Attendee {attendee.attendee_id} is not eligible for '
-                        f'variant {variant_id}.'
-                    )
-                })
-            
-            # Validate quantity
-            try:
-                variant.can_attendee_purchase_quantity(attendee, quantity, raise_exception=True)
-            except DjangoValidationError as exc:
-                raise ValidationError({
-                    'product_selections': f'Quantity validation failed: {str(exc)}'
-                })
+            # Attendee-specific checks require a resolved attendee instance.
+            if attendee is not None:
+                if not variant.can_attendee_purchase(attendee):
+                    raise ValidationError({
+                        'product_selections': (
+                            f'Attendee {attendee.attendee_id} is not eligible for '
+                            f'variant {variant_id}.'
+                        )
+                    })
+
+                try:
+                    variant.can_attendee_purchase_quantity(attendee, quantity, raise_exception=True)
+                except DjangoValidationError as exc:
+                    raise ValidationError({
+                        'product_selections': f'Quantity validation failed: {str(exc)}'
+                    })
     
     @staticmethod
     def validate_consent_records(
@@ -556,7 +560,7 @@ class CheckoutValidationService:
             package = selection.get('_package')
             if package:
                 CheckoutValidationService.validate_package_eligibility(
-                    package, user or event.organisation_id, attendee
+                    package, user, attendee
                 )
                 
                 if selection.get('product_selections'):
