@@ -95,6 +95,8 @@ class BookingPackage(PayableModel, HasAvailabilityMixin):
         @return: bool indicating if the package can be used
         """
         from apps.bookings.evaluator import payment_package_applies, PaymentPackageContext
+
+        assert attendee is not None, "Attendee must be provided to evaluate package eligibility."
         
         context = attendee.pricing_context()
         

@@ -465,6 +465,7 @@ class ProductDetailSerializer(ProductListSerializer):
             'stock_quantity': v.stock_quantity,
             'is_active': v.is_active,
             'url': request.build_absolute_uri(f"/api/products/list/{obj.product_id}/variants/{v.variant_id}/") if request else None,
+            'image_url': request.build_absolute_uri(v.resources.filter(tag='VARIANT_PHOTO_MAIN').first().image.url) if request and v.resources.filter(tag='VARIANT_PHOTO_MAIN').exists() else None,
         } for v in variants]
 
 
@@ -1068,17 +1069,42 @@ class OrderItemSerializer(serializers.ModelSerializer):
         return str(obj.total_price)
     
     @extend_schema_field({'type': 'object'})
-    def get_product_variant_details(self, obj) -> dict:
+    def get_product_variant_details(self, obj) -> Optional[dict]:
         """Return product variant details."""
         if not obj.product_variant:
             return None
-        
+
+        def _build_image_url(resource: Optional[Resource]) -> Optional[str]:
+            if not resource:
+                return None
+
+            image_field = getattr(resource, 'image', None) or getattr(resource, 'file', None)
+            if not image_field:
+                return None
+
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(image_field.url)
+            return image_field.url
+
         v = obj.product_variant
+        variant_main_image = v.resources.filter(tag='VARIANT_PHOTO_MAIN').first()
+        product_main_image = v.product.product_images.filter(tag='PRODUCT_PHOTO_MAIN').first()
+
+        variant_image_url = _build_image_url(variant_main_image)
+        product_image_url = _build_image_url(product_main_image)
+
         return {
             'variant_id': str(v.variant_id),
+            'variant_db_id': v.id,
+            'product_id': str(v.product.product_id),
+            'product_display_code': v.product.display_code,
             'product_title': v.product.title,
             'size': v.size,
             'color': v.color,
+            'image_url': variant_image_url or product_image_url,
+            'variant_image_url': variant_image_url,
+            'product_image_url': product_image_url,
         }
 
 
@@ -1107,13 +1133,14 @@ class OrderListSerializer(serializers.ModelSerializer):
     total_amount = serializers.SerializerMethodField()
     item_count = serializers.IntegerField(source='order_items.count', read_only=True)
     created_at = EventTimezoneField(read_only=True)
+    order_items = OrderItemSerializer(many=True, read_only=True)
     
     class Meta:
         model = Order
         fields = (
             'id', 'order_id', 'order_reference_id', 'customer', 'customer_name',
             'attendee', 'attendee_name', 'status', 'status_display',
-            'total_amount', 'item_count', 'created_at', '_links'
+            'total_amount', 'item_count', 'created_at', '_links', 'order_items'
         )
         read_only_fields = ('id', 'order_id', 'order_reference_id', 'created_at')
     

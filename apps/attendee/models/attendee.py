@@ -28,6 +28,7 @@ class AttendeeRelationship(models.TextChoices):
     OTHER = 'other', 'Other'
 
 class AttendeeStatus(models.TextChoices):
+    PENDING_PAYMENT = 'pending_payment', 'Pending Payment'
     REGISTERED = 'registered', 'Registered'
     CHECKED_IN = 'checked_in', 'Checked In'
     CANCELLED = 'cancelled', 'Cancelled'
@@ -206,19 +207,23 @@ class Attendee(SoftDeleteModel):
     def get_outstanding_payments(self):
         '''
         Retrieve a queryset of outstanding payments for this attendee.
+        
+        Outstanding payments are those with status PENDING or DRAFTING,
+        linked to this attendee's booking (if exists).
+        
+        Returns:
+            QuerySet of Payment objects with outstanding status, ordered by created_at.
         '''
-        if not self.user:
+        if not self.user or not self.booking:
             return Payment.objects.none()
         
         from apps.payments.models.payments import Payment, PaymentStatusChoices
 
-        booking_oustanding = Payment.objects.filter(
+        return Payment.objects.filter(
             target_type=ContentType.objects.get_for_model(self.booking.__class__),
             target_id=self.booking.pk,
-            status=PaymentStatusChoices.PENDING
-        )
-        
-        return booking_oustanding
+            status__in=[PaymentStatusChoices.PENDING, PaymentStatusChoices.DRAFTING]
+        ).order_by('-created_at')
 
     def invalidate(self, payment=None, final=False):
         '''

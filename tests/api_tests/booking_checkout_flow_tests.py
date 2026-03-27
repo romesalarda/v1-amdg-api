@@ -34,7 +34,7 @@ from apps.events.models import (
     EventQuestion, EventQuestionOption, EventQuestionTypeChoices, EventQuestionAnswer
 )
 from apps.attendee.models import (
-    Attendee, AttendeeRelationship,
+    Attendee, AttendeeRelationship, AttendeeStatus,
     Consent, AttendeeConsent,
     DietaryRequirement, AttendeeDietaryRequirement,
     MedicalCondition, AttendeeMedicalCondition,
@@ -447,6 +447,81 @@ class CheckoutAPITestCase(TestCase):
         # Verify NO tickets were created yet
         tickets = Ticket.objects.filter(payment=payment)
         self.assertEqual(tickets.count(), 0)
+
+    def test_checkout_bank_transfer_creates_booking_and_attendee_from_draft(self):
+        """Bank transfer checkout must create booking and attendee immediately for draft selections."""
+        intent = self.create_booking_intent(ticket_count=1)
+
+        response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.bank_method.id,
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Draft',
+                        'last_name': 'Bank',
+                        'date_of_birth': '1990-01-01',
+                        'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                    }
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], 'pending_verification')
+        self.assertIsNotNone(response.data.get('booking_id'))
+
+        payment = Payment.objects.get(payment_reference=response.data['payment_reference'])
+        self.assertIsNotNone(payment.target)
+        self.assertIsInstance(payment.target, Booking)
+
+        booking = payment.target
+        attendees = Attendee.objects.filter(booking=booking)
+        self.assertEqual(attendees.count(), 1)
+        self.assertEqual(attendees.first().status, AttendeeStatus.PENDING_PAYMENT)
+
+    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    def test_checkout_stripe_pending_creates_booking_and_attendee_from_draft(self, mock_create_intent):
+        """Stripe checkout (client_secret flow) must create booking and attendee before payment confirmation."""
+        intent = self.create_booking_intent(ticket_count=1)
+        mock_create_intent.return_value = SimpleNamespace(
+            id='pi_pending_123',
+            client_secret='pi_pending_secret_123'
+        )
+
+        response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.stripe_method.id,
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Draft',
+                        'last_name': 'Stripe',
+                        'date_of_birth': '1992-01-01',
+                        'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                    }
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], 'pending_payment')
+        self.assertIsNotNone(response.data.get('booking_id'))
+        self.assertIsNotNone(response.data.get('stripe_client_secret'))
+
+        payment = Payment.objects.get(payment_reference=response.data['payment_reference'])
+        self.assertEqual(payment.stripe_payment_intent, 'pi_pending_123')
+        self.assertIsNotNone(payment.target)
+        self.assertIsInstance(payment.target, Booking)
+
+        booking = payment.target
+        attendees = Attendee.objects.filter(booking=booking)
+        self.assertEqual(attendees.count(), 1)
+        self.assertEqual(attendees.first().status, AttendeeStatus.PENDING_PAYMENT)
     
     def test_verify_bank_transfer_creates_tickets(self):
         """Test that verifying bank transfer creates tickets."""

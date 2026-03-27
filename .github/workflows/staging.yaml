@@ -1,0 +1,91 @@
+name: Staging Tests
+
+on:
+  push:
+    branches: [staging]
+  pull_request:
+    branches: [staging]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file for CI
+        run: |
+          cat > .env << EOF
+          SECRET_KEY=test-secret-key-for-ci-only-not-for-production
+          DEBUG=True
+          ALLOWED_HOSTS=localhost,127.0.0.1,web
+          USE_POSTGRES=True
+          DB_ENGINE=django.db.backends.postgresql
+          DB_NAME=amdg_test_db
+          DB_USER=postgres
+          DB_PASSWORD=${{ secrets.TEST_DB_PASSWORD }}
+          DB_HOST=db
+          DB_PORT=5432
+          USE_S3=False
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          CELERY_BROKER_URL=redis://redis:6379/1
+          CORS_ALLOWED_ORIGINS=http://localhost:3000
+          CORS_ALLOW_ALL_ORIGINS=False
+          CSRF_TRUSTED_ORIGINS=http://localhost:3000
+          EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+          STRIPE_TEST_MODE=True
+          SENTRY_ENABLED=False
+          IMAGE_TAG=ci-build-${{ github.sha }}
+          EOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+
+      - name: Clean up old volumes
+        run: |
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml down -v || true
+          docker volume prune -f || true
+
+      - name: Build Docker containers
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml build
+
+      - name: Start services
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml up -d
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for database to be ready..."
+          timeout 60 bash -c 'until docker-compose -f docker-compose.yml -f docker-compose.ci.yml exec -T db pg_isready -U postgres; do sleep 2; done'
+          
+          echo "Waiting for Redis to be ready..."
+          timeout 30 bash -c 'until docker-compose -f docker-compose.yml -f docker-compose.ci.yml exec -T redis redis-cli ping; do sleep 2; done'
+          
+          echo "All services are ready!"
+
+      - name: Run migrations
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml exec -T web python manage.py migrate --noinput
+
+      - name: Run Django tests
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml exec -T web python manage.py test
+
+      - name: Cleanup
+        if: always()
+        run: |
+          export IMAGE_TAG=ci-build-${{ github.sha }}
+          docker-compose -f docker-compose.yml -f docker-compose.ci.yml down -v

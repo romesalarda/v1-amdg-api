@@ -2453,7 +2453,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     queryset = Order.objects.select_related(
         'customer', 'attendee', 'attendee__event', 'payment', 'created_by', 'updated_by'
-    ).prefetch_related('order_items__product_variant__product')
+    )
     permission_classes = [permissions.IsAuthenticated, IsOrderOwnerOrAdministrative]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]

@@ -20,6 +20,7 @@ from apps.common.api.serializers import (
     AvailabilityWindowSerializer, 
     ResourceSerializer
 )
+from apps.bookings.api.serializers.serializers import BookingDetailSerializer
 from core.utils.currency import format_price
 
 import pytz
@@ -521,6 +522,216 @@ class EventDetailSerializer(serializers.ModelSerializer):
             )
         
         return links
+
+
+class EventMyBookingEventSerializer(serializers.ModelSerializer):
+
+    timezone = serializers.CharField()
+
+    class Meta:
+        model = Event
+        fields = (
+            'event_id',
+            'display_identifier',
+            'title',
+            'status',
+            'start_datetime',
+            'end_datetime',
+            'timezone',
+        )
+        read_only_fields = fields
+        extra_kwargs = {
+            'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
+        }
+
+
+class EventMyBookingBookingSerializer(serializers.Serializer):
+    booking = BookingDetailSerializer(read_only=True)
+    is_booking_owner = serializers.BooleanField(read_only=True)
+    selection_reason = serializers.ChoiceField(
+        choices=['made_by', 'attendee_linked'],
+        read_only=True,
+    )
+    can_manage_all_attendees = serializers.BooleanField(read_only=True)
+
+
+class EventMyBookingResponseSerializer(serializers.Serializer):
+    event = EventMyBookingEventSerializer(read_only=True)
+    primary_booking_reference = serializers.CharField(read_only=True)
+    bookings = EventMyBookingBookingSerializer(many=True, read_only=True)
+
+
+class EventMyOutstandingPaymentSerializer(serializers.Serializer):
+    """
+    Serializer for outstanding payments with associated booking details.
+
+    Represents a payment that is pending/unpaid with full booking information,
+    including attendees and tickets.
+    """
+    # Payment fields
+    payment_reference = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    amount = serializers.SerializerMethodField()
+    currency = serializers.CharField(read_only=True)
+    created_at = serializers.DateTimeField(
+        read_only=True,
+        help_text='When the payment was created'
+    )
+    payment_method = serializers.SerializerMethodField(
+        help_text='Payment method type (e.g., stripe, bank, cash, free)'
+    )
+    payment_method_title = serializers.SerializerMethodField(
+        help_text='Configured payment method title'
+    )
+    payment_instructions = serializers.SerializerMethodField(
+        help_text='Human-readable payment instructions for the attendee'
+    )
+    payment_method_details = serializers.SerializerMethodField(
+        help_text='Method-specific details payload (e.g., bank transfer details)'
+    )
+
+    # Booking fields (from associated booking or intent)
+    booking = EventMyBookingBookingSerializer(read_only=True)
+    has_booking = serializers.SerializerMethodField(
+        help_text='Whether this payment is already linked to a booking'
+    )
+    checkout_intent_id = serializers.SerializerMethodField(
+        help_text='Checkout intent ID if payment is pending checkout completion'
+    )
+    metadata_attendees = serializers.SerializerMethodField(
+        help_text='Attendee preview extracted from checkout metadata when no booking exists'
+    )
+
+    def get_amount(self, obj):
+        """Format amount as string with currency (e.g., '100.00 GBP')."""
+        if hasattr(obj, 'base_amount') and obj.base_amount:
+            amount_value = obj.base_amount.amount
+            currency = obj.base_amount.currency if hasattr(obj.base_amount, 'currency') else 'GBP'
+            return f"{amount_value} {currency}"
+        return None
+
+    def get_payment_method(self, obj):
+        """Get the payment method type."""
+        if obj.method:
+            if hasattr(obj.method, 'method_type'):
+                return obj.method.method_type
+            return str(obj.method)
+        return None
+
+    def get_payment_method_title(self, obj):
+        """Get payment method title if configured."""
+        if obj.method and getattr(obj.method, 'title', None):
+            return obj.method.title
+        return None
+
+    def get_payment_method_details(self, obj):
+        """Expose method-provided details to frontend for actionable payment guidance."""
+        details = {}
+        if obj.method and isinstance(getattr(obj.method, 'provided_details', None), dict):
+            details.update(obj.method.provided_details)
+
+        if obj.bank_transfer_reference:
+            details['bank_transfer_reference'] = obj.bank_transfer_reference
+
+        return details or None
+
+    def get_payment_instructions(self, obj):
+        """Provide human-readable instructions based on payment method type."""
+        method = getattr(obj, 'method', None)
+        if not method:
+            return 'Complete payment to finalize your booking.'
+
+        method_type = getattr(method, 'method_type', None)
+
+        if method_type == 'BANK_TRANSFER':
+            reference = obj.bank_transfer_reference or 'N/A'
+            return (
+                f"Use bank transfer and include reference {reference}. "
+                f"Your booking will finalize once payment is verified."
+            )
+
+        if method_type == 'STRIPE':
+            return 'Complete card payment to finalize your booking immediately.'
+
+        if method_type == 'CASH':
+            return 'Follow event instructions for cash payment confirmation.'
+
+        return 'Follow the selected payment method instructions to finalize your booking.'
+
+    def get_has_booking(self, obj):
+        """Check if this payment is linked to a booking."""
+        return obj.target_id is not None and obj.target_type and obj.target_type.model == 'booking'
+
+    def get_checkout_intent_id(self, obj):
+        """Get the checkout intent ID from metadata if present."""
+        if obj.metadata and isinstance(obj.metadata, dict):
+            return obj.metadata.get('checkout_intent_id')
+        return None
+
+    def get_metadata_attendees(self, obj):
+        """Return attendee names from payment metadata for intent-based checkouts."""
+        if not obj.metadata or not isinstance(obj.metadata, dict):
+            return []
+
+        attendees = obj.metadata.get('attendees')
+        checkout_attendees = obj.metadata.get('checkout_attendees')
+
+        names = []
+
+        if isinstance(attendees, list):
+            for attendee in attendees:
+                if not isinstance(attendee, dict):
+                    continue
+                first_name = (attendee.get('first_name') or '').strip()
+                last_name = (attendee.get('last_name') or '').strip()
+                full_name = f"{first_name} {last_name}".strip()
+                if full_name:
+                    names.append(full_name)
+
+        if isinstance(checkout_attendees, list):
+            for checkout_attendee in checkout_attendees:
+                if not isinstance(checkout_attendee, dict):
+                    continue
+
+                attendee_draft = checkout_attendee.get('attendee_draft')
+                if not isinstance(attendee_draft, dict):
+                    continue
+
+                first_name = (attendee_draft.get('first_name') or '').strip()
+                last_name = (attendee_draft.get('last_name') or '').strip()
+                full_name = f"{first_name} {last_name}".strip()
+                if full_name:
+                    names.append(full_name)
+
+        # De-duplicate while preserving order
+        deduped = []
+        for name in names:
+            if name and name not in deduped:
+                deduped.append(name)
+        return deduped
+
+    def to_representation(self, instance):
+        """
+        Customize representation to include booking data if available.
+        """
+        data = super().to_representation(instance)
+
+        # If this payment is linked to a booking, serialize it
+        if instance.target_id and instance.target_type and instance.target_type.model == 'booking':
+            booking = instance.target
+            if booking is not None:
+                request = self.context.get('request')
+                is_owner = bool(request and booking.made_by_id == request.user.id)
+                booking_item = {
+                    'booking': booking,
+                    'is_booking_owner': is_owner,
+                    'selection_reason': 'made_by' if is_owner else 'attendee_linked',
+                    'can_manage_all_attendees': is_owner,
+                }
+                serializer = EventMyBookingBookingSerializer(booking_item)
+                data['booking'] = serializer.data
+
+        return data
 
 class EventCreateUpdateSerializer(serializers.ModelSerializer):
     timezone = serializers.CharField()
