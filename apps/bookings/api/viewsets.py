@@ -79,6 +79,12 @@ from .permissions import (
     IsAdministrativeStaff, IsAdministrativeStaffOnly, IsBookingOwnerOrAdministrative,
     IsTicketOwnerOrAdministrative, IsReadOnly,
 )
+from django.utils import timezone
+from apps.bookings.services import BookingCheckoutFinalizer
+from apps.payments.services.stripe.payment_intents import PaymentIntentService
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 class StandardPagination(PageNumberPagination):
@@ -419,12 +425,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         This is the unified checkout endpoint that handles the complete registration flow.
         All operations are atomic - if any step fails, everything rolls back.
         """
-        from django.utils import timezone
-        from .serializers import CheckoutSerializer
-        from apps.bookings.services import BookingCheckoutFinalizer
-        from apps.payments.services.stripe.payment_intents import PaymentIntentService
-        import logging
-        logger = logging.getLogger(__name__)
         
         # Validate input data
         serializer = CheckoutSerializer(data=request.data, context={'request': request})
