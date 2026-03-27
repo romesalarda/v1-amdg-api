@@ -51,9 +51,16 @@ from apps.bookings.models import Booking
 
 from apps.events.services import OutstandingPaymentsService
 from apps.events.api.filtersets import (
+    EventAuthorizationFilterSet,
     EventQuestionAnswerFilterSet,
+    EventQuestionFilterSet,
     EventMyBookingFilterSet,
     EventMyOutstandingPaymentsFilterSet,
+    EventPermissionAssignmentFilterSet,
+    EventReviewFilterSet,
+    EventRoleAssignmentFilterSet,
+    EventStaffFilterSet,
+    EventVenueFilterSet,
 )
 
 from apps.events.api.pagination import StandardPagination
@@ -3758,7 +3765,7 @@ class EventAuthorizationViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event__event_id', 'status', 'reviewed_by']
+    filterset_class = EventAuthorizationFilterSet
     ordering_fields = ['reviewed_at']
     ordering = ['-reviewed_at']
     
@@ -3910,7 +3917,7 @@ class EventPermissionAssignmentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user', 'permission', 'event__event_id']
+    filterset_class = EventPermissionAssignmentFilterSet
 
     def perform_create(self, serializer):
         event = serializer.validated_data.get('event')
@@ -4064,7 +4071,7 @@ class EventRoleAssignmentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user', 'role', 'event__event_id']
+    filterset_class = EventRoleAssignmentFilterSet
 
     def perform_create(self, serializer):
         event = serializer.validated_data.get('event')
@@ -4144,7 +4151,7 @@ class EventStaffViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user', 'event__event_id']
+    filterset_class = EventStaffFilterSet
 
     def perform_create(self, serializer):
         serializer.save(assigned_by=self.request.user)
@@ -4478,7 +4485,7 @@ class EventReviewViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event', 'approved', 'rating', 'event__event_id']
+    filterset_class = EventReviewFilterSet
     ordering_fields = ['created_at', 'rating']
     ordering = ['-created_at']
     
@@ -4580,7 +4587,7 @@ class EventQuestionViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event', 'question_type', 'required', 'public', 'event__event_id']
+    filterset_class = EventQuestionFilterSet
     ordering_fields = ['order', 'created_at']
     ordering = ['order']
     
@@ -5494,7 +5501,7 @@ class EventVenueViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['event__event_id', 'venue']
+    filterset_class = EventVenueFilterSet
     search_fields = ['event__title', 'event__display_code', 'venue__poi__name', 'venue__poi__city']
     ordering_fields = ['event__start_datetime', 'venue__poi__name']
     ordering = ['-event__start_datetime']

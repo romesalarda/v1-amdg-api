@@ -603,6 +603,12 @@ class PaymentMethodViewSet(viewsets.ModelViewSet):
                 description='Filter discounts by event UUID'
             ),
             OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Filter discounts by event UUID (alias of event__event_id)'
+            ),
+            OpenApiParameter(
                 name='discount_type',
                 type=OpenApiTypes.STR,
                 location=OpenApiParameter.QUERY,
@@ -663,7 +669,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
     Provides full CRUD for discount management with event-scoped filtering.
     
     Event Filtering:
-    - Use ?event=<event_id> or ?event__event_id=<event_id> to filter discounts
+    - Use ?event=<event_id>, ?event_id=<event_uuid>, or ?event__event_id=<event_uuid> to filter discounts
     - Only shows discounts targeting objects within the specified event
     - Event managers can only manage discounts for their events
     """
@@ -684,7 +690,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
         
         - Superusers/staff see all discounts
         - Event managers see only discounts for events they manage
-        - Supports ?event=<id> and ?event__event_id=<uuid> query parameters
+        - Supports ?event=<id>, ?event_id=<uuid>, and ?event__event_id=<uuid> query parameters
         """
         queryset = super().get_queryset()
         user = self.request.user
@@ -695,7 +701,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
         
         # Check for event filter in query params
         event_id = self.request.query_params.get('event')
-        event_uuid = self.request.query_params.get('event__event_id')
+        event_uuid = self.request.query_params.get('event_id') or self.request.query_params.get('event__event_id')
         
         if event_id or event_uuid:
             # Event-specific filtering handled by filterset
@@ -780,6 +786,12 @@ class DiscountViewSet(viewsets.ModelViewSet):
                 description='Filter rules by event UUID'
             ),
             OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Filter rules by event UUID (alias of event__event_id)'
+            ),
+            OpenApiParameter(
                 name='discount',
                 type=OpenApiTypes.INT,
                 location=OpenApiParameter.QUERY,
@@ -844,7 +856,7 @@ class DiscountRuleViewSet(viewsets.ModelViewSet):
     Manages rules for discount application with event-scoped filtering.
     
     Event Filtering:
-    - Use ?event=<event_id> or ?event__event_id=<event_id> to filter rules
+    - Use ?event=<event_id>, ?event_id=<event_uuid>, or ?event__event_id=<event_uuid> to filter rules
     - Filters based on the event of the discount's target object
     """
     
@@ -864,7 +876,7 @@ class DiscountRuleViewSet(viewsets.ModelViewSet):
         
         - Superusers/staff see all rules
         - Event managers see only rules for discounts targeting their events
-        - Supports ?event=<id> and ?event__event_id=<uuid> query parameters
+        - Supports ?event=<id>, ?event_id=<uuid>, and ?event__event_id=<uuid> query parameters
         """
         queryset = super().get_queryset()
         user = self.request.user
@@ -875,7 +887,7 @@ class DiscountRuleViewSet(viewsets.ModelViewSet):
         
         # Check for event filter in query params
         event_id = self.request.query_params.get('event')
-        event_uuid = self.request.query_params.get('event__event_id')
+        event_uuid = self.request.query_params.get('event_id') or self.request.query_params.get('event__event_id')
         
         if event_id or event_uuid:
             # Event-specific filtering

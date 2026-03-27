@@ -53,7 +53,7 @@ class BookingIntentFilterSet(filters.FilterSet):
         help_text='Filter by intent status'
     )
     
-    event = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='event__event_id',
         help_text='Filter by event UUID'
     )
@@ -97,7 +97,7 @@ class BookingIntentFilterSet(filters.FilterSet):
         fields = [
             'status', 'event', 'made_by', 'intended_ticket_count',
             'created_after', 'created_before', 'expires_after', 'expires_before',
-            'is_active', 'event__event_id'
+            'is_active'
         ]
     
     def filter_is_active(self, queryset, name, value):
@@ -156,7 +156,7 @@ class BookingFilterSet(filters.FilterSet):
         field_name='event__id',
         help_text="Filter by event ID"
     )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='event__event_id',
         help_text="Filter by event UUID"
     )
@@ -277,7 +277,7 @@ class TicketFilterSet(filters.FilterSet):
         help_text="Filter by attendee database ID"
     )
 
-    event = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='attendee__booking__event__event_id',
         help_text="Filter by event UUID (through attendee's booking)"
     )
@@ -356,13 +356,9 @@ class TicketTypeFilterSet(filters.FilterSet):
     """
     
     # Event filter
-    event = filters.NumberFilter(
-        field_name='event__id',
-        help_text="Filter by event ID"
-    )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='event__event_id',
-        help_text="Filter by event UUID"
+        help_text="Filter by event ID"
     )
     
     # Scope filter
@@ -457,7 +453,7 @@ class BookingPackageFilterSet(filters.FilterSet):
         field_name='event__id',
         help_text="Filter by event ID"
     )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='event__event_id',
         help_text="Filter by event UUID"
     )
@@ -552,7 +548,7 @@ class EventAlternativeSigninFilterSet(filters.FilterSet):
         field_name='event__id',
         help_text="Filter by event ID"
     )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='event__event_id',
         help_text="Filter by event UUID"
     )

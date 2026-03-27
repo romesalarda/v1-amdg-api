@@ -88,10 +88,6 @@ class EventProductCategoryFilterSet(filters.FilterSet):
         field_name='event__id',
         help_text="Filter by event ID"
     )
-    event__event_id = filters.UUIDFilter(
-        field_name='event__event_id',
-        help_text="Filter by event UUID"
-    )
     
     category = filters.NumberFilter(
         field_name='category__id',
@@ -116,7 +112,7 @@ class EventProductCategoryFilterSet(filters.FilterSet):
     
     class Meta:
         model = EventProductCategory
-        fields = ['event', 'event__event_id', 'category', 'category__name', 'added_after', 'added_before']
+        fields = ['event', 'category', 'category__name', 'added_after', 'added_before']
 
 
 class ProductFilterSet(filters.FilterSet):
@@ -162,10 +158,6 @@ class ProductFilterSet(filters.FilterSet):
     event = filters.NumberFilter(
         field_name='event__id',
         help_text="Filter by event ID"
-    )
-    event__event_id = filters.UUIDFilter(
-        field_name='event__event_id',
-        help_text="Filter by event UUID"
     )
     
     # Category filters
@@ -262,7 +254,7 @@ class ProductFilterSet(filters.FilterSet):
         model = Product
         fields = [
             'title', 'title__contains', 'title__startswith',
-            'event', 'event__event_id',
+            'event',
             'category', 'category__name',
             'min_price', 'max_price', 'price',
             'verified', 'is_active',
@@ -429,10 +421,6 @@ class ProductVariantFilterSet(filters.FilterSet):
         field_name='product__event__id',
         help_text="Filter by event ID"
     )
-    event__event_id = filters.UUIDFilter(
-        field_name='product__event__event_id',
-        help_text="Filter by event UUID"
-    )
     
     class Meta:
         model = ProductVariant
@@ -444,7 +432,7 @@ class ProductVariantFilterSet(filters.FilterSet):
             'verified', 'is_active',
             'max_purchase_quantity',
             'added_after', 'added_before',
-            'event', 'event__event_id'
+            'event',
         ]
     
     def filter_in_stock(self, queryset, name, value):
@@ -557,11 +545,7 @@ class OrderFilterSet(filters.FilterSet):
         field_name='attendee__event__id',
         help_text="Filter by event ID"
     )
-    event__event_id = filters.UUIDFilter(
-        field_name='attendee__event__event_id',
-        help_text="Filter by event UUID"
-    )
-    
+
     # Date range filters
     created_after = filters.DateTimeFilter(
         field_name='created_at',
@@ -636,7 +620,7 @@ class OrderFilterSet(filters.FilterSet):
             'status', 'status__in',
             'customer', 'customer__email', 'customer__username',
             'attendee', 'attendee_id', 'attendee_email',
-            'event', 'event__event_id',
+            'event',
             'created_after', 'created_before', 'created_date',
             'updated_after', 'updated_before',
             'min_amount', 'max_amount', 'amount',
