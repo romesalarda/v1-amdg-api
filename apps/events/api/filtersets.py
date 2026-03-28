@@ -4,7 +4,7 @@ from django.contrib.contenttypes.models import ContentType
 from apps.events.models import (
     Event, EventType, EventAuthorization, EventPermission,
     EventPermissionAssignment, EventRole, EventRoleAssignment,
-    EventStaff, EventReview, EventQuestion, EventVenue,
+    EventStaff, EventStaffInvite, EventReview, EventQuestion, EventVenue,
     EventQuestionAnswer
 )
 from django.utils import timezone
@@ -408,7 +408,7 @@ class EventFilterSet(filters.FilterSet):
 class EventAuthorizationFilterSet(filters.FilterSet):
     status = filters.MultipleChoiceFilter(choices=EventAuthorization._meta.get_field('status').choices)
     event_title = filters.CharFilter(field_name='event__title', lookup_expr='icontains')
-    event_id = filters.UUIDFilter(field_name='event__event_id')
+    event = filters.CharFilter(field_name='event__url_safe_title')
     search = filters.CharFilter(method='filter_search')
     
     class Meta:
@@ -459,7 +459,7 @@ class EventRoleFilterSet(filters.FilterSet):
 class EventStaffFilterSet(filters.FilterSet):
     user_email = filters.CharFilter(field_name='user__email', lookup_expr='icontains')
     user_name = filters.CharFilter(method='filter_user_name')
-    event_id = filters.UUIDFilter(field_name='event__event_id')
+    event = filters.CharFilter(field_name='event__url_safe_title')
     search = filters.CharFilter(method='filter_search')
     
     class Meta:
@@ -486,7 +486,7 @@ class EventReviewFilterSet(filters.FilterSet):
     rating_min = filters.NumberFilter(field_name='rating', lookup_expr='gte')
     rating_max = filters.NumberFilter(field_name='rating', lookup_expr='lte')
     event_title = filters.CharFilter(field_name='event__title', lookup_expr='icontains')
-    event_id = filters.UUIDFilter(field_name='event__event_id')
+    event = filters.CharFilter(field_name='event__url_safe_title')
     user_email = filters.CharFilter(field_name='user__email', lookup_expr='icontains')
     search = filters.CharFilter(method='filter_search')
     
@@ -505,7 +505,7 @@ class EventReviewFilterSet(filters.FilterSet):
 class EventQuestionFilterSet(filters.FilterSet):
     question_title = filters.CharFilter(lookup_expr='icontains')
     question_body = filters.CharFilter(lookup_expr='icontains')
-    event_id = filters.UUIDFilter(field_name='event__event_id')
+    event = filters.CharFilter(field_name='event__url_safe_title')
     search = filters.CharFilter(method='filter_search')
     
     class Meta:
@@ -564,13 +564,9 @@ class EventQuestionAnswerFilterSet(filters.FilterSet):
     )
     
     # Event filter (shortcut through question)
-    event = filters.NumberFilter(
-        field_name='question__event__id',
-        help_text="Filter by event ID"
-    )
-    event_id = filters.UUIDFilter(
-        field_name='question__event__event_id',
-        help_text="Filter by event UUID"
+    event = filters.CharFilter(
+        field_name='question__event__url_safe_title',
+        help_text="Filter by event URL-safe title"
     )
     
     # Answer text search
@@ -590,7 +586,7 @@ class EventQuestionAnswerFilterSet(filters.FilterSet):
         fields = [
             'question', 'question__event',
             'attendee', 'attendee_id', 'attendee_email',
-            'event', 'event_id',
+            'event',
             'answer_text', 'search'
         ]
     
@@ -603,24 +599,32 @@ class EventQuestionAnswerFilterSet(filters.FilterSet):
 
 
 class EventPermissionAssignmentFilterSet(filters.FilterSet):
-    event_id = filters.UUIDFilter(field_name='event__event_id')
+    event = filters.CharFilter(field_name='event__url_safe_title')
 
     class Meta:
         model = EventPermissionAssignment
-        fields = ['event', 'user', 'permission', 'event_id']
+        fields = ['event', 'user', 'permission']
 
 
 class EventRoleAssignmentFilterSet(filters.FilterSet):
-    event_id = filters.UUIDFilter(field_name='event__event_id')
+    event = filters.CharFilter(field_name='event__url_safe_title')
 
     class Meta:
         model = EventRoleAssignment
-        fields = ['event', 'user', 'role', 'event_id']
+        fields = ['event', 'user', 'role']
 
 
 class EventVenueFilterSet(filters.FilterSet):
-    event_id = filters.UUIDFilter(field_name='event__event_id')
+    event = filters.CharFilter(field_name='event__url_safe_title')
 
     class Meta:
         model = EventVenue
-        fields = ['venue', 'event_id']
+        fields = ['venue', 'event']
+
+
+class EventStaffInviteFilterSet(filters.FilterSet):
+    event = filters.CharFilter(field_name='event__url_safe_title')
+
+    class Meta:
+        model = EventStaffInvite
+        fields = ['event', 'target_user', 'accepted']

@@ -50,7 +50,7 @@ def _get_base_queryset(
     Get base event queryset with common filters applied.
     
     Args:
-        event_id: Optional event UUID to filter to specific event
+        event_id: Optional event URL-safe title to filter to specific event
         event_type_id: Optional event type ID
         organization_id: Optional organization ID
         status: Optional event status filter
@@ -65,7 +65,7 @@ def _get_base_queryset(
         queryset = queryset.filter(deleted_at__isnull=True)
     
     if event_id:
-        queryset = queryset.filter(event_id=event_id)
+        queryset = queryset.filter(url_safe_title=event_id)
     
     if event_type_id:
         queryset = queryset.filter(event_type_id=event_type_id)

@@ -89,7 +89,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     timezone = TimeZoneField(default='Europe/London')
 
     title = models.CharField(max_length=200, help_text=_("display title")) # display title
-    url_safe_title = models.CharField(max_length=200, blank=True, null=True, help_text=_("URL safe title")) # URL safe title
+    url_safe_title = models.CharField(max_length=200, unique=True, db_index=True, blank=True, null=True, help_text=_("URL safe title")) # URL safe title
     
     short_description = models.TextField(blank=True, null=True)
     long_description = models.TextField(blank=True, null=True)
@@ -118,6 +118,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     class Meta:
         ordering = ['-created_at']
         indexes = [
+            models.Index(fields=['url_safe_title']),
             models.Index(fields=['event_id']),
             models.Index(fields=['display_code']),
             models.Index(fields=['display_identifier']),
@@ -135,7 +136,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         self.full_clean()
         if self.title:
             self.title = self.title.strip()
-            self.url_safe_title = slugify(self.title)   
+            self.url_safe_title = slugify(f"{self.title}-{str(self.event_id)[:8]}")[:200]
             
         if self.display_identifier is None or self.display_identifier == '':
             self.display_identifier = str(str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]).upper()

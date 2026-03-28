@@ -10,6 +10,8 @@ Functions are designed to be:
 - Extensible (easy to add new statistics)
 - Testable (pure functions with clear inputs/outputs)
 """
+import uuid
+
 from django.db.models import Count, Q, Avg, F, Value, CharField, Case, When, IntegerField
 from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, ExtractYear
 from django.utils import timezone
@@ -43,7 +45,16 @@ def _get_base_queryset(event_id: Optional[str] = None, include_deleted: bool = F
         queryset = queryset.filter(deleted_at__isnull=True)
     
     if event_id:
-        queryset = queryset.filter(event__event_id=event_id)
+        # support UUIDs or url_safe_titles
+
+        try:
+            uuid_obj = uuid.UUID(event_id, version=4)
+            queryset = queryset.filter(event__event_id=event_id)
+
+        except ValueError:
+            queryset = queryset.filter(event__url_safe_title=event_id)
+
+
     
     return queryset
 
