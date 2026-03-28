@@ -32,10 +32,10 @@ from apps.events.api.serializers.statistics import (
 
 # Common OpenAPI parameters
 EVENT_ID_PARAM = OpenApiParameter(
-    name='event_id',
+    name='event',
     type=OpenApiTypes.STR,
     location=OpenApiParameter.QUERY,
-    description='Filter by specific event ID',
+    description='Filter by specific event URL-safe title',
     required=False
 )
 
@@ -143,7 +143,7 @@ SHOW_BREAKDOWN_PARAM = OpenApiParameter(
     default=False
 )
 
-import uuid
+
 
 class EventStatisticsViewSet(viewsets.GenericViewSet):
     """
@@ -162,13 +162,11 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         
         filters = {}
         
-        if request.query_params.get('event_id'):
-            try:
-                event_id = request.query_params['event_id']
-                uuid_obj = uuid.UUID(event_id, version=4)
-                filters['event_id'] = str(uuid_obj)
-            except ValueError:
-                raise ValidationError({'event_id': 'Invalid UUID format for event_id.'})
+        if request.query_params.get('event'):
+            event = request.query_params['event']
+            if not event or not isinstance(event, str) or len(event.strip()) == 0:
+                raise ValidationError({'event': 'Invalid format for event.'})
+            filters['event_id'] = event.strip()
             
         if request.query_params.get('event_type_id'):
             filters['event_type_id'] = int(request.query_params['event_type_id'])

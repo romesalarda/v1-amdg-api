@@ -24,7 +24,20 @@ from apps.bookings.api.serializers.serializers import BookingDetailSerializer
 from core.utils.currency import format_price
 
 import pytz
+import uuid
 User = get_user_model()
+
+
+def get_event_by_identifier(identifier):
+    """Resolve event by UUID event_id or URL-safe title."""
+    if not identifier:
+        raise Event.DoesNotExist
+
+    try:
+        uuid.UUID(str(identifier))
+        return Event.objects.get(event_id=identifier)
+    except (ValueError, TypeError, Event.DoesNotExist):
+        return Event.objects.get(url_safe_title=identifier)
 
 
 class EventTypeSerializer(serializers.ModelSerializer):
@@ -106,7 +119,7 @@ class EventSettingsSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         return links
@@ -921,7 +934,7 @@ class EventAuthorizationSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         if obj.reviewed_by:
@@ -978,6 +991,7 @@ class EventPermissionSerializer(serializers.ModelSerializer):
 
 
 class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
     event_title = serializers.CharField(source='event.title', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     permission_name = serializers.CharField(source='permission.name', read_only=True)
@@ -1028,7 +1042,7 @@ class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         if obj.user:
@@ -1074,6 +1088,7 @@ class EventPermissionAssignmentSerializer(serializers.ModelSerializer):
 
 
 class EventReviewSerializer(serializers.ModelSerializer):
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
     event_title = serializers.CharField(source='event.title', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     user_full_name = serializers.SerializerMethodField()
@@ -1113,7 +1128,7 @@ class EventReviewSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         if obj.user:
@@ -1200,6 +1215,7 @@ class EventRoleSerializer(serializers.ModelSerializer):
 
 
 class EventRoleAssignmentSerializer(serializers.ModelSerializer):
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
     event_title = serializers.CharField(source='event.title', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     role_name = serializers.CharField(source='role.name', read_only=True)
@@ -1241,7 +1257,7 @@ class EventRoleAssignmentSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         if obj.user:
@@ -1322,6 +1338,7 @@ class EventStaffAvailabilitySerializer(serializers.ModelSerializer):
 
 
 class EventStaffSerializer(serializers.ModelSerializer):
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
     event_title = serializers.CharField(source='event.title', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     assigned_by_email = serializers.EmailField(source='assigned_by.email', read_only=True)
@@ -1362,7 +1379,7 @@ class EventStaffSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         if obj.user:
@@ -1402,10 +1419,11 @@ class EventQuestionOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventQuestionOption
         fields = ('id', 'question', 'option_text', 'order', 'created_at', 'updated_at', '_links')
-        read_only_fields = ('id', 'question', 'created_at', 'updated_at')  # question is read-only for nested writes
+        read_only_fields = ('id', 'created_at', 'updated_at')
         extra_kwargs = {
             'created_at': {'default': None},
             'updated_at': {'default': None},
+            'question': {'required': False},
         }
     
     @extend_schema_field({
@@ -1442,6 +1460,15 @@ class EventQuestionOptionSerializer(serializers.ModelSerializer):
         return value.strip()
 
 
+class EventQuestionNestedOptionSerializer(serializers.ModelSerializer):
+    """Nested option serializer used for create/update question payloads."""
+
+    class Meta:
+        model = EventQuestionOption
+        fields = ('id', 'option_text', 'order')
+        read_only_fields = ('id',)
+
+
 class EventQuestionSerializer(serializers.ModelSerializer):
     """
     Serializer for EventQuestion with nested writable options.
@@ -1455,8 +1482,9 @@ class EventQuestionSerializer(serializers.ModelSerializer):
     - Existing options not in payload: deleted
     """
     question_type_display = serializers.CharField(source='get_question_type_display', read_only=True)
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
     event_title = serializers.CharField(source='event.title', read_only=True)
-    options = EventQuestionOptionSerializer(many=True, read_only=False, required=False)
+    options = EventQuestionNestedOptionSerializer(many=True, read_only=False, required=False)
     _links = serializers.SerializerMethodField()
     
     class Meta:
@@ -1496,7 +1524,7 @@ class EventQuestionSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         return links
@@ -1927,7 +1955,7 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
 
 class EventVenueSerializer(serializers.ModelSerializer):
     """Serializer for EventVenue model with HATEOAS support."""
-    
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
     venue_name = serializers.CharField(source='venue.poi.name', read_only=True)
     venue_address = serializers.CharField(source='venue.poi.address', read_only=True)
     venue_city = serializers.CharField(source='venue.poi.city', read_only=True)
@@ -1965,7 +1993,7 @@ class EventVenueSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         if obj.venue:
@@ -1978,8 +2006,8 @@ class EventVenueSerializer(serializers.ModelSerializer):
 
 class EventStaffInviteSerializer(serializers.ModelSerializer):
     """Serializer for EventStaffInvite model with HATEOAS support."""
-    
-    event = serializers.UUIDField(source='event.event_id', read_only=True)
+
+    event = serializers.CharField(source='event.url_safe_title', read_only=True)
     event_title = serializers.CharField(source='event.title', read_only=True)
     event_display_code = serializers.CharField(source='event.display_code', read_only=True)
     target_user_email = serializers.EmailField(source='target_user.email', read_only=True)
@@ -2038,7 +2066,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
     })
     def get__links(self, obj):
         request = self.context.get('request')
-        event_id = self.context.get('event_id') or (obj.event.event_id if obj.event else None)
+        event_id = self.context.get('event') or self.context.get('event_id') or (obj.event.url_safe_title if obj.event else None)
         if not request or not event_id:
             return {}
         
@@ -2050,7 +2078,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         if obj.target_user:
@@ -2097,15 +2125,15 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
     def validate(self, data):
         """Validate the entire invite creation/update."""
         # Get event from context (set by viewset)
-        event_id = self.context.get('event_id')
+        event_id = self.context.get('event') or self.context.get('event_id')
         if not event_id and self.instance:
-            event_id = self.instance.event.event_id
+            event_id = self.instance.event.url_safe_title
         
         if not event_id:
             raise serializers.ValidationError("Event context is required.")
         
         try:
-            event = Event.objects.get(event_id=event_id)
+            event = get_event_by_identifier(event_id)
         except Event.DoesNotExist:
             raise serializers.ValidationError("Event with this ID does not exist.")
         
@@ -2180,7 +2208,7 @@ class EventStaffInviteListSerializer(serializers.ModelSerializer):
     
     event_title = serializers.CharField(source='event.title', read_only=True)
     event_display_code = serializers.CharField(source='event.display_code', read_only=True)
-    event = serializers.UUIDField(source='event.event_id', read_only=True)
+    event = serializers.CharField(source='event.url_safe_title', read_only=True)
 
     target_user_email = serializers.EmailField(source='target_user.email', read_only=True)
     target_user_name = serializers.SerializerMethodField()
@@ -2216,7 +2244,7 @@ class EventStaffInviteListSerializer(serializers.ModelSerializer):
     })
     def get__links(self, obj):
         request = self.context.get('request')
-        event_id = self.context.get('event_id') or (obj.event.event_id if obj.event else None)
+        event_id = self.context.get('event') or self.context.get('event_id') or (obj.event.url_safe_title if obj.event else None)
         if not request or not event_id:
             return {}
         
@@ -2228,7 +2256,7 @@ class EventStaffInviteListSerializer(serializers.ModelSerializer):
         
         if obj.event:
             links['event'] = request.build_absolute_uri(
-                f"/api/event/list/{obj.event.event_id}/"
+                f"/api/event/list/{obj.event.url_safe_title}/"
             )
         
         if obj.is_valid:

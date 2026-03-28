@@ -343,6 +343,44 @@ class CannotTargetEventCreator(permissions.BasePermission):
     """
     message = "Event creator access is immutable"
 
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+
+        # For create/update payloads, block when target user is event creator.
+        target_user_id = request.data.get('user')
+        if target_user_id in (None, ''):
+            return True
+
+        try:
+            target_user_id = int(target_user_id)
+        except (TypeError, ValueError):
+            return True
+
+        event = None
+
+        # Update/partial update/destroy paths can resolve event from instance.
+        if getattr(view, 'action', None) in ('update', 'partial_update', 'destroy'):
+            try:
+                instance = view.get_object()
+                event = getattr(instance, 'event', None)
+            except Exception:
+                event = None
+
+        # Create paths should resolve event from payload.
+        if event is None and request.data.get('event'):
+            from apps.events.models import Event
+
+            event_identifier = request.data.get('event')
+            event = Event.objects.filter(event_id=event_identifier).first()
+            if event is None:
+                event = Event.objects.filter(url_safe_title=event_identifier).first()
+
+        if event and target_user_id == event.created_by_id:
+            return False
+
+        return True
+
     def has_object_permission(self, request, view, obj):
         if request.method in permissions.SAFE_METHODS:
             return True

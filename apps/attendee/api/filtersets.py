@@ -64,7 +64,7 @@ class AttendeeFilterSet(django_filters.FilterSet):
     self_registered = django_filters.BooleanFilter(method='filter_self_registered')
     
     # Event filters
-    event = django_filters.UUIDFilter(field_name='event__event_id')
+    event = django_filters.CharFilter(field_name='event__url_safe_title')
     event_title = django_filters.CharFilter(field_name='event__title', lookup_expr='icontains')
     
     # Booking filters
