@@ -755,7 +755,7 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
         fields = (
             'event_id', 'display_code', 'title', 'status', 'event_type', 'timezone',
             'short_description', 'long_description', 'what_to_bring', 'important_information',
-            'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance',
+            'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance', 'url_safe_title',
             'start_datetime', 'end_datetime', 'organisation', 'created_by', '_links'
         )
         read_only_fields = ('event_id', 'created_by', '_links')
