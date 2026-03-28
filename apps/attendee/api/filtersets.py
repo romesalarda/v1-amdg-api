@@ -648,7 +648,7 @@ class FamilyGroupFilterSet(django_filters.FilterSet):
     
     family_name = django_filters.CharFilter(lookup_expr='icontains')
     created_by = django_filters.NumberFilter(field_name='created_by__id')
-    event = django_filters.UUIDFilter(field_name='event__event_id')
+    event = django_filters.CharFilter(field_name='event__url_safe_title')
     organisation = django_filters.NumberFilter(field_name='organisation__id')
     
     class Meta:
@@ -661,7 +661,7 @@ class FamilyAttendeeFilterSet(django_filters.FilterSet):
     
     family_group = django_filters.NumberFilter(field_name='family_group__id')
     attendee = django_filters.UUIDFilter(field_name='attendee__attendee_id')
-    event = django_filters.UUIDFilter(field_name='family_group__event__event_id')
+    event = django_filters.CharFilter(field_name='family_group__event__url_safe_title')
     organisation = django_filters.NumberFilter(field_name='family_group__organisation__id')
     relationship = django_filters.ChoiceFilter(choices=HumanRelationshipChoices.choices)
     is_primary_guardian = django_filters.BooleanFilter()

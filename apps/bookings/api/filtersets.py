@@ -152,9 +152,9 @@ class BookingFilterSet(filters.FilterSet):
     )
     
     # Event filter
-    event = filters.NumberFilter(
-        field_name='event__id',
-        help_text="Filter by event ID"
+    event = filters.CharFilter(
+        field_name='event__url_safe_title',
+        help_text="Filter by event URL-safe title"
     )
     event_id = filters.UUIDFilter(
         field_name='event__event_id',
@@ -545,7 +545,7 @@ class EventAlternativeSigninFilterSet(filters.FilterSet):
     
     # Event filter
     event = filters.NumberFilter(
-        field_name='event__id',
+        field_name='event__url_safe_title',
         help_text="Filter by event ID"
     )
     event_id = filters.UUIDFilter(
