@@ -1460,6 +1460,15 @@ class EventQuestionOptionSerializer(serializers.ModelSerializer):
         return value.strip()
 
 
+class EventQuestionNestedOptionSerializer(serializers.ModelSerializer):
+    """Nested option serializer used for create/update question payloads."""
+
+    class Meta:
+        model = EventQuestionOption
+        fields = ('id', 'option_text', 'order')
+        read_only_fields = ('id',)
+
+
 class EventQuestionSerializer(serializers.ModelSerializer):
     """
     Serializer for EventQuestion with nested writable options.
@@ -1475,7 +1484,7 @@ class EventQuestionSerializer(serializers.ModelSerializer):
     question_type_display = serializers.CharField(source='get_question_type_display', read_only=True)
     event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
     event_title = serializers.CharField(source='event.title', read_only=True)
-    options = EventQuestionOptionSerializer(many=True, read_only=False, required=False)
+    options = EventQuestionNestedOptionSerializer(many=True, read_only=False, required=False)
     _links = serializers.SerializerMethodField()
     
     class Meta:

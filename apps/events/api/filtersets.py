@@ -539,7 +539,7 @@ class EventQuestionAnswerFilterSet(filters.FilterSet):
     """
     
     # Question filters
-    question = filters.NumberFilter(
+    question = filters.UUIDFilter(
         field_name='question__id',
         help_text="Filter by question ID"
     )

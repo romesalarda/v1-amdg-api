@@ -673,9 +673,13 @@ class EventQuestionAPITest(BaseEventAPITestCase):
             'question_body': 'What is your t-shirt size?',
             'question_type': EventQuestionTypeChoices.SINGLE_CHOICE,
             'required': True,
-            'order': 2
+            'order': 2,
+            'options': [
+                {'option_text': 'Small', 'order': 1},
+                {'option_text': 'Medium', 'order': 2},
+            ],
         }
-        response = self.client.post('/api/event/questions/', data)
+        response = self.client.post('/api/event/questions/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     
     def test_filter_questions_by_event(self):
@@ -771,7 +775,7 @@ class EventQuestionAnswerAPITest(BaseEventAPITestCase):
         )
         data = {
             'question': str(question2.id),
-            'attendee': self.attendee.id,
+            'attendee': str(self.attendee.attendee_id),
             'answer_text': 'Jane Doe'
         }
         response = self.client.post('/api/event/question-answers/', data)
@@ -875,7 +879,8 @@ class EventAvailabilityWindowAPITest(BaseEventAPITestCase):
         
         response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/availability-windows/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 2)
     
     def test_add_availability_window_authenticated(self):
         """Test adding an availability window as event owner"""
@@ -1036,7 +1041,8 @@ class EventResourceAPITest(BaseEventAPITestCase):
         
         response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/resources/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 2)
     
     def test_add_resource_with_file(self):
         """Test adding a file resource to an event"""
@@ -1174,8 +1180,9 @@ class EventResourceAPITest(BaseEventAPITestCase):
             f'/api/event/list/{self.event.url_safe_title}/resources/?tag=LANDING_PHOTO_MAIN'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['tag'], 'LANDING_PHOTO_MAIN')
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['tag'], 'LANDING_PHOTO_MAIN')
     
     def test_filter_resources_by_type(self):
         """Test filtering resources by resource type"""
@@ -1204,8 +1211,9 @@ class EventResourceAPITest(BaseEventAPITestCase):
             f'/api/event/list/{self.event.url_safe_title}/resources/?resource_type={ResourceTypeChoices.DOCUMENT}'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['resource_type'], ResourceTypeChoices.DOCUMENT)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['resource_type'], ResourceTypeChoices.DOCUMENT)
     
     def test_remove_resource(self):
         """Test removing a resource"""
@@ -1405,7 +1413,8 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
         
         response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/landing-images/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 2)
     
     def test_event_detail_includes_landing_images(self):
         """Test that event detail includes landing image fields"""
@@ -1696,6 +1705,11 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
             organisation=self.organisation,
             user=self.target_user,
         )
+
+        UserOrganisationMembership.objects.create(
+            organisation=self.organisation,
+            user=self.other_user,
+        )
     
     def test_list_staff_invites_authenticated(self):
         """Test listing staff invites as authenticated user"""
@@ -1758,11 +1772,10 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         
         self.client.force_authenticate(user=staff_user)
         data = {
-            'target_user': self.target_user.id,
+            'target_user': self.other_user.id,
             'expires_at': (timezone.now() + timedelta(days=14)).isoformat()
         }
         response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/', data, format='json')
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     
     def test_create_staff_invite_unauthorized(self):
