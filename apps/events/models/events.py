@@ -289,7 +289,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
                 "code": "NO_ACTIVE_BOOKING_PACKAGES"
             })
         
-        if self.payment_settings.payment_enabled and not PaymentMethod.objects.filter(events=self, is_active=True).exists():
+        if self.settings.payment_enabled and not PaymentMethod.objects.filter(events=self, is_active=True).exists():
             tasks.append({
                 "title": "No active payment methods",
                 "description": "Payment processing is enabled for this event, but there are no active payment methods configured.",

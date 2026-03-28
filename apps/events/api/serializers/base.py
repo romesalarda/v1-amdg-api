@@ -1419,10 +1419,11 @@ class EventQuestionOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventQuestionOption
         fields = ('id', 'question', 'option_text', 'order', 'created_at', 'updated_at', '_links')
-        read_only_fields = ('id', 'question', 'created_at', 'updated_at')  # question is read-only for nested writes
+        read_only_fields = ('id', 'created_at', 'updated_at')
         extra_kwargs = {
             'created_at': {'default': None},
             'updated_at': {'default': None},
+            'question': {'required': False},
         }
     
     @extend_schema_field({
