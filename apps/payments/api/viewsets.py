@@ -26,6 +26,7 @@ from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Prefetch
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -766,6 +767,142 @@ class DiscountViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Set created_by to current user."""
         serializer.save(created_by=self.request.user)
+
+    @extend_schema(
+        summary='Discount eligibility preview',
+        description='Evaluate active discounts against an attendee pricing context and return rule-level pass/fail diagnostics.',
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Attendee UUID to evaluate discount eligibility for',
+                required=True,
+            ),
+            OpenApiParameter(
+                name='event_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional event UUID to limit results',
+                required=False,
+            ),
+        ],
+        responses={
+            200: {'description': 'Discount eligibility diagnostics'},
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'},
+        },
+        tags=['Discounts'],
+    )
+    @action(detail=False, methods=['get'], url_path='eligibility-preview')
+    def eligibility_preview(self, request):
+        from apps.attendee.models import Attendee
+        from apps.payments.evaluator import DiscountRuleEvaluator
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import BookingPackage, PackageProduct
+        from apps.products.models import Product, ProductVariant
+
+        attendee_id = request.query_params.get('attendee_id')
+        if not attendee_id:
+            raise ValidationError({'attendee_id': 'attendee_id query parameter is required.'})
+
+        attendee = get_object_or_404(
+            Attendee.objects.select_related('event', 'booking', 'user'),
+            attendee_id=attendee_id,
+        )
+
+        if not (request.user.is_superuser or request.user.is_staff):
+            attendee_owner_match = attendee.user_id == request.user.id
+            attendee_booking_match = bool(attendee.booking_id and attendee.booking and attendee.booking.made_by_id == request.user.id)
+            if not attendee_owner_match and not attendee_booking_match:
+                raise ValidationError({'attendee_id': 'You do not have access to this attendee.'})
+
+        event_uuid = request.query_params.get('event_id')
+        if event_uuid and attendee.event and str(attendee.event.event_id) != event_uuid:
+            raise ValidationError({'event_id': 'attendee does not belong to the provided event_id.'})
+
+        discount_qs = self.get_queryset().filter(active=True).prefetch_related('rules', 'target_type')
+        evaluator = DiscountRuleEvaluator()
+        context = attendee.pricing_context()
+
+        booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+        package_product_ct = ContentType.objects.get_for_model(PackageProduct)
+        product_ct = ContentType.objects.get_for_model(Product)
+        variant_ct = ContentType.objects.get_for_model(ProductVariant)
+
+        package_event_map = {
+            row['id']: row['event_id']
+            for row in BookingPackage.objects.values('id', 'event_id')
+        }
+        package_product_map = {
+            row['id']: row['booking_package_id']
+            for row in PackageProduct.objects.values('id', 'booking_package_id')
+        }
+        product_event_map = {
+            row['id']: row['event_id']
+            for row in Product.objects.values('id', 'event_id')
+        }
+        variant_product_map = {
+            row['id']: row['product_id']
+            for row in ProductVariant.objects.values('id', 'product_id')
+        }
+
+        def discount_event_id(discount):
+            if discount.target_type_id == booking_package_ct.id:
+                return package_event_map.get(discount.target_id)
+            if discount.target_type_id == package_product_ct.id:
+                package_id = package_product_map.get(discount.target_id)
+                return package_event_map.get(package_id)
+            if discount.target_type_id == product_ct.id:
+                return product_event_map.get(discount.target_id)
+            if discount.target_type_id == variant_ct.id:
+                product_id = variant_product_map.get(discount.target_id)
+                return product_event_map.get(product_id)
+            return None
+
+        applicable = []
+        unavailable = []
+
+        for discount in discount_qs:
+            target_event_id = discount_event_id(discount)
+            if attendee.event_id and target_event_id and target_event_id != attendee.event_id:
+                continue
+
+            rules = discount.rules.filter(active=True)
+            rule_results = []
+            all_passed = True
+
+            for rule in rules:
+                passed = evaluator.evaluate(rule, context)
+                rule_results.append({
+                    'rule_id': str(rule.rule_id),
+                    'rule_type': rule.rule_type,
+                    'value': rule.value,
+                    'passed': passed,
+                })
+                all_passed = all_passed and passed
+
+            payload = {
+                'discount_id': str(discount.discount_id),
+                'name': discount.name,
+                'discount_type': discount.discount_type,
+                'value': str(discount.percentage if discount.discount_type == 'PERCENTAGE' else discount.amount),
+                'target_type': discount.target_type.model,
+                'target_id': discount.target_id,
+                'rules': rule_results,
+            }
+            if all_passed:
+                applicable.append(payload)
+            else:
+                unavailable.append(payload)
+
+        return Response({
+            'attendee_id': str(attendee.attendee_id),
+            'event_id': str(attendee.event.event_id) if attendee.event else None,
+            'context': context.metadata,
+            'applicable_discounts': applicable,
+            'unavailable_discounts': unavailable,
+        }, status=status.HTTP_200_OK)
 
 
 @extend_schema_view(

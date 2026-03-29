@@ -357,9 +357,9 @@ class UserViewSet(viewsets.ModelViewSet):
         queryset = User.objects.select_related('profile').prefetch_related('groups').filter(
             is_active=True
         ).filter(
-            Q(attendees__event__event_id=event_id, attendees__deleted_at__isnull=True) |
-            Q(event_staff__event__event_id=event_id, event_staff__user__isnull=False) |
-            Q(event_roles__event__event_id=event_id)
+            Q(attendees__event__url_safe_title=event_id, attendees__deleted_at__isnull=True) |
+            Q(event_staff__event__url_safe_title=event_id, event_staff__user__isnull=False) |
+            Q(event_roles__event__url_safe_title=event_id)
         ).distinct()
 
         search_value = request.query_params.get('search')
