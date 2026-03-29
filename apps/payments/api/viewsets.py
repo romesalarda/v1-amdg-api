@@ -593,15 +593,9 @@ class PaymentMethodViewSet(viewsets.ModelViewSet):
         parameters=[
             OpenApiParameter(
                 name='event',
-                type=OpenApiTypes.INT,
+                type=OpenApiTypes.STR,
                 location=OpenApiParameter.QUERY,
-                description='Filter discounts by event ID (shows discounts for objects within this event)'
-            ),
-            OpenApiParameter(
-                name='event__event_id',
-                type=OpenApiTypes.UUID,
-                location=OpenApiParameter.QUERY,
-                description='Filter discounts by event UUID'
+                description='Filter discounts by event URL-safe title (shows discounts for objects within this event)'
             ),
             OpenApiParameter(
                 name='event_id',
@@ -713,7 +707,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
                 if event_uuid:
                     event = Event.objects.get(event_id=event_uuid)
                 else:
-                    event = Event.objects.get(id=event_id)
+                    event = Event.objects.get(url_safe_title=event_id)
                 
                 # Check if user has administrative role for this event
                 has_admin_role = EventRoleAssignment.objects.filter(

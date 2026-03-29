@@ -332,9 +332,9 @@ class DiscountFilterSet(filters.FilterSet):
     )
     
     # Event filtering - filters discounts by target objects within the event
-    event = filters.NumberFilter(
+    event = filters.CharFilter(
         method='filter_by_event',
-        help_text="Filter discounts by event ID (filters target objects within the event)"
+        help_text="Filter discounts by event URL-safe title (filters target objects within the event)"
     )
     event_id = filters.UUIDFilter(
         method='filter_by_event_uuid',
@@ -395,7 +395,7 @@ class DiscountFilterSet(filters.FilterSet):
     
     def filter_by_event(self, queryset, name, value):
         """
-        Filter discounts by event ID.
+        Filter discounts by event URL-safe title.
         Currently supports BookingPackage as the main target type.
         Uses Subquery for optimized database performance.
         """
@@ -409,7 +409,7 @@ class DiscountFilterSet(filters.FilterSet):
         # Get BookingPackages for this event using Subquery pattern
         booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
         package_subquery = BookingPackage.objects.filter(
-            event_id=value,
+            event__url_safe_title=value,
             id=OuterRef('target_id')
         )
         
