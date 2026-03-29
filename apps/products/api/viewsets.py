@@ -2740,6 +2740,146 @@ class OrderViewSet(viewsets.ModelViewSet):
             raise ValidationError({'error': str(e)})
 
     @extend_schema(
+        summary='Update order item quantity',
+        description='Update quantity of a specific item in a draft order. Stock and order total are reconciled atomically.',
+        request=inline_serializer(
+            name='OrderUpdateItemQuantityRequest',
+            fields={
+                'order_item_id': serializers.IntegerField(min_value=1),
+                'quantity': serializers.IntegerField(min_value=1),
+            },
+        ),
+        responses={
+            200: {'description': 'Order item updated successfully'},
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'},
+            404: {'description': 'Order or order item not found'},
+        },
+        tags=['Orders'],
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative], url_path='update-item')
+    def update_item(self, request, order_id=None):
+        """Update quantity for an order item in a draft order."""
+        from django.db import transaction
+
+        order = self.get_object()
+        if order.status != OrderStatusChoices.DRAFT:
+            raise ValidationError('Can only update items in draft orders.')
+
+        serializer = inline_serializer(
+            name='OrderUpdateItemQuantityRuntimeSerializer',
+            fields={
+                'order_item_id': serializers.IntegerField(min_value=1),
+                'quantity': serializers.IntegerField(min_value=1),
+            },
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        order_item_id = serializer.validated_data['order_item_id']
+        new_quantity = serializer.validated_data['quantity']
+
+        with transaction.atomic():
+            locked_order = get_object_or_404(Order.objects.select_for_update(), pk=order.pk)
+            order_item = get_object_or_404(
+                OrderItem.objects.select_for_update(),
+                id=order_item_id,
+                order=locked_order,
+            )
+
+            old_quantity = int(order_item.quantity)
+            quantity_delta = int(new_quantity) - old_quantity
+
+            if quantity_delta != 0:
+                if not order_item.product_variant:
+                    raise ValidationError({'order_item_id': 'This order item has no active product variant.'})
+
+                if quantity_delta > 0:
+                    order_item.product_variant.can_attendee_purchase_quantity(
+                        locked_order.attendee,
+                        quantity_delta,
+                        raise_exception=True,
+                    )
+                    order_item.product_variant.decrement_stock(quantity_delta)
+                else:
+                    order_item.product_variant.increment_stock(abs(quantity_delta))
+
+            order_item.quantity = new_quantity
+            order_item.total_price = (order_item.unit_price.amount * new_quantity).quantize(decimal.Decimal('0.01'))
+            order_item.full_clean()
+            order_item.save()
+
+            locked_order.total_amount = locked_order.get_total_amount()
+            locked_order.save(update_fields=['total_amount', 'updated_at'])
+
+            item_serializer = OrderItemSerializer(order_item, context={'request': request})
+            return Response({
+                'status': 'success',
+                'message': 'Order item quantity updated.',
+                'order_item': item_serializer.data,
+                'order_total': str(locked_order.total_amount),
+            }, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary='Remove order item',
+        description='Remove a specific order item from a draft order. Stock is restored and order total recalculated.',
+        request=inline_serializer(
+            name='OrderRemoveItemRequest',
+            fields={
+                'order_item_id': serializers.IntegerField(min_value=1),
+            },
+        ),
+        responses={
+            200: {'description': 'Order item removed successfully'},
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'},
+            404: {'description': 'Order or order item not found'},
+        },
+        tags=['Orders'],
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative], url_path='remove-item')
+    def remove_item(self, request, order_id=None):
+        """Remove an item from a draft order."""
+        from django.db import transaction
+
+        order = self.get_object()
+        if order.status != OrderStatusChoices.DRAFT:
+            raise ValidationError('Can only remove items from draft orders.')
+
+        serializer = inline_serializer(
+            name='OrderRemoveItemRuntimeSerializer',
+            fields={
+                'order_item_id': serializers.IntegerField(min_value=1),
+            },
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        order_item_id = serializer.validated_data['order_item_id']
+
+        with transaction.atomic():
+            locked_order = get_object_or_404(Order.objects.select_for_update(), pk=order.pk)
+            order_item = get_object_or_404(
+                OrderItem.objects.select_for_update(),
+                id=order_item_id,
+                order=locked_order,
+            )
+
+            if order_item.product_variant:
+                order_item.product_variant.increment_stock(int(order_item.quantity))
+
+            order_item.delete()
+
+            locked_order.total_amount = locked_order.get_total_amount()
+            locked_order.save(update_fields=['total_amount', 'updated_at'])
+
+            return Response({
+                'status': 'success',
+                'message': 'Order item removed.',
+                'order_total': str(locked_order.total_amount),
+            }, status=status.HTTP_200_OK)
+
+    @extend_schema(
         summary='Preview order pricing',
         description='Simulate product order totals and discount impacts for an attendee without creating a persisted order.',
         request=inline_serializer(
@@ -3010,6 +3150,15 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             locked_order.transition_to(OrderStatusChoices.PENDING)
 
+            attendee_name = (
+                f"{locked_order.attendee.first_name} {locked_order.attendee.last_name}".strip()
+                or str(locked_order.attendee.attendee_id)
+            )
+            payment_description = (
+                f"Payment made for attendee {attendee_name} "
+                f"for {locked_order.attendee.event.title} with price of {locked_order.total_amount}"
+            )
+
             # Create payment for non-free orders
             # Create payment with order as target
             payment = Payment.objects.create(
@@ -3019,6 +3168,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 base_amount=locked_order.total_amount,
                 status=PaymentStatusChoices.PENDING,
                 target=locked_order,
+                description=payment_description,
                 metadata=locked_order.get_metadata()
             )
             
@@ -3037,6 +3187,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 'order_reference': locked_order.order_reference_id,
                 'payment_id': str(payment.payment_id),
                 'payment_reference': payment.payment_reference,
+                'payment_description': payment.description,
                 'total_amount': str(locked_order.total_amount.amount),
                 'currency': str(locked_order.total_amount.currency.code),
                 '_links': {
@@ -3059,7 +3210,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                         currency=locked_order.total_amount.currency.code,
                         payment_reference=payment.payment_reference,
                         customer_email=request.user.email,
-                        metadata=stripe_metadata
+                        metadata=stripe_metadata,
+                        description=payment.description,
                     )
                     
                     payment.stripe_payment_intent = payment_intent['id']
