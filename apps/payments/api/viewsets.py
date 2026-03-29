@@ -1787,7 +1787,7 @@ class DonationViewSet(viewsets.ModelViewSet):
                         customer_email=donor_user.email
                     )
                     
-                    payment.stripe_payment_intent_id = payment_intent['id']
+                    payment.stripe_payment_intent = payment_intent['id']
                     payment.save()
                     
                     response_data['stripe_client_secret'] = payment_intent['client_secret']

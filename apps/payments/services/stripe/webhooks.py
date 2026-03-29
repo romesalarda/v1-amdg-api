@@ -152,7 +152,7 @@ class PaymentIntentSucceededHandler(WebhookEventHandler):
             # Handle Order
             if hasattr(target, 'status') and hasattr(target, 'transition_to'):
                 from apps.products.models import OrderStatusChoices
-                if target.status in ['DRAFT', 'PENDING']:
+                if target.status in [OrderStatusChoices.DRAFT, OrderStatusChoices.PENDING]:
                     target.transition_to(OrderStatusChoices.PROCESSING)
                     target.save()
                     self.log_event(f"Updated {target.__class__.__name__} {target.pk} to PROCESSING")
