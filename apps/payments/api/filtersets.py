@@ -118,11 +118,12 @@ class PaymentFilterSet(filters.FilterSet):
         help_text="Filter by username (case-insensitive partial match)"
     )
     
-    event = filters.NumberFilter(
-        field_name='event__id',
-        help_text="Filter by event ID"
+    event = filters.CharFilter(
+        field_name='event__url_safe_title',
+        lookup_expr='exact',
+        help_text="Filter by event URL-safe title"
     )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='event__event_id',
         help_text="Filter by event UUID"
     )
@@ -255,15 +256,16 @@ class PaymentMethodFilterSet(filters.FilterSet):
         help_text="Filter active/inactive payment methods"
     )
     
-    event = filters.NumberFilter(
-        field_name='event__id',
-        help_text="Filter by event ID"
+    event = filters.CharFilter(
+        field_name='event__url_safe_title',
+        lookup_expr='exact',
+        help_text="Filter by event URL-safe title"
     )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='event__event_id',
         help_text="Filter by event UUID"
     )
-    
+
     created_after = filters.DateTimeFilter(
         field_name='created_at',
         lookup_expr='gte',
@@ -334,7 +336,7 @@ class DiscountFilterSet(filters.FilterSet):
         method='filter_by_event',
         help_text="Filter discounts by event ID (filters target objects within the event)"
     )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         method='filter_by_event_uuid',
         help_text="Filter discounts by event UUID"
     )
@@ -484,7 +486,7 @@ class DiscountRuleFilterSet(filters.FilterSet):
         method='filter_by_event',
         help_text="Filter rules by event ID"
     )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         method='filter_by_event_uuid',
         help_text="Filter rules by event UUID"
     )
@@ -608,7 +610,11 @@ class RefundRequestFilterSet(filters.FilterSet):
         help_text="Filter by payment UUID"
     )
 
-    payment__event__event_id = filters.UUIDFilter(
+    payment_id = filters.UUIDFilter(
+        field_name='payment__event__event_id',
+        help_text="Filter by event UUID (filters refunds for payments associated with the event)"
+    )
+    event_id = filters.UUIDFilter(
         field_name='payment__event__event_id',
         help_text="Filter by event UUID (filters refunds for payments associated with the event)"
     )
@@ -736,11 +742,11 @@ class RefundPolicyFilterSet(filters.FilterSet):
         field_name='event__id',
         help_text="Filter by event ID"
     )
-    event__event_id = filters.UUIDFilter(
+    event_id = filters.UUIDFilter(
         field_name='event__event_id',
         help_text="Filter by event UUID"
     )
-    
+
     min_refundable_days = filters.NumberFilter(
         field_name='refundable_within_days',
         lookup_expr='gte',

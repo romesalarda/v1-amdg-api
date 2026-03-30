@@ -26,11 +26,12 @@ from djmoney.money import Money
 from djmoney.contrib.django_rest_framework import MoneyField
 from decimal import Decimal
 from typing import Dict, Any, Optional
+from django.db import IntegrityError
 import pytz
 
 from apps.products.models import (
     Product, ProductVariant, ProductSizeChoices,
-    Order, OrderItem, OrderStatusChoices,
+    Order, OrderItem, OrderStatusChoices, OPEN_ORDER_STATUSES,
     ProductCategory, EventProductCategory
 )
 from apps.events.models import Event
@@ -1125,7 +1126,7 @@ class OrderItemCreateSerializer(serializers.Serializer):
 
 class OrderListSerializer(serializers.ModelSerializer):
     """List serializer for Order with essential information."""
-    
+
     _links = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
     attendee_name = serializers.SerializerMethodField()
@@ -1213,8 +1214,9 @@ class OrderDetailSerializer(OrderListSerializer):
 
 class OrderCreateSerializer(serializers.ModelSerializer):
     """Create serializer for Order with validation."""
-    
+    from apps.attendee.models import Attendee  # Import here to avoid circular import
     items = OrderItemCreateSerializer(many=True, write_only=True, help_text="Items to add to the order")
+    attendee = serializers.SlugRelatedField(slug_field='attendee_id', queryset=Attendee.objects.all(), allow_null=True, required=False)
     
     class Meta:
         model = Order
@@ -1225,12 +1227,36 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         customer = attrs.get('customer')
         attendee = attrs.get('attendee')
         items = attrs.get('items', [])
+        request = self.context.get('request')
+        request_user = request.user if request and request.user and request.user.is_authenticated else None
         
         # Must have either customer or attendee
         if not customer and not attendee:
             raise serializers.ValidationError(
                 "Order must have either a customer or an attendee."
             )
+        
+        if not customer:
+            customer = request_user
+            if not customer:
+                raise serializers.ValidationError(
+                    "Customer is required if not provided, and no authenticated user found."
+                )
+            attrs['customer'] = customer
+
+        if request_user and not (request_user.is_superuser or request_user.is_staff):
+            if customer != request_user:
+                raise serializers.ValidationError({
+                    'customer': 'You can only create orders for your own account.'
+                })
+
+            if attendee:
+                attendee_owner_match = attendee.user_id == request_user.id
+                attendee_booking_match = bool(attendee.booking_id and attendee.booking and attendee.booking.made_by_id == request_user.id)
+                if not attendee_owner_match and not attendee_booking_match:
+                    raise serializers.ValidationError({
+                        'attendee': 'You do not have permission to create an order for this attendee.'
+                    })
         
         # Must have at least one item
         if not items:
@@ -1240,6 +1266,20 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         
         # If attendee is provided, validate items can be purchased
         if attendee:
+            existing_open_order = Order.objects.filter(
+                attendee=attendee,
+                status__in=OPEN_ORDER_STATUSES,
+            ).order_by('-updated_at').first()
+            if existing_open_order:
+                raise serializers.ValidationError({
+                    'attendee': (
+                        f'Attendee already has an open order ({existing_open_order.order_reference_id}). '
+                        'Complete or cancel it before creating another.'
+                    ),
+                    'existing_order_id': str(existing_open_order.order_id),
+                    'existing_order_reference': existing_open_order.order_reference_id,
+                })
+
             for item_data in items:
                 variant_id = item_data['product_variant_id']
                 quantity = item_data['quantity']
@@ -1278,9 +1318,14 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         # Initialize order in draft status with zero amount
         validated_data['status'] = OrderStatusChoices.DRAFT
         validated_data['total_amount'] = Money(0, 'GBP')
-        
-        # Create order
-        order = Order.objects.create(**validated_data)
+        try:
+            order = Order.objects.create(**validated_data)
+        except IntegrityError as exc:
+            if 'unique_open_order_per_attendee' in str(exc):
+                raise serializers.ValidationError({
+                    'attendee': 'Attendee already has an open order. Complete or cancel it before creating another.',
+                }) from exc
+            raise
         
         # Add items to order
         for item_data in items_data:

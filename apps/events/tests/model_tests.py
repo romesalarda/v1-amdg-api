@@ -168,8 +168,8 @@ class EventModelTest(TestCase):
             end_datetime=self.end_time,
             organisation=self.organisation
         )
-        
-        self.assertEqual(event.url_safe_title, 'test-conference-2025')
+
+        self.assertTrue(event.url_safe_title.startswith('test-conference-2025-'))
         
     def test_event_display_identifier_generation(self):
         """Test that display_identifier is auto-generated"""
@@ -1226,12 +1226,17 @@ class EventQuestionModelTest(TestCase):
         )
         
         with self.assertRaises(IntegrityError):
-            EventQuestion.objects.create(
-                event=self.event,
-                question_title='Question 2',
-                question_body='Body 2',
-                order=1
-            )
+            from django.db import connection, transaction
+
+            with transaction.atomic():
+                EventQuestion.objects.create(
+                    event=self.event,
+                    question_title='Question 2',
+                    question_body='Body 2',
+                    order=1
+                )
+                with connection.cursor() as cursor:
+                    cursor.execute('SET CONSTRAINTS unique_question_order_per_event IMMEDIATE')
             
     def test_event_question_ordering(self):
         """Test that questions are ordered by order field"""

@@ -39,7 +39,7 @@ from typing import Any
 
 from apps.products.models import (
     Product, ProductVariant,
-    Order, OrderItem, OrderStatusChoices,
+    Order, OrderItem, OrderStatusChoices, OPEN_ORDER_STATUSES,
     ProductCategory, EventProductCategory
 )
 from apps.common.models import Resource
@@ -2488,6 +2488,19 @@ class OrderViewSet(viewsets.ModelViewSet):
             Q(attendee__user=user)
         )
     
+    def perform_create(self, serializer):
+        serializer.context['request'] = self.request  # Pass request to serializer for validation
+        return super().perform_create(serializer)
+
+    def _assert_attendee_access(self, attendee, user):
+        if user.is_superuser or user.is_staff:
+            return
+
+        attendee_owner_match = attendee.user_id == user.id
+        attendee_booking_match = bool(attendee.booking_id and attendee.booking and attendee.booking.made_by_id == user.id)
+        if not attendee_owner_match and not attendee_booking_match:
+            raise PermissionDenied('You do not have permission to access this attendee pricing context.')
+    
     @extend_schema(
         summary="Submit order",
         description="Submit an order, transitioning it from 'draft' to 'pending' status. Order must have at least one item. Stock is reserved when the order is submitted.",
@@ -2714,7 +2727,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         try:
             variant = ProductVariant.objects.get(variant_id=variant_id)
             order_item = order.add_order_item(variant, quantity)
-
             item_serializer = OrderItemSerializer(order_item, context={'request': request})
             return Response({
                 'status': 'success',
@@ -2726,6 +2738,137 @@ class OrderViewSet(viewsets.ModelViewSet):
             raise ValidationError({'product_variant_id': 'Product variant does not exist.'})
         except Exception as e:
             raise ValidationError({'error': str(e)})
+
+    @extend_schema(
+        summary='Preview order pricing',
+        description='Simulate product order totals and discount impacts for an attendee without creating a persisted order.',
+        request=inline_serializer(
+            name='OrderPricingPreviewRequest',
+            fields={
+                'attendee_id': serializers.UUIDField(help_text='Attendee UUID used for pricing context'),
+                'items': serializers.ListField(
+                    child=inline_serializer(
+                        name='OrderPricingPreviewItem',
+                        fields={
+                            'product_variant_id': serializers.UUIDField(),
+                            'quantity': serializers.IntegerField(min_value=1),
+                        }
+                    ),
+                    min_length=1,
+                ),
+            },
+        ),
+        responses={
+            200: {
+                'description': 'Pricing preview result',
+            },
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'},
+        },
+        tags=['Orders'],
+    )
+    @action(detail=False, methods=['post'], url_path='preview-pricing')
+    def preview_pricing(self, request):
+        from apps.attendee.models import Attendee
+        from apps.payments.evaluator import discount_applies
+        from apps.payments.models.discounts import DiscountType
+
+        attendee_id = request.data.get('attendee_id')
+        items = request.data.get('items') or []
+        if not attendee_id:
+            raise ValidationError({'attendee_id': 'This field is required.'})
+        if not isinstance(items, list) or len(items) == 0:
+            raise ValidationError({'items': 'Provide at least one item to preview.'})
+
+        attendee = get_object_or_404(Attendee.objects.select_related('booking', 'event', 'user'), attendee_id=attendee_id)
+        self._assert_attendee_access(attendee, request.user)
+
+        attendee_context = attendee.pricing_context()
+        currency_code = 'GBP'
+        lines = []
+        subtotal = decimal.Decimal('0.00')
+        total_discount = decimal.Decimal('0.00')
+
+        for index, item in enumerate(items):
+            variant_id = item.get('product_variant_id')
+            quantity = item.get('quantity')
+
+            if not variant_id:
+                raise ValidationError({'items': f'items[{index}].product_variant_id is required.'})
+
+            try:
+                quantity_int = int(quantity)
+            except (TypeError, ValueError):
+                raise ValidationError({'items': f'items[{index}].quantity must be an integer.'})
+
+            if quantity_int < 1:
+                raise ValidationError({'items': f'items[{index}].quantity must be at least 1.'})
+
+            variant = get_object_or_404(
+                ProductVariant.objects.select_related('product', 'product__event'),
+                variant_id=variant_id,
+            )
+            if variant.product.event_id != attendee.event_id:
+                raise ValidationError({'items': f'Variant {variant.variant_id} does not belong to attendee event.'})
+            if not variant.can_attendee_purchase(attendee):
+                raise ValidationError({'items': f'Attendee cannot purchase variant {variant.variant_id}.'})
+            if not variant.can_attendee_purchase_quantity(attendee, quantity_int):
+                raise ValidationError({'items': f'Requested quantity exceeds stock or limits for variant {variant.variant_id}.'})
+
+            modified_amount = variant.modified_amount.amount.quantize(decimal.Decimal('0.01'))
+            final_amount = variant.get_attendee_final_price(attendee).amount.quantize(decimal.Decimal('0.01'))
+            discount_per_unit = max(modified_amount - final_amount, decimal.Decimal('0.00'))
+
+            line_subtotal = (modified_amount * quantity_int).quantize(decimal.Decimal('0.01'))
+            line_total = (final_amount * quantity_int).quantize(decimal.Decimal('0.01'))
+            line_discount = (discount_per_unit * quantity_int).quantize(decimal.Decimal('0.01'))
+
+            subtotal += line_subtotal
+            total_discount += line_discount
+
+            applied_discounts = []
+            for discount in variant.discounts:
+                if not discount_applies(discount, attendee_context):
+                    continue
+                applied_discounts.append({
+                    'discount_id': str(discount.discount_id),
+                    'name': discount.name,
+                    'discount_type': discount.discount_type,
+                    'value': str(discount.percentage if discount.discount_type == DiscountType.PERCENTAGE else discount.amount),
+                })
+
+            lines.append({
+                'variant_id': str(variant.variant_id),
+                'product_title': variant.product.title,
+                'quantity': quantity_int,
+                'unit_price_before_discount': str(modified_amount),
+                'unit_price': str(final_amount),
+                'line_subtotal': str(line_subtotal),
+                'line_total': str(line_total),
+                'line_discount': str(line_discount),
+                'applied_discounts': applied_discounts,
+            })
+
+        total_amount = (subtotal - total_discount).quantize(decimal.Decimal('0.01'))
+        if total_amount < decimal.Decimal('0.00'):
+            total_amount = decimal.Decimal('0.00')
+
+        open_order = Order.objects.filter(
+            attendee=attendee,
+            status__in=OPEN_ORDER_STATUSES,
+        ).order_by('-updated_at').first()
+
+        return Response({
+            'attendee_id': str(attendee.attendee_id),
+            'event_id': str(attendee.event.event_id) if attendee.event else None,
+            'currency': currency_code,
+            'has_open_order': bool(open_order),
+            'open_order_reference': open_order.order_reference_id if open_order else None,
+            'subtotal': str(subtotal.quantize(decimal.Decimal('0.01'))),
+            'total_discount': str(total_discount.quantize(decimal.Decimal('0.01'))),
+            'total_amount': str(total_amount),
+            'items': lines,
+        }, status=status.HTTP_200_OK)
     
     @extend_schema(
         summary="Checkout order with payment",
@@ -2821,90 +2964,100 @@ class OrderViewSet(viewsets.ModelViewSet):
         import logging
         
         logger = logging.getLogger(__name__)
-        order = self.get_object()
-        
-        # Validate request data
-        serializer = OrderCheckoutSerializer(
-            data=request.data,
-            context={'request': request, 'order': order}
-        )
-        serializer.is_valid(raise_exception=True)
-        
-        payment_method = serializer.validated_data['payment_method']
-        
-        # Check if order is free (£0 total)
-        if order.total_amount.amount == 0:
-            with transaction.atomic():
-                logger.info(f"Processing free order {order.order_reference_id}, moving from DRAFT to PROCESSING")
-                # No payment needed, transition from DRAFT to PROCESSING
-                if order.status == OrderStatusChoices.DRAFT:
-                    order.transition_to(OrderStatusChoices.PENDING)
-                    logger.info(f"Free order {order.order_reference_id} transitioned to pending")
-                    order.transition_to(OrderStatusChoices.PROCESSING)
-                    logger.info(f"Free order {order.order_reference_id} transitioned to processing")
+
+        with transaction.atomic():
+            # Use a minimal queryset for row locking to avoid FOR UPDATE on nullable outer joins.
+            locked_order = get_object_or_404(
+                Order.objects.select_for_update(),
+                order_id=order_id,
+            )
+            self.check_object_permissions(request, locked_order)
+
+            serializer = OrderCheckoutSerializer(
+                data=request.data,
+                context={'request': request, 'order': locked_order}
+            )
+            serializer.is_valid(raise_exception=True)
+
+            payment_method = serializer.validated_data['payment_method']
+
+            # Check if order is free (£0 total)
+            if locked_order.total_amount.amount == 0:
+                logger.info(f"Processing free order {locked_order.order_reference_id}, moving from DRAFT to PROCESSING")
+                if locked_order.status == OrderStatusChoices.DRAFT:
+                    locked_order.transition_to(OrderStatusChoices.PENDING)
+                    logger.info(f"Free order {locked_order.order_reference_id} transitioned to pending")
+                    locked_order.transition_to(OrderStatusChoices.PROCESSING)
+                    logger.info(f"Free order {locked_order.order_reference_id} transitioned to processing")
                 else:
-                    raise ValidationError({'order': f'Cannot checkout free order in {order.status} status.'})
-                
+                    raise ValidationError({'order': f'Cannot checkout free order in {locked_order.status} status.'})
+
                 return Response({
-                    'order_id': str(order.order_id),
-                    'order_reference': order.order_reference_id,
-                    'total_amount': str(order.total_amount.amount),
-                    'currency': str(order.total_amount.currency.code),
+                    'order_id': str(locked_order.order_id),
+                    'order_reference': locked_order.order_reference_id,
+                    'total_amount': str(locked_order.total_amount.amount),
+                    'currency': str(locked_order.total_amount.currency.code),
                     'status': 'processing',
                     'message': 'Free order, no payment required',
                     '_links': {
                         'self': request.build_absolute_uri(),
-                        'order': request.build_absolute_uri(f'/api/products/orders/list/{order.order_id}/')
+                        'order': request.build_absolute_uri(f'/api/products/orders/list/{locked_order.order_id}/')
                     }
                 }, status=status.HTTP_201_CREATED)
-        
-        order.transition_to(OrderStatusChoices.PENDING)
 
-        # Create payment for non-free orders
-        with transaction.atomic():
+            if locked_order.payment_id:
+                raise ValidationError({'order': 'Order already has a payment linked. Refresh and continue from existing checkout state.'})
+
+            locked_order.transition_to(OrderStatusChoices.PENDING)
+
+            # Create payment for non-free orders
             # Create payment with order as target
             payment = Payment.objects.create(
                 user=request.user,
-                event=order.attendee.event,
+                event=locked_order.attendee.event,
                 method=payment_method,
-                base_amount=order.total_amount,
+                base_amount=locked_order.total_amount,
                 status=PaymentStatusChoices.PENDING,
-                target=order,
-                metadata=order.get_metadata()
+                target=locked_order,
+                metadata=locked_order.get_metadata()
             )
             
             # Link payment to order
-            order.payment = payment
-            order.save()
+            locked_order.payment = payment
+            locked_order.save(update_fields=['payment', 'updated_at'])
             
             logger.info(
-                f"Created payment {payment.payment_reference} for order {order.order_reference_id}, "
-                f"amount: {order.total_amount}"
+                f"Created payment {payment.payment_reference} for order {locked_order.order_reference_id}, "
+                f"amount: {locked_order.total_amount}"
             )
             
             # Prepare response data with amount and currency as separate fields
             response_data = {
-                'order_id': str(order.order_id),
-                'order_reference': order.order_reference_id,
+                'order_id': str(locked_order.order_id),
+                'order_reference': locked_order.order_reference_id,
                 'payment_id': str(payment.payment_id),
                 'payment_reference': payment.payment_reference,
-                'total_amount': str(order.total_amount.amount),
-                'currency': str(order.total_amount.currency.code),
+                'total_amount': str(locked_order.total_amount.amount),
+                'currency': str(locked_order.total_amount.currency.code),
                 '_links': {
                     'self': request.build_absolute_uri(),
-                    'order': request.build_absolute_uri(f'/api/products/orders/list/{order.order_id}/'),
+                    'order': request.build_absolute_uri(f'/api/products/orders/list/{locked_order.order_id}/'),
                     'payment': request.build_absolute_uri(f'/api/payments/list/{payment.payment_id}/')
                 }
             }
             
-            # Handle payment method-specific logic
-            if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
+            # Handle payment method-specific logic.
+            # Normalize method type to avoid silent fallthrough for unexpected casing/whitespace.
+            method_type = str(payment_method.method_type or '').strip().upper()
+
+            if method_type == PaymentMethodTypeChoices.STRIPE:
                 # Create Stripe PaymentIntent
                 try:
                     stripe_metadata = payment.prepare_stripe_metadata()
                     payment_intent = PaymentIntentService.create(
-                        amount=order.total_amount,
-                        currency=order.total_amount.currency.code,
+                        amount=locked_order.total_amount,
+                        currency=locked_order.total_amount.currency.code,
+                        payment_reference=payment.payment_reference,
                         customer_email=request.user.email,
                         metadata=stripe_metadata
                     )
@@ -2922,23 +3075,37 @@ class OrderViewSet(viewsets.ModelViewSet):
                     # Rollback will happen automatically due to atomic block
                     raise ValidationError({'stripe': f'Failed to create payment intent: {str(e)}'})
             
-            elif payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+            elif method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
                 # Generate bank transfer reference (already done in Payment model)
                 response_data['bank_transfer_reference'] = payment.bank_transfer_reference
                 response_data['bank_transfer_instructions'] = (
-                    f"Please transfer {order.total_amount} to the event account using reference: "
+                    f"Please transfer {locked_order.total_amount} to the event account using reference: "
                     f"{payment.bank_transfer_reference}. Your order will be processed after verification."
                 )
                 response_data['status'] = 'pending_verification'
                 
                 logger.info(f"Generated bank transfer reference {payment.bank_transfer_reference} for payment {payment.payment_reference}")
             
-            elif payment_method.method_type == PaymentMethodTypeChoices.CASH:
+            elif method_type == PaymentMethodTypeChoices.CASH:
                 # Cash payment - pending approval at venue
                 response_data['status'] = 'pending_approval'
                 response_data['message'] = 'Payment will be collected at the venue. Your order will be processed after payment confirmation.'
                 
-                logger.info(f"Cash payment created for order {order.order_reference_id}, pending venue approval")
+                logger.info(f"Cash payment created for order {locked_order.order_reference_id}, pending venue approval")
+
+            else:
+                logger.error(
+                    'Unsupported payment method type during checkout. method_id=%s method_type=%s order=%s',
+                    payment_method.id,
+                    payment_method.method_type,
+                    locked_order.order_reference_id,
+                )
+                raise ValidationError({
+                    'payment_method_id': (
+                        f'Unsupported payment method type "{payment_method.method_type}". '
+                        'Please select a valid payment method.'
+                    )
+                })
 
             
             return Response(response_data, status=status.HTTP_201_CREATED)

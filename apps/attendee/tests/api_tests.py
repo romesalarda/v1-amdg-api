@@ -582,7 +582,7 @@ class GuardianTests(AttendeeAPITestCase):
         self.client.force_authenticate(user=self.regular_user)
         data = {
             'user': self.other_user.id,
-            'attendee': new_child.id,
+            'attendee': new_child.attendee_id,
             'relationship': AttendeeRelationship.PARRENT
         }
         response = self.client.post('/api/guardians/', data, format='json')
@@ -652,10 +652,11 @@ class FamilyGroupTests(AttendeeAPITestCase):
         self.client.force_authenticate(user=self.regular_user)
         data = {
             'family_name': 'Doe Family',
-            'primary_contact': self.regular_user.id
+            'primary_contact': self.regular_user.id,
+            'event': self.event.pk
         }
         response = self.client.post('/api/family-groups/', data, format='json')
-        
+
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['family_name'], 'Doe Family')
     
@@ -668,7 +669,7 @@ class FamilyGroupTests(AttendeeAPITestCase):
         self.client.force_authenticate(user=self.regular_user)
         data = {
             'family_group': family.id,
-            'attendee': self.attendee.id,
+            'attendee': self.attendee.attendee_id,
             'relationship': HumanRelationshipChoices.PARENT
         }
         response = self.client.post('/api/family-attendees/', data, format='json')

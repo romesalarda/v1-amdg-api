@@ -2,6 +2,7 @@ from django.db import models
 from django.core import validators, exceptions
 from django.contrib.auth import get_user_model
 from django.db import transaction, IntegrityError
+from django.db.models import Q
 
 from djmoney.models.fields import MoneyField
 from djmoney.money import Money
@@ -31,6 +32,7 @@ ORDER_STATUS_TRANSITIONS = {
     'pending_refund': ['refunded', 'cancelled'],
     'refunded': [],
 }
+
 class OrderStatusChoices(models.TextChoices):
     DRAFT = 'draft', 'Draft' # initial state, not yet confirmed basically a cart
     PENDING = 'pending', 'Pending' # awaiting processing, has been submitted by user
@@ -39,6 +41,12 @@ class OrderStatusChoices(models.TextChoices):
     CANCELLED = 'cancelled', 'Cancelled' # cancelled by user or admin
     PENDING_REFUND = 'pending_refund', 'Pending Refund' # refund requested, awaiting processing
     REFUNDED = 'refunded', 'Refunded' # refunded to user
+
+
+OPEN_ORDER_STATUSES = (
+    OrderStatusChoices.DRAFT,
+    OrderStatusChoices.PENDING,
+)
 
 # 1. User adds products to order (cart) -> Order in 'draft' status
 # 2. User submits order -> Order status changes to 'pending'
@@ -106,6 +114,15 @@ class Order(SoftDeleteModel): # no admin model
         help_text='Booking package this order was created from, if applicable'
     )
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['attendee'],
+                condition=Q(attendee__isnull=False, status__in=OPEN_ORDER_STATUSES),
+                name='unique_open_order_per_attendee',
+            ),
+        ]
+
     def save(self, *args, **kwargs):
         self.clean()
         if not self.order_reference_id:
@@ -159,6 +176,10 @@ class Order(SoftDeleteModel): # no admin model
         if self.status != OrderStatusChoices.DRAFT:
             return False
         return True
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in OPEN_ORDER_STATUSES
 
     # validate transitions
     def can_transition_to(self, new_status: str) -> bool:

@@ -5,7 +5,7 @@ Comprehensive test suite for event statistics endpoints testing:
 - Authentication and permissions
 - Raw JSON format responses
 - ECharts format responses
-- Filtering capabilities (event_id, event_type, organization, status, dates)
+    - Filtering capabilities (event, event_type, organization, status, dates)
 - Data accuracy and calculations
 - Edge cases (no data, invalid parameters)
 """
@@ -619,7 +619,7 @@ class RevenueOverviewTest(EventStatisticsBaseTestCase):
     def test_revenue_overview_by_event(self):
         """Test revenue overview filtered by specific event."""
         response = self.client.get(
-            f'/api/event/statistics/revenue-overview/?event_id={self.open_event1.event_id}'
+            f'/api/event/statistics/revenue-overview/?event={self.open_event1.url_safe_title}'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -789,7 +789,7 @@ class RegistrationTrendsTest(EventStatisticsBaseTestCase):
     def test_registration_trends_by_hour(self):
         """Test registration trends grouped by hour."""
         response = self.client.get(
-            f'/api/event/statistics/registration-trends/?event_id={self.open_event1.event_id}&period=hour'
+            f'/api/event/statistics/registration-trends/?event={self.open_event1.url_safe_title}&period=hour'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -999,3 +999,4 @@ class StatisticsPermissionsTest(EventStatisticsBaseTestCase):
                 status.HTTP_401_UNAUTHORIZED,
                 f"Endpoint {endpoint} should require authentication"
             )
+

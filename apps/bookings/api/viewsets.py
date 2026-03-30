@@ -79,6 +79,12 @@ from .permissions import (
     IsAdministrativeStaff, IsAdministrativeStaffOnly, IsBookingOwnerOrAdministrative,
     IsTicketOwnerOrAdministrative, IsReadOnly,
 )
+from django.utils import timezone
+from apps.bookings.services import BookingCheckoutFinalizer
+from apps.payments.services.stripe.payment_intents import PaymentIntentService
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 class StandardPagination(PageNumberPagination):
@@ -419,12 +425,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         This is the unified checkout endpoint that handles the complete registration flow.
         All operations are atomic - if any step fails, everything rolls back.
         """
-        from django.utils import timezone
-        from .serializers import CheckoutSerializer
-        from apps.bookings.services import BookingCheckoutFinalizer
-        from apps.payments.services.stripe.payment_intents import PaymentIntentService
-        import logging
-        logger = logging.getLogger(__name__)
         
         # Validate input data
         serializer = CheckoutSerializer(data=request.data, context={'request': request})
@@ -665,6 +665,19 @@ class BookingViewSet(viewsets.ModelViewSet):
                     f"amount: {payment.base_amount}"
                 )
 
+                # Ensure booking/attendees exist immediately for pending flows.
+                # Stripe confirmed and CASH flows finalize in their own branches below.
+                prefinalized_booking = None
+                if (
+                    payment_method.method_type in [
+                        PaymentMethodTypeChoices.BANK_TRANSFER,
+                        PaymentMethodTypeChoices.STRIPE,
+                    ]
+                    and not stripe_payment_intent_id
+                ):
+                    prefinalization = BookingCheckoutFinalizer.finalize_for_bank_transfer(payment, actor=user)
+                    prefinalized_booking = prefinalization.get('booking')
+
                 if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
                     if stripe_payment_intent_id:
                         try:
@@ -724,7 +737,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                             payment,
                             'pending_payment',
                             'Checkout initiated. Complete payment with Stripe to finalize booking.',
-                            booking=None,
+                            booking=prefinalized_booking,
                             stripe_client_secret=payment_intent.client_secret,
                         )
                         return Response(response_data, status=status.HTTP_201_CREATED)
@@ -740,7 +753,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         payment,
                         'pending_verification',
                         'Checkout initiated. Complete bank transfer to finalize booking.',
-                        booking=None,
+                        booking=prefinalized_booking,
                     )
                     return Response(response_data, status=status.HTTP_201_CREATED)
 

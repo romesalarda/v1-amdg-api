@@ -51,9 +51,17 @@ from apps.bookings.models import Booking
 
 from apps.events.services import OutstandingPaymentsService
 from apps.events.api.filtersets import (
+    EventAuthorizationFilterSet,
     EventQuestionAnswerFilterSet,
+    EventQuestionFilterSet,
     EventMyBookingFilterSet,
     EventMyOutstandingPaymentsFilterSet,
+    EventPermissionAssignmentFilterSet,
+    EventReviewFilterSet,
+    EventRoleAssignmentFilterSet,
+    EventStaffFilterSet,
+    EventStaffInviteFilterSet,
+    EventVenueFilterSet,
 )
 
 from apps.events.api.pagination import StandardPagination
@@ -230,11 +238,11 @@ class EventViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['status', 'event_type', 'organisation', 'event_id']
+    filterset_fields = ['status', 'event_type', 'organisation']
     search_fields = ['title', 'short_description', 'long_description', 'display_code']
     ordering_fields = ['title', 'start_datetime', 'created_at']
     ordering = ['-start_datetime']
-    lookup_field = 'event_id'
+    lookup_field = 'url_safe_title'
     
     def get_queryset(self):
         queryset = Event.objects.select_related(
@@ -419,7 +427,7 @@ class EventViewSet(viewsets.ModelViewSet):
         url_path='my-booking',
         permission_classes=[permissions.IsAuthenticated],
     )
-    def my_booking(self, request, event_id=None):
+    def my_booking(self, request, *args, **kwargs):
         """Get all user's bookings for an event with pagination and filtering."""
         event = self.get_object()
 
@@ -536,7 +544,7 @@ class EventViewSet(viewsets.ModelViewSet):
         url_path='my-outstanding-booking-payments',
         permission_classes=[permissions.IsAuthenticated],
     )
-    def my_outstanding_booking_payments(self, request, event_id=None):
+    def my_outstanding_booking_payments(self, request, url_safe_title=None):
         """Get all outstanding (unpaid) payments for an event with pagination and filtering."""
         event = self.get_object()
 
@@ -633,7 +641,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['get'], url_path='settings')
-    def event_settings(self, request, event_id=None):
+    def event_settings(self, request, url_safe_title=None):
         event = self.get_object()
         event_settings = getattr(event, 'settings', None)
         if not event_settings:
@@ -671,7 +679,7 @@ class EventViewSet(viewsets.ModelViewSet):
     @extend_schema(methods=['get'], operation_id='event_list_sponsors_list')
     @extend_schema(methods=['post'], operation_id='event_list_sponsors_create')
     @action(detail=True, methods=['get', 'post'], url_path='sponsors', permission_classes=[permissions.IsAuthenticated])
-    def sponsors(self, request, event_id=None):
+    def sponsors(self, request, url_safe_title=None):
         event = self.get_object()
         queryset = EventSponsor.objects.select_related(
             'organisation', 'event', 'package', 'added_by', 'verified_by', 'processed_by'
@@ -736,7 +744,7 @@ class EventViewSet(viewsets.ModelViewSet):
         url_path='sponsors/(?P<sponsor_id>[^/.]+)',
         permission_classes=[permissions.IsAuthenticated],
     )
-    def sponsor_detail(self, request, event_id=None, sponsor_id=None):
+    def sponsor_detail(self, request, url_safe_title=None, sponsor_id=None):
         event = self.get_object()
         sponsor = get_object_or_404(
             EventSponsor.objects.select_related('organisation', 'event', 'package', 'added_by', 'verified_by', 'processed_by'),
@@ -794,7 +802,7 @@ class EventViewSet(viewsets.ModelViewSet):
         url_path='sponsors/(?P<sponsor_id>[^/.]+)/approve',
         permission_classes=[permissions.IsAuthenticated],
     )
-    def approve_sponsor(self, request, event_id=None, sponsor_id=None):
+    def approve_sponsor(self, request, url_safe_title=None, sponsor_id=None):
         event = self.get_object()
         if not self._is_event_admin(request.user, event):
             return Response(
@@ -826,7 +834,7 @@ class EventViewSet(viewsets.ModelViewSet):
         url_path='sponsors/(?P<sponsor_id>[^/.]+)/reject',
         permission_classes=[permissions.IsAuthenticated],
     )
-    def reject_sponsor(self, request, event_id=None, sponsor_id=None):
+    def reject_sponsor(self, request, url_safe_title=None, sponsor_id=None):
         event = self.get_object()
         if not self._is_event_admin(request.user, event):
             return Response(
@@ -851,7 +859,7 @@ class EventViewSet(viewsets.ModelViewSet):
     @extend_schema(methods=['get'], operation_id='event_list_sponsorship_packages_list')
     @extend_schema(methods=['post'], operation_id='event_list_sponsorship_packages_create')
     @action(detail=True, methods=['get', 'post'], url_path='sponsorship-packages', permission_classes=[permissions.IsAuthenticated])
-    def sponsorship_packages(self, request, event_id=None):
+    def sponsorship_packages(self, request, url_safe_title=None):
         event = self.get_object()
 
         if request.method == 'GET':
@@ -905,7 +913,7 @@ class EventViewSet(viewsets.ModelViewSet):
         url_path='sponsorship-packages/(?P<package_id>[^/.]+)',
         permission_classes=[permissions.IsAuthenticated],
     )
-    def sponsorship_package_detail(self, request, event_id=None, package_id=None):
+    def sponsorship_package_detail(self, request, url_safe_title=None, package_id=None):
         event = self.get_object()
         package = get_object_or_404(
             EventSponsorPackage.objects.select_related('event'),
@@ -958,7 +966,7 @@ class EventViewSet(viewsets.ModelViewSet):
         tags=["Events", "Event Sponsors"],
     )
     @action(detail=True, methods=['get'], url_path='public-sponsors', permission_classes=[permissions.AllowAny])
-    def public_sponsors(self, request, event_id=None):
+    def public_sponsors(self, request, url_safe_title=None):
         event = self.get_object()
         queryset = EventSponsor.objects.select_related('organisation', 'event', 'package').filter(
             event=event,
@@ -995,7 +1003,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='add-staff', permission_classes=[permissions.IsAuthenticated])
-    def add_staff(self, request, event_id=None):
+    def add_staff(self, request, url_safe_title=None):
         from django.contrib.auth import get_user_model
         
         event = self.get_object()
@@ -1063,7 +1071,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['delete'], url_path='remove-staff', permission_classes=[permissions.IsAuthenticated])
-    def remove_staff(self, request, event_id=None):
+    def remove_staff(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -1110,7 +1118,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['get'], url_path='staff-list')
-    def staff_list(self, request, event_id=None):
+    def staff_list(self, request, url_safe_title=None):
         event = self.get_object()
         staff_members = event.staff_members.select_related('user', 'assigned_by').all()
         serializer = EventStaffSerializer(staff_members, many=True)
@@ -1132,7 +1140,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='soft-delete', permission_classes=[permissions.IsAuthenticated])
-    def soft_delete_event(self, request, event_id=None):
+    def soft_delete_event(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -1172,8 +1180,8 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='restore', permission_classes=[permissions.IsAuthenticated])
-    def restore_event(self, request, event_id=None):
-        event = Event.all_objects.get(event_id=event_id)
+    def restore_event(self, request, url_safe_title=None):
+        event = Event.all_objects.get(url_safe_title=url_safe_title)
         
         # Check permission
         if not (request.user.is_staff or request.user.is_superuser or event.created_by == request.user):
@@ -1209,7 +1217,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['get'], url_path='availability-windows')
-    def availability_windows(self, request, event_id=None):
+    def availability_windows(self, request, url_safe_title=None):
         event = self.get_object()
         windows = event.extended_availability_windows.all()
 
@@ -1239,7 +1247,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='add-availability-window', permission_classes=[permissions.IsAuthenticated])
-    def add_availability_window(self, request, event_id=None):
+    def add_availability_window(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -1283,7 +1291,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['delete'], url_path='remove-availability-window', permission_classes=[permissions.IsAuthenticated])
-    def remove_availability_window(self, request, event_id=None):
+    def remove_availability_window(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -1339,7 +1347,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['patch', 'put'], url_path='update-availability-window', permission_classes=[permissions.IsAuthenticated])
-    def update_availability_window(self, request, event_id=None):
+    def update_availability_window(self, request, url_safe_title=None):
         """
         Update an existing availability window for the event.
         
@@ -1347,7 +1355,7 @@ class EventViewSet(viewsets.ModelViewSet):
         Only the event creator, staff, or superuser can update windows.
         
         Path Parameters:
-        - event_id (string): The unique identifier of the event
+        - url_safe_title (string): The URL-safe title of the event
         
         Query Parameters:
         - window_id (UUID, optional): The availability_id of the window to update.
@@ -1601,7 +1609,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['get'], url_path='preview-template-application', url_name='preview-template-application')
-    def preview_template_application(self, request, event_id=None, **kwargs):
+    def preview_template_application(self, request, url_safe_title=None, **kwargs):
         """
         Preview template application showing what windows would be created and any conflicts.
         """
@@ -1722,7 +1730,7 @@ class EventViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'], url_path='apply-availability-template', 
             permission_classes=[permissions.IsAuthenticated], url_name='apply-availability-template')
-    def apply_availability_template(self, request, event_id=None, **kwargs):
+    def apply_availability_template(self, request, url_safe_title=None, **kwargs):
         """
         Apply a template to create multiple availability windows for the event.
         
@@ -1849,7 +1857,7 @@ class EventViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'], url_path='save-windows-as-template',
             permission_classes=[permissions.IsAuthenticated], url_name='save-windows-as-template')
-    def save_windows_as_template(self, request, event_id=None, **kwargs):
+    def save_windows_as_template(self, request, url_safe_title=None, **kwargs):
         """Save the current event's availability windows as a custom template."""
         from apps.common.models import AvailabilityWindowTemplate
         from apps.common.api.serializers import AvailabilityWindowTemplateSerializer
@@ -1926,7 +1934,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['get'], url_path='resources')
-    def resources(self, request, event_id=None):
+    def resources(self, request, url_safe_title=None):
         event = self.get_object()
         resources = event.resources.all()
         
@@ -1983,7 +1991,7 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='add-resource', 
             permission_classes=[permissions.IsAuthenticated],
             parser_classes=[MultiPartParser, FormParser, JSONParser])
-    def add_resource(self, request, event_id=None):
+    def add_resource(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -2038,7 +2046,7 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='add-landing-image',
             permission_classes=[permissions.IsAuthenticated],
             parser_classes=[MultiPartParser, FormParser])
-    def add_landing_image(self, request, event_id=None):
+    def add_landing_image(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -2118,7 +2126,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['patch'], url_path='update-resource', permission_classes=[permissions.IsAuthenticated])
-    def update_resource(self, request, event_id=None):
+    def update_resource(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -2195,7 +2203,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='promote-landing-image', permission_classes=[permissions.IsAuthenticated])
-    def promote_landing_image(self, request, event_id=None):
+    def promote_landing_image(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -2268,7 +2276,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='demote-landing-image', permission_classes=[permissions.IsAuthenticated])
-    def demote_landing_image(self, request, event_id=None):
+    def demote_landing_image(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -2329,7 +2337,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['delete'], url_path='remove-resource', permission_classes=[permissions.IsAuthenticated])
-    def remove_resource(self, request, event_id=None):
+    def remove_resource(self, request, url_safe_title=None):
         event = self.get_object()
         
         # Check permission
@@ -2376,7 +2384,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['get'], url_path='landing-images')
-    def landing_images(self, request, event_id=None):
+    def landing_images(self, request, url_safe_title=None):
         event = self.get_object()
         images = event.landing_images.all()
         serializer = ResourceSerializer(images, many=True, context={'request': request})
@@ -2440,7 +2448,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['post'], url_path='ws-token', permission_classes=[permissions.IsAuthenticated])
-    def ws_token(self, request, event_id=None):
+    def ws_token(self, request, *args, **kwargs):
         """
         Generate a short-lived JWT token for WebSocket authentication.
         
@@ -2613,7 +2621,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['delete'], url_path='revoke-permission', permission_classes=[permissions.IsAuthenticated])
-    def revoke_permission(self, request, event_id=None):
+    def revoke_permission(self, request, *args, **kwargs):
         event = self.get_object()
         
         # Check permission
@@ -2775,7 +2783,7 @@ class EventViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['get'], url_path='check-permissions')
-    def check_user_permissions(self, request, event_id=None):
+    def check_user_permissions(self, request, url_safe_title=None):
         """
         Check comprehensive permissions for a user on this event.
         
@@ -2926,8 +2934,8 @@ class EventViewSet(viewsets.ModelViewSet):
         tags=["Events", "Event Staff Invites"],
         parameters=[
             OpenApiParameter(
-                name='event_id',
-                type=OpenApiTypes.UUID,
+                name='url_safe_title',
+                type=OpenApiTypes.STR,
                 location=OpenApiParameter.PATH,
                 description='UUID of the event to list invites for',
                 required=True
@@ -3029,8 +3037,8 @@ class EventViewSet(viewsets.ModelViewSet):
         tags=["Events", "Event Staff Invites"],
         parameters=[
             OpenApiParameter(
-                name='event_id',
-                type=OpenApiTypes.UUID,
+                name='url_safe_title',
+                type=OpenApiTypes.STR,
                 location=OpenApiParameter.PATH,
                 description='UUID of the event to create invite for',
                 required=True
@@ -3063,16 +3071,16 @@ class EventViewSet(viewsets.ModelViewSet):
                 description='Permission denied. User is not event creator or existing staff member'
             ),
             404: OpenApiResponse(
-                description='Event not found with the specified event_id'
+                description='Event not found with the specified url_safe_title'
             )
         }
     )
     @action(detail=True, methods=['get', 'post'], url_path='staff-invites',
             permission_classes=[permissions.IsAuthenticated])
-    def staff_invites(self, request, event_id=None):
+    def staff_invites(self, request, url_safe_title=None):
         """List all staff invites or create a new invite for this event."""
 
-        event = get_object_or_404(Event, event_id=event_id)
+        event = get_object_or_404(Event, url_safe_title=url_safe_title)
         # GET - List invites
         if request.method == 'GET':
             queryset = EventStaffInvite.objects.filter(event=event).select_related(
@@ -3114,10 +3122,10 @@ class EventViewSet(viewsets.ModelViewSet):
             
             page = self.paginate_queryset(queryset)
             if page is not None:
-                serializer = EventStaffInviteListSerializer(page, many=True, context={'request': request, 'event_id': event.event_id})
+                serializer = EventStaffInviteListSerializer(page, many=True, context={'request': request, 'event': event.url_safe_title})
                 return self.get_paginated_response(serializer.data)
             
-            serializer = EventStaffInviteListSerializer(queryset, many=True, context={'request': request, 'event_id': event.event_id})
+            serializer = EventStaffInviteListSerializer(queryset, many=True, context={'request': request, 'event': event.url_safe_title})
             return Response(serializer.data)
         
         # POST - Create invite
@@ -3132,7 +3140,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 )
             
             # Don't pass event in data, it comes from context
-            serializer = EventStaffInviteSerializer(data=request.data, context={'request': request, 'event_id': event.event_id})
+            serializer = EventStaffInviteSerializer(data=request.data, context={'request': request, 'event': event.url_safe_title})
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -3158,8 +3166,8 @@ class EventViewSet(viewsets.ModelViewSet):
         tags=["Events", "Event Staff Invites"],
         parameters=[
             OpenApiParameter(
-                name='event_id',
-                type=OpenApiTypes.UUID,
+                name='url_safe_title',
+                type=OpenApiTypes.STR,
                 location=OpenApiParameter.PATH,
                 description='UUID of the event containing the invite',
                 required=True
@@ -3217,8 +3225,8 @@ class EventViewSet(viewsets.ModelViewSet):
         tags=["Events", "Event Staff Invites"],
         parameters=[
             OpenApiParameter(
-                name='event_id',
-                type=OpenApiTypes.UUID,
+                name='url_safe_title',
+                type=OpenApiTypes.STR,
                 location=OpenApiParameter.PATH,
                 description='UUID of the event containing the invite',
                 required=True
@@ -3279,8 +3287,8 @@ class EventViewSet(viewsets.ModelViewSet):
         tags=["Events", "Event Staff Invites"],
         parameters=[
             OpenApiParameter(
-                name='event_id',
-                type=OpenApiTypes.UUID,
+                name='url_safe_title',
+                type=OpenApiTypes.STR,
                 location=OpenApiParameter.PATH,
                 description='UUID of the event containing the invite',
                 required=True
@@ -3340,8 +3348,8 @@ class EventViewSet(viewsets.ModelViewSet):
         tags=["Events", "Event Staff Invites"],
         parameters=[
             OpenApiParameter(
-                name='event_id',
-                type=OpenApiTypes.UUID,
+                name='url_safe_title',
+                type=OpenApiTypes.STR,
                 location=OpenApiParameter.PATH,
                 description='UUID of the event containing the invite',
                 required=True
@@ -3372,7 +3380,7 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get', 'put', 'patch', 'delete'], 
             url_path='staff-invites/(?P<invite_id>[^/.]+)',
             permission_classes=[permissions.IsAuthenticated])
-    def manage_staff_invite(self, request, event_id=None, invite_id=None):
+    def manage_staff_invite(self, request, url_safe_title=None, invite_id=None):
         """Retrieve, update, or delete a specific staff invite for this event."""
         event = self.get_object()
         
@@ -3408,7 +3416,7 @@ class EventViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            serializer = EventStaffInviteSerializer(invite, context={'request': request, 'event_id': event.event_id})
+            serializer = EventStaffInviteSerializer(invite, context={'request': request, 'event': event.url_safe_title})
             return Response(serializer.data)
         
         # PUT/PATCH - Update
@@ -3425,7 +3433,7 @@ class EventViewSet(viewsets.ModelViewSet):
             partial = request.method == 'PATCH'
             serializer = EventStaffInviteSerializer(
                 invite, data=request.data, partial=partial,
-                context={'request': request, 'event_id': event.event_id}
+                context={'request': request, 'event': event.url_safe_title}
             )
             serializer.is_valid(raise_exception=True)
             serializer.save()
@@ -3488,8 +3496,8 @@ class EventViewSet(viewsets.ModelViewSet):
         tags=["Events", "Event Staff Invites"],
         parameters=[
             OpenApiParameter(
-                name='event_id',
-                type=OpenApiTypes.UUID,
+                name='url_safe_title',
+                type=OpenApiTypes.STR,
                 location=OpenApiParameter.PATH,
                 description='UUID of the event for which the invite was sent',
                 required=True
@@ -3557,7 +3565,7 @@ class EventViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'], url_path='staff-invites/(?P<invite_id>[^/.]+)/accept',
             permission_classes=[permissions.IsAuthenticated])
-    def accept_invite(self, request, event_id=None, invite_id=None):
+    def accept_invite(self, request, url_safe_title=None, invite_id=None):
         """Accept a staff invite for this event."""
         event = self.get_object()
         
@@ -3758,7 +3766,7 @@ class EventAuthorizationViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event__event_id', 'status', 'reviewed_by']
+    filterset_class = EventAuthorizationFilterSet
     ordering_fields = ['reviewed_at']
     ordering = ['-reviewed_at']
     
@@ -3848,7 +3856,7 @@ class EventPermissionViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Permission Assignments"],
         parameters=[
-            OpenApiParameter(name='event', type=OpenApiTypes.INT, description='Filter by event ID'),
+            OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event URL-safe title'),
             OpenApiParameter(name='user', type=OpenApiTypes.INT, description='Filter by user ID'),
         ]
     ),
@@ -3910,7 +3918,7 @@ class EventPermissionAssignmentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user', 'permission', 'event__event_id']
+    filterset_class = EventPermissionAssignmentFilterSet
 
     def perform_create(self, serializer):
         event = serializer.validated_data.get('event')
@@ -4002,7 +4010,7 @@ class EventRoleViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Role Assignments"],
         parameters=[
-            OpenApiParameter(name='event', type=OpenApiTypes.INT, description='Filter by event ID'),
+            OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event URL-safe title'),
             OpenApiParameter(name='user', type=OpenApiTypes.INT, description='Filter by user ID'),
         ]
     ),
@@ -4064,7 +4072,7 @@ class EventRoleAssignmentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user', 'role', 'event__event_id']
+    filterset_class = EventRoleAssignmentFilterSet
 
     def perform_create(self, serializer):
         event = serializer.validated_data.get('event')
@@ -4084,7 +4092,7 @@ class EventRoleAssignmentViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Staff"],
         parameters=[
-            OpenApiParameter(name='event', type=OpenApiTypes.INT, description='Filter by event ID'),
+            OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event URL-safe title'),
         ]
     ),
     retrieve=extend_schema(
@@ -4144,7 +4152,7 @@ class EventStaffViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, CannotTargetEventCreator]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['event', 'user', 'event__event_id']
+    filterset_class = EventStaffFilterSet
 
     def perform_create(self, serializer):
         serializer.save(assigned_by=self.request.user)
@@ -4247,7 +4255,7 @@ class EventStaffAvailabilityViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Staff Invites"],
         parameters=[
-            OpenApiParameter(name='event', type=OpenApiTypes.INT, description='Filter by event ID'),
+            OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event URL-safe title'),
             OpenApiParameter(name='target_user', type=OpenApiTypes.INT, description='Filter by target user ID'),
             OpenApiParameter(name='accepted', type=OpenApiTypes.BOOL, description='Filter by acceptance status'),
             OpenApiParameter(name='is_valid', type=OpenApiTypes.BOOL, description='Filter by validity status'),
@@ -4268,7 +4276,7 @@ class EventStaffInviteViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['event', 'target_user', 'accepted']
+    filterset_class = EventStaffInviteFilterSet
     search_fields = ['target_user__email', 'target_user__first_name', 'target_user__last_name']
 
     def get_queryset(self):
@@ -4420,7 +4428,7 @@ class EventStaffInviteViewSet(viewsets.ReadOnlyModelViewSet):
         ),
         tags=["Event Reviews"],
         parameters=[
-            OpenApiParameter(name='event', type=OpenApiTypes.INT, description='Filter by event ID'),
+            OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event URL-safe title'),
             OpenApiParameter(name='approved', type=OpenApiTypes.BOOL, description='Filter by approval status'),
         ]
     ),
@@ -4478,7 +4486,7 @@ class EventReviewViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event', 'approved', 'rating', 'event__event_id']
+    filterset_class = EventReviewFilterSet
     ordering_fields = ['created_at', 'rating']
     ordering = ['-created_at']
     
@@ -4522,7 +4530,7 @@ class EventReviewViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Questions"],
         parameters=[
-            OpenApiParameter(name='event', type=OpenApiTypes.INT, description='Filter by event ID'),
+            OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event URL-safe title'),
             OpenApiParameter(name='question_type', type=OpenApiTypes.STR, description='Filter by question type'),
         ]
     ),
@@ -4580,7 +4588,7 @@ class EventQuestionViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['event', 'question_type', 'required', 'public', 'event__event_id']
+    filterset_class = EventQuestionFilterSet
     ordering_fields = ['order', 'created_at']
     ordering = ['order']
     
@@ -5432,7 +5440,7 @@ class EventQuestionAnswerChoiceViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Venues"],
         parameters=[
-            OpenApiParameter(name='event', type=OpenApiTypes.UUID, description='Filter by event ID (UUID)'),
+            OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event URL-safe title'),
             OpenApiParameter(name='venue', type=OpenApiTypes.INT, description='Filter by venue ID'),
             OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Search by event title or venue name'),
         ]
@@ -5494,7 +5502,7 @@ class EventVenueViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['event__event_id', 'venue']
+    filterset_class = EventVenueFilterSet
     search_fields = ['event__title', 'event__display_code', 'venue__poi__name', 'venue__poi__city']
     ordering_fields = ['event__start_datetime', 'venue__poi__name']
     ordering = ['-event__start_datetime']

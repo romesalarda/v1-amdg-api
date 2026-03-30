@@ -128,7 +128,7 @@ class EventAPITest(BaseEventAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
     
     def test_retrieve_event(self):
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['title'], 'Test Conference 2025')
         self.assertIn('event_type_details', response.data)
@@ -174,14 +174,14 @@ class EventAPITest(BaseEventAPITestCase):
             'timezone': 'Europe/London',
             'created_by': self.user.id
         }
-        response = self.client.put(f'/api/event/list/{self.event.event_id}/', data, format='json')
+        response = self.client.put(f'/api/event/list/{self.event.url_safe_title}/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['title'], 'Updated Conference')
 
     def test_partial_update_event_status_back_to_drafting(self):
         self.client.force_authenticate(user=self.user)
         response = self.client.patch(
-            f'/api/event/list/{self.event.event_id}/',
+            f'/api/event/list/{self.event.url_safe_title}/',
             {'status': EventStatusChoices.DRAFTING},
             format='json'
         )
@@ -196,7 +196,7 @@ class EventAPITest(BaseEventAPITestCase):
         self.event.save(update_fields=['status'])
 
         response = self.client.patch(
-            f'/api/event/list/{self.event.event_id}/',
+            f'/api/event/list/{self.event.url_safe_title}/',
             {'status': EventStatusChoices.PUBLISHED},
             format='json'
         )
@@ -211,7 +211,7 @@ class EventAPITest(BaseEventAPITestCase):
         self.event.save(update_fields=['status'])
 
         response = self.client.patch(
-            f'/api/event/list/{self.event.event_id}/',
+            f'/api/event/list/{self.event.url_safe_title}/',
             {'status': EventStatusChoices.OPEN},
             format='json'
         )
@@ -245,7 +245,7 @@ class EventAPITest(BaseEventAPITestCase):
     def test_event_settings_action(self):
         self.event.settings.payment_enabled = True
         self.event.settings.save()
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/settings/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/settings/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['payment_enabled'])
 
@@ -287,7 +287,7 @@ class EventAuthorizationAPITest(BaseEventAPITestCase):
             organisation=self.organisation
         )
         data = {
-            'event': event2.id,
+            'event': event2.event_id,
             'status': EventAuthorizationStatusChoices.PENDING,
             'reason': 'Under review'
         }
@@ -296,7 +296,7 @@ class EventAuthorizationAPITest(BaseEventAPITestCase):
     
     def test_filter_authorizations_by_event(self):
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/authorizations/?event={self.event.id}')
+        response = self.client.get(f'/api/event/authorizations/?event={self.event.url_safe_title}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
@@ -391,7 +391,7 @@ class EventStaffAPITest(BaseEventAPITestCase):
             password='testpass123'
         )
         data = {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'user': new_user.id,
             'notes': 'Assistant'
         }
@@ -400,13 +400,13 @@ class EventStaffAPITest(BaseEventAPITestCase):
     
     def test_filter_staff_by_event(self):
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/staff/?event={self.event.id}')
+        response = self.client.get(f'/api/event/staff/?event={self.event.url_safe_title}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_remove_staff_action_deletes_non_creator_staff(self):
         self.client.force_authenticate(user=self.user)
         response = self.client.delete(
-            f'/api/event/list/{self.event.event_id}/remove-staff/?staff_id={self.staff_member.staff_id}'
+            f'/api/event/list/{self.event.url_safe_title}/remove-staff/?staff_id={self.staff_member.staff_id}'
         )
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(EventStaff.objects.filter(staff_id=self.staff_member.staff_id).exists())
@@ -421,7 +421,7 @@ class EventStaffAPITest(BaseEventAPITestCase):
 
         self.client.force_authenticate(user=self.user)
         response = self.client.delete(
-            f'/api/event/list/{self.event.event_id}/remove-staff/?staff_id={creator_staff.staff_id}'
+            f'/api/event/list/{self.event.url_safe_title}/remove-staff/?staff_id={creator_staff.staff_id}'
         )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -443,7 +443,7 @@ class EventStaffAPITest(BaseEventAPITestCase):
 
         self.client.force_authenticate(user=superuser)
         response = self.client.delete(
-            f'/api/event/list/{self.event.event_id}/remove-staff/?staff_id={creator_staff.staff_id}'
+            f'/api/event/list/{self.event.url_safe_title}/remove-staff/?staff_id={creator_staff.staff_id}'
         )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -476,14 +476,14 @@ class EventCreatorAssignmentImmutabilityAPITest(BaseEventAPITestCase):
         )
         self.role = EventRole.objects.create(
             name='Coordinator',
-            code='COORDINATOR',
+            code='CORD',
             category=EventRoleCategoryChoices.COORDINATOR
         )
 
     def test_permission_assignment_create_blocks_event_creator(self):
         self.client.force_authenticate(user=self.user)
         response = self.client.post('/api/event/permission-assignments/', {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'user': self.user.id,
             'permission': self.permission.id,
             'read_only': True,
@@ -535,7 +535,7 @@ class EventCreatorAssignmentImmutabilityAPITest(BaseEventAPITestCase):
     def test_role_assignment_create_blocks_event_creator(self):
         self.client.force_authenticate(user=self.user)
         response = self.client.post('/api/event/role-assignments/', {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'user': self.user.id,
             'role': self.role.id,
         }, format='json')
@@ -616,7 +616,7 @@ class EventReviewAPITest(BaseEventAPITestCase):
     def test_create_review(self):
         self.client.force_authenticate(user=self.staff_user)
         data = {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'rating': 4,
             'comment': 'Good event'
         }
@@ -625,7 +625,7 @@ class EventReviewAPITest(BaseEventAPITestCase):
         self.assertEqual(response.data['rating'], 4)
     
     def test_filter_reviews_by_event(self):
-        response = self.client.get(f'/api/event/reviews/?event={self.event.id}')
+        response = self.client.get(f'/api/event/reviews/?event={self.event.url_safe_title}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
     
     def test_approve_review_action(self):
@@ -668,19 +668,23 @@ class EventQuestionAPITest(BaseEventAPITestCase):
     def test_create_question(self):
         self.client.force_authenticate(user=self.user)
         data = {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'question_title': 'T-Shirt Size',
             'question_body': 'What is your t-shirt size?',
             'question_type': EventQuestionTypeChoices.SINGLE_CHOICE,
             'required': True,
-            'order': 2
+            'order': 2,
+            'options': [
+                {'option_text': 'Small', 'order': 1},
+                {'option_text': 'Medium', 'order': 2},
+            ],
         }
-        response = self.client.post('/api/event/questions/', data)
+        response = self.client.post('/api/event/questions/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     
     def test_filter_questions_by_event(self):
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/questions/?event={self.event.id}')
+        response = self.client.get(f'/api/event/questions/?event={self.event.url_safe_title}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
@@ -771,7 +775,7 @@ class EventQuestionAnswerAPITest(BaseEventAPITestCase):
         )
         data = {
             'question': str(question2.id),
-            'attendee': self.attendee.id,
+            'attendee': str(self.attendee.attendee_id),
             'answer_text': 'Jane Doe'
         }
         response = self.client.post('/api/event/question-answers/', data)
@@ -789,7 +793,7 @@ class EventSoftDeleteAPITest(BaseEventAPITestCase):
     def test_soft_delete_event_as_owner(self):
         """Test that event owner can soft delete an event"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/soft-delete/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/soft-delete/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('deleted_at', response.data)
         
@@ -806,7 +810,7 @@ class EventSoftDeleteAPITest(BaseEventAPITestCase):
             password='testpass123'
         )
         self.client.force_authenticate(user=other_user)
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/soft-delete/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/soft-delete/')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
     
     def test_soft_delete_already_deleted_event(self):
@@ -814,7 +818,7 @@ class EventSoftDeleteAPITest(BaseEventAPITestCase):
         self.client.force_authenticate(user=self.user)
         self.event.soft_delete()
         
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/soft-delete/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/soft-delete/')
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
     def test_restore_soft_deleted_event(self):
@@ -824,7 +828,7 @@ class EventSoftDeleteAPITest(BaseEventAPITestCase):
         self.event.deleted_by = self.user
         self.event.save()
         
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/restore/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/restore/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # Verify event is restored
@@ -842,7 +846,7 @@ class EventSoftDeleteAPITest(BaseEventAPITestCase):
         self.client.force_authenticate(user=other_user)
         self.event.soft_delete()
         
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/restore/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/restore/')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
@@ -873,9 +877,10 @@ class EventAvailabilityWindowAPITest(BaseEventAPITestCase):
             available_to=timezone.now() + timedelta(days=5)
         )
         
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/availability-windows/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/availability-windows/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 2)
     
     def test_add_availability_window_authenticated(self):
         """Test adding an availability window as event owner"""
@@ -891,7 +896,7 @@ class EventAvailabilityWindowAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-availability-window/',
+            f'/api/event/list/{self.event.url_safe_title}/add-availability-window/',
             data,
             format='json'
         )
@@ -914,7 +919,7 @@ class EventAvailabilityWindowAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-availability-window/',
+            f'/api/event/list/{self.event.url_safe_title}/add-availability-window/',
             data,
             format='json'
         )
@@ -939,7 +944,7 @@ class EventAvailabilityWindowAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-availability-window/',
+            f'/api/event/list/{self.event.url_safe_title}/add-availability-window/',
             data,
             format='json'
         )
@@ -963,7 +968,7 @@ class EventAvailabilityWindowAPITest(BaseEventAPITestCase):
         )
         
         response = self.client.delete(
-            f'/api/event/list/{self.event.event_id}/remove-availability-window/?window_id={window.availability_id}'
+            f'/api/event/list/{self.event.url_safe_title}/remove-availability-window/?window_id={window.availability_id}'
         )
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         
@@ -976,7 +981,7 @@ class EventAvailabilityWindowAPITest(BaseEventAPITestCase):
         
         fake_id = uuid.uuid4()
         response = self.client.delete(
-            f'/api/event/list/{self.event.event_id}/remove-availability-window/?window_id={fake_id}'
+            f'/api/event/list/{self.event.url_safe_title}/remove-availability-window/?window_id={fake_id}'
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -1034,9 +1039,10 @@ class EventResourceAPITest(BaseEventAPITestCase):
             added_by=self.user
         )
         
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/resources/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/resources/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 2)
     
     def test_add_resource_with_file(self):
         """Test adding a file resource to an event"""
@@ -1051,7 +1057,7 @@ class EventResourceAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-resource/',
+            f'/api/event/list/{self.event.url_safe_title}/add-resource/',
             data,
             format='multipart'
         )
@@ -1075,7 +1081,7 @@ class EventResourceAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-resource/',
+            f'/api/event/list/{self.event.url_safe_title}/add-resource/',
             data,
             format='json'
         )
@@ -1096,7 +1102,7 @@ class EventResourceAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-resource/',
+            f'/api/event/list/{self.event.url_safe_title}/add-resource/',
             data,
             format='multipart'
         )
@@ -1120,7 +1126,7 @@ class EventResourceAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-resource/',
+            f'/api/event/list/{self.event.url_safe_title}/add-resource/',
             data,
             format='json'
         )
@@ -1138,7 +1144,7 @@ class EventResourceAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-resource/',
+            f'/api/event/list/{self.event.url_safe_title}/add-resource/',
             data,
             format='json'
         )
@@ -1171,11 +1177,12 @@ class EventResourceAPITest(BaseEventAPITestCase):
         )
         
         response = self.client.get(
-            f'/api/event/list/{self.event.event_id}/resources/?tag=LANDING_PHOTO_MAIN'
+            f'/api/event/list/{self.event.url_safe_title}/resources/?tag=LANDING_PHOTO_MAIN'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['tag'], 'LANDING_PHOTO_MAIN')
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['tag'], 'LANDING_PHOTO_MAIN')
     
     def test_filter_resources_by_type(self):
         """Test filtering resources by resource type"""
@@ -1201,11 +1208,12 @@ class EventResourceAPITest(BaseEventAPITestCase):
         )
         
         response = self.client.get(
-            f'/api/event/list/{self.event.event_id}/resources/?resource_type={ResourceTypeChoices.DOCUMENT}'
+            f'/api/event/list/{self.event.url_safe_title}/resources/?resource_type={ResourceTypeChoices.DOCUMENT}'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['resource_type'], ResourceTypeChoices.DOCUMENT)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['resource_type'], ResourceTypeChoices.DOCUMENT)
     
     def test_remove_resource(self):
         """Test removing a resource"""
@@ -1224,7 +1232,7 @@ class EventResourceAPITest(BaseEventAPITestCase):
         )
         
         response = self.client.delete(
-            f'/api/event/list/{self.event.event_id}/remove-resource/?resource_id={resource.id}'
+            f'/api/event/list/{self.event.url_safe_title}/remove-resource/?resource_id={resource.id}'
         )
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         
@@ -1249,7 +1257,7 @@ class EventResourceAPITest(BaseEventAPITestCase):
         )
         
         response = self.client.delete(
-            f'/api/event/list/{self.event.event_id}/remove-resource/?resource_id={resource.id}'
+            f'/api/event/list/{self.event.url_safe_title}/remove-resource/?resource_id={resource.id}'
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('protected', response.data['detail'].lower())
@@ -1283,7 +1291,7 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            f'/api/event/list/{self.event.url_safe_title}/add-landing-image/',
             data,
             format='multipart'
         )
@@ -1307,7 +1315,7 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            f'/api/event/list/{self.event.url_safe_title}/add-landing-image/',
             data,
             format='multipart'
         )
@@ -1326,7 +1334,7 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
             'public': 'true'
         }
         response1 = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            f'/api/event/list/{self.event.url_safe_title}/add-landing-image/',
             data1,
             format='multipart'
         )
@@ -1340,7 +1348,7 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
             'public': 'true'
         }
         response2 = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            f'/api/event/list/{self.event.url_safe_title}/add-landing-image/',
             data2,
             format='multipart'
         )
@@ -1366,7 +1374,7 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
         }
         
         response = self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            f'/api/event/list/{self.event.url_safe_title}/add-landing-image/',
             data,
             format='multipart'
         )
@@ -1385,7 +1393,7 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
             'public': 'true'
         }
         self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            f'/api/event/list/{self.event.url_safe_title}/add-landing-image/',
             data1,
             format='multipart'
         )
@@ -1398,14 +1406,15 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
             'public': 'true'
         }
         self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            f'/api/event/list/{self.event.url_safe_title}/add-landing-image/',
             data2,
             format='multipart'
         )
         
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/landing-images/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/landing-images/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 2)
     
     def test_event_detail_includes_landing_images(self):
         """Test that event detail includes landing image fields"""
@@ -1419,12 +1428,12 @@ class EventLandingImageAPITest(BaseEventAPITestCase):
             'public': 'true'
         }
         self.client.post(
-            f'/api/event/list/{self.event.event_id}/add-landing-image/',
+            f'/api/event/list/{self.event.url_safe_title}/add-landing-image/',
             data,
             format='multipart'
         )
         
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('landing_images', response.data)
         self.assertIn('main_landing_image', response.data)
@@ -1509,7 +1518,7 @@ class EventVenueAPITest(BaseEventAPITestCase):
         """Test creating an event-venue association"""
         self.client.force_authenticate(user=self.user)
         data = {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'venue': self.venue2.id
         }
         response = self.client.post('/api/event/venues/', data)
@@ -1528,7 +1537,7 @@ class EventVenueAPITest(BaseEventAPITestCase):
     def test_create_event_venue_unauthenticated(self):
         """Test that unauthenticated users cannot create event venues"""
         data = {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'venue': self.venue2.id
         }
         response = self.client.post('/api/event/venues/', data)
@@ -1536,7 +1545,7 @@ class EventVenueAPITest(BaseEventAPITestCase):
     
     def test_filter_event_venues_by_event(self):
         """Test filtering event venues by event"""
-        response = self.client.get(f'/api/event/venues/?event={self.event.id}')
+        response = self.client.get(f'/api/event/venues/?event={self.event.url_safe_title}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(response.data['results']), 1)
         for result in response.data['results']:
@@ -1592,7 +1601,7 @@ class EventVenueAPITest(BaseEventAPITestCase):
         """Test updating an event-venue association"""
         self.client.force_authenticate(user=self.user)
         data = {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'venue': self.venue2.id
         }
         response = self.client.put(
@@ -1650,13 +1659,14 @@ class EventVenueAPITest(BaseEventAPITestCase):
         """Test that creating a duplicate event-venue association works (no unique constraint)"""
         self.client.force_authenticate(user=self.user)
         data = {
-            'event': self.event.id,
+            'event': self.event.event_id,
             'venue': self.venue.id
         }
         response = self.client.post('/api/event/venues/', data)
         # This should succeed as there's no unique constraint on event-venue pairs
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+from apps.organisations.models import UserOrganisationMembership
 
 class EventStaffInviteAPITest(BaseEventAPITestCase):
     """Test cases for EventStaffInvite API endpoints"""
@@ -1690,23 +1700,33 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
             invited_by=self.user,
             expires_at=timezone.now() + timedelta(days=7)
         )
+
+        UserOrganisationMembership.objects.create(
+            organisation=self.organisation,
+            user=self.target_user,
+        )
+
+        UserOrganisationMembership.objects.create(
+            organisation=self.organisation,
+            user=self.other_user,
+        )
     
     def test_list_staff_invites_authenticated(self):
         """Test listing staff invites as authenticated user"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(response.data['results']), 1)
     
     def test_list_staff_invites_unauthenticated(self):
         """Test that unauthenticated users cannot list invites"""
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/')
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
     
     def test_retrieve_staff_invite(self):
         """Test retrieving a specific staff invite"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['target_user_email'], 'targetuser@example.com')
         self.assertEqual(response.data['event_title'], self.event.title)
@@ -1715,7 +1735,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
     def test_retrieve_staff_invite_has_hateoas_links(self):
         """Test that staff invite includes HATEOAS links"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('_links', response.data)
         self.assertIn('self', response.data['_links'])
@@ -1729,7 +1749,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
             'target_user': self.other_user.id,
             'expires_at': (timezone.now() + timedelta(days=14)).isoformat()
         }
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['target_user'], self.other_user.id)
     
@@ -1741,6 +1761,9 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
             email='staff2@example.com',
             password='testpass123'
         )
+
+        # invite user
+        
         EventStaff.objects.create(
             event=self.event,
             user=staff_user,
@@ -1752,7 +1775,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
             'target_user': self.other_user.id,
             'expires_at': (timezone.now() + timedelta(days=14)).isoformat()
         }
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     
     def test_create_staff_invite_unauthorized(self):
@@ -1762,7 +1785,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
             'target_user': self.target_user.id,
             'expires_at': (timezone.now() + timedelta(days=14)).isoformat()
         }
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
     
     def test_create_duplicate_staff_invite_fails(self):
@@ -1771,7 +1794,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         data = {
             'target_user': self.target_user.id
         }
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
     
     def test_create_staff_invite_for_existing_staff_fails(self):
@@ -1787,7 +1810,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         data = {
             'target_user': self.other_user.id
         }
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/', data, format='json')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
     
     def test_update_staff_invite(self):
@@ -1798,7 +1821,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
             'target_user': self.target_user.id,
             'expires_at': new_expires
         }
-        response = self.client.put(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/', data, format='json')
+        response = self.client.put(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
     
     def test_partial_update_staff_invite(self):
@@ -1807,13 +1830,13 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         data = {
             'expires_at': (timezone.now() + timedelta(days=30)).isoformat()
         }
-        response = self.client.patch(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/', data, format='json')
+        response = self.client.patch(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
     
     def test_delete_staff_invite_soft_deletes(self):
         """Test that deleting an invite marks it as inactive (soft delete)"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.delete(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        response = self.client.delete(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/')
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         
         # Verify invite is still in database but inactive
@@ -1824,7 +1847,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
     def test_accept_invite_as_target_user(self):
         """Test that target user can accept their invite"""
         self.client.force_authenticate(user=self.target_user)
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/accept/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('message', response.data)
         self.assertIn('staff', response.data)
@@ -1845,7 +1868,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
     def test_accept_invite_as_non_target_user_fails(self):
         """Test that non-target user cannot accept invite"""
         self.client.force_authenticate(user=self.other_user)
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/accept/')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
     
     def test_accept_invalid_invite_fails(self):
@@ -1855,7 +1878,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         self.invite.save()
         
         self.client.force_authenticate(user=self.target_user)
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/accept/')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('error', response.data)
 
@@ -1866,10 +1889,10 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         self.invite.save()
         
         self.client.force_authenticate(user=self.target_user)
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/accept/')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-        response = self.client.post(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/accept/')
+        response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/accept/')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
     
     def test_my_invites_action(self):
@@ -1892,7 +1915,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         
         self.client.force_authenticate(user=self.target_user)
         # Get all invites for the specific event
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Should see only invites for this event where they are target user
         self.assertEqual(len(response.data['results']), 1)
@@ -1900,7 +1923,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
     def test_filter_invites_by_event(self):
         """Test that invites are automatically filtered by event from URL"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # All invites should be for this event
         for invite in response.data['results']:
@@ -1909,7 +1932,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
     def test_filter_invites_by_target_user(self):
         """Test filtering invites by target user"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/?target_user={self.target_user.id}')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/?target_user={self.target_user.id}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         for invite in response.data['results']:
             self.assertEqual(invite['target_user_email'], self.target_user.email)
@@ -1917,7 +1940,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
     def test_filter_invites_by_accepted_status(self):
         """Test filtering invites by accepted status"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/?accepted=false')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/?accepted=false')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         for invite in response.data['results']:
             self.assertFalse(invite['accepted'])
@@ -1933,7 +1956,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         )
         
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/?is_valid=true')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/?is_valid=true')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # All returned invites should be valid
@@ -1943,7 +1966,7 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
     def test_search_invites_by_email(self):
         """Test searching invites by user email"""
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/?search=targetuser')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/?search=targetuser')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(response.data['results']), 1)
     
@@ -1951,13 +1974,13 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
     def test_target_user_can_view_own_invite(self):
         """Test that target user can view their own invite"""
         self.client.force_authenticate(user=self.target_user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
     
     def test_unrelated_user_cannot_view_invite(self):
         """Test that unrelated user cannot view invite"""
         self.client.force_authenticate(user=self.other_user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/{self.invite.id}/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
     
     def test_invite_ordering(self):
@@ -1970,11 +1993,12 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         )
         
         self.client.force_authenticate(user=self.user)
-        response = self.client.get(f'/api/event/list/{self.event.event_id}/staff-invites/')
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/staff-invites/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # First result should be the newer invite
         if len(response.data['results']) >= 2:
             first_invite_id = response.data['results'][0]['id']
             self.assertEqual(str(first_invite_id), str(newer_invite.id))
+
 
