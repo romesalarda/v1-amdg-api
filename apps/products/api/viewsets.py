@@ -2622,12 +2622,29 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter queryset based on user permissions."""
+
+        from apps.events.models import Event
         user = self.request.user
         queryset = super().get_queryset()
         
         # Admins see all orders
         if user.is_superuser or user.is_staff:
             return queryset
+
+        # check query params for event, if so check if they are an event staff 
+        # event staff can see all orders for their events, even if they are not the customer or attendee
+        event_id = self.request.query_params.get('event')
+        if event_id:
+            try:
+                event = Event.objects.get(Q(url_safe_title=event_id))
+                if event.staff_members.filter(user_id=user.id).exists():
+                    return queryset.filter(
+                        Q(attendee__event__url_safe_title=event_id) |
+                        Q(customer=user)
+                    )
+            except Event.DoesNotExist:
+                pass
+        
         
         # Regular users see only their own orders
         return queryset.filter(

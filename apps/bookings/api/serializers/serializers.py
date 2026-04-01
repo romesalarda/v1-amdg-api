@@ -822,6 +822,8 @@ class BookingListSerializer(serializers.ModelSerializer):
     
     _links = serializers.SerializerMethodField()
     event_name = serializers.CharField(source='event.title', read_only=True)
+    event = serializers.SlugRelatedField(slug_field='event_id', read_only=True)
+    event_url_safe_title = serializers.CharField(source='event.url_safe_title', read_only=True)
     made_by_name = serializers.CharField(source='made_by.username', read_only=True, allow_null=True)
     attendee_count = serializers.SerializerMethodField()
     booked_at = EventTimezoneField(read_only=True)
@@ -830,7 +832,7 @@ class BookingListSerializer(serializers.ModelSerializer):
         model = Booking
         fields = (
             'id', 'booking_reference', 'event', 'event_name',
-            'made_by', 'made_by_name', 'attendee_count', 'booked_at', '_links'
+            'made_by', 'made_by_name', 'attendee_count', 'booked_at', 'event_url_safe_title', '_links'
         )
         read_only_fields = ('id', 'booking_reference', 'booked_at')
     

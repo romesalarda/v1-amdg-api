@@ -84,9 +84,10 @@ class EventProductCategoryFilterSet(filters.FilterSet):
         ?added_after=2025-01-01
     """
     
-    event = filters.NumberFilter(
-        field_name='event__id',
-        help_text="Filter by event ID"
+    event = filters.CharFilter(
+        field_name='event__url_safe_title',
+        lookup_expr='iexact',
+        help_text="Filter by event URL-safe title (case-insensitive)"
     )
     
     category = filters.NumberFilter(
@@ -155,9 +156,10 @@ class ProductFilterSet(filters.FilterSet):
     )
     
     # Event filters
-    event = filters.NumberFilter(
-        field_name='event__id',
-        help_text="Filter by event ID"
+    event = filters.CharFilter(
+        field_name='event__url_safe_title',
+        lookup_expr='iexact',
+        help_text="Filter by event URL-safe title (case-insensitive)"
     )
     
     # Category filters
@@ -417,9 +419,10 @@ class ProductVariantFilterSet(filters.FilterSet):
     )
     
     # Event filter (through product)
-    event = filters.NumberFilter(
-        field_name='product__event__id',
-        help_text="Filter by event ID"
+    event = filters.CharFilter(
+        field_name='product__event__url_safe_title',
+        lookup_expr='iexact',
+        help_text="Filter by event URL-safe title (case-insensitive)"
     )
     
     class Meta:
@@ -541,9 +544,10 @@ class OrderFilterSet(filters.FilterSet):
     )
     
     # Event filter (through attendee)
-    event = filters.NumberFilter(
-        field_name='attendee__event__id',
-        help_text="Filter by event ID"
+    event = filters.CharFilter(
+        field_name='attendee__event__url_safe_title',
+        lookup_expr='iexact',
+        help_text="Filter by event URL-safe title (slug)"
     )
 
     # Date range filters
