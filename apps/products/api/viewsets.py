@@ -20,6 +20,7 @@ from rest_framework import viewsets, status, permissions, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, PermissionDenied
+from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 
 from rest_framework.pagination import PageNumberPagination
@@ -48,7 +49,7 @@ from apps.payments.api.serializers import (
     DiscountListSerializer, DiscountDetailSerializer, DiscountCreateUpdateSerializer
 )
 from .serializers import (
-    ProductCategorySerializer,
+    ProductCategorySerializer, ProductCategoryCreateUpdateSerializer,
     EventProductCategorySerializer, EventProductCategoryCreateUpdateSerializer,
     ProductListSerializer, ProductDetailSerializer, ProductCreateSerializer, ProductUpdateSerializer,
     ProductVariantListSerializer, ProductVariantDetailSerializer, ProductVariantCreateUpdateSerializer,
@@ -67,12 +68,79 @@ from .permissions import (
 
 import decimal
 
+User = get_user_model()
+
 
 class StandardPagination(PageNumberPagination):
     """Standard pagination configuration for product endpoints."""
     page_size = 20
     page_size_query_param = 'page_size'
     max_page_size = 100
+
+
+class PurchaseContextMixin:
+    """Resolve optional attendee/customer context for serializer output enrichment."""
+
+    def _user_has_attendee_access(self, attendee, user):
+        if user.is_superuser or user.is_staff:
+            return True
+
+        attendee_owner_match = attendee.user_id == user.id
+        attendee_booking_match = bool(
+            attendee.booking_id and attendee.booking and attendee.booking.made_by_id == user.id
+        )
+        return attendee_owner_match or attendee_booking_match
+
+    def _resolve_effective_customer(self):
+        request_user = self.request.user
+        customer_id = self.request.query_params.get('customer_id')
+
+        if not customer_id or not (request_user.is_superuser or request_user.is_staff):
+            return request_user
+
+        try:
+            return User.objects.get(pk=customer_id)
+        except (User.DoesNotExist, ValueError, TypeError):
+            return request_user
+
+    def _resolve_attendee_context(self, effective_customer):
+        attendee_id = self.request.query_params.get('attendee_id')
+        if not attendee_id:
+            return None, False
+
+        from apps.attendee.models import Attendee
+
+        attendee = (
+            Attendee.objects
+            .select_related('booking', 'event', 'user')
+            .filter(attendee_id=attendee_id)
+            .first()
+        )
+        if attendee is None:
+            return None, False
+
+        if not self._user_has_attendee_access(attendee, effective_customer):
+            return None, False
+
+        requested_customer = self.request.query_params.get('customer_id')
+        if requested_customer and (self.request.user.is_superuser or self.request.user.is_staff):
+            attendee_owner_match = attendee.user_id == effective_customer.id
+            attendee_booking_match = bool(
+                attendee.booking_id and attendee.booking and attendee.booking.made_by_id == effective_customer.id
+            )
+            if not attendee_owner_match and not attendee_booking_match:
+                return None, False
+
+        return attendee, True
+
+    def _build_purchase_context(self):
+        effective_customer = self._resolve_effective_customer()
+        attendee, context_enabled = self._resolve_attendee_context(effective_customer)
+        return {
+            'context_enabled': context_enabled,
+            'context_customer': effective_customer,
+            'context_attendee': attendee,
+        }
 
 
 # ============================================================================
@@ -91,7 +159,7 @@ class StandardPagination(PageNumberPagination):
         tags=["Product Categories"],
     ),
 )
-class ProductCategoryViewSet(viewsets.ReadOnlyModelViewSet):
+class ProductCategoryViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing product categories.
     
@@ -110,7 +178,12 @@ class ProductCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['name', 'created_at']
     ordering = ['name']
     serializer_class = ProductCategorySerializer
-    http_method_names = ['get', 'head', 'options']
+
+    def get_serializer_class(self):
+        """Use stricter serializer for writes while keeping rich read responses."""
+        if self.action in ['create', 'update', 'partial_update']:
+            return ProductCategoryCreateUpdateSerializer
+        return ProductCategorySerializer
 
 
 @extend_schema_view(
@@ -171,6 +244,22 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         summary="List products",
         description="Retrieve a paginated list of products. Supports extensive filtering for e-commerce-style search including price ranges, categories, stock availability, and full-text search.",
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID to enable attendee-specific pricing and eligibility context.',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='customer_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional customer identifier override (admin/staff only).',
+                required=False,
+            ),
+        ],
         tags=["Products"],
         examples=[
             OpenApiExample(
@@ -188,6 +277,22 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
     retrieve=extend_schema(
         summary="Retrieve product details",
         description="Get detailed information about a specific product including images, variants, availability windows, and rules.",
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID to enable attendee-specific pricing and eligibility context.',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='customer_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional customer identifier override (admin/staff only).',
+                required=False,
+            ),
+        ],
         tags=["Products"],
     ),
     create=extend_schema(
@@ -260,7 +365,7 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
         tags=["Products"],
     ),
 )
-class ProductViewSet(viewsets.ModelViewSet):
+class ProductViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing products.
     
@@ -310,6 +415,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         # Event admins can see their event's products regardless of active status
         # For now, show all active products to authenticated users
         return queryset.filter(is_active=True)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context.update(self._build_purchase_context())
+        return context
     
     @extend_schema(
         summary="Add image to product",
@@ -1214,11 +1324,43 @@ class ProductViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         summary="List product variants",
         description="Retrieve a paginated list of product variants. Supports filtering by size, color, stock, price ranges. Can be accessed as nested route under products or standalone.",
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID to enable attendee-specific pricing and eligibility context.',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='customer_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional customer identifier override (admin/staff only).',
+                required=False,
+            ),
+        ],
         tags=["Product Variants"],
     ),
     retrieve=extend_schema(
         summary="Retrieve variant details",
         description="Get detailed information about a specific product variant including stock, pricing, and product details.",
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID to enable attendee-specific pricing and eligibility context.',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='customer_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional customer identifier override (admin/staff only).',
+                required=False,
+            ),
+        ],
         tags=["Product Variants"],
     ),
     create=extend_schema(
@@ -1242,7 +1384,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         tags=["Product Variants"],
     ),
 )
-class ProductVariantViewSet(viewsets.ModelViewSet):
+class ProductVariantViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing product variants.
     
@@ -1294,6 +1436,11 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         
         # Regular users see only active variants of active products
         return queryset.filter(is_active=True, product__is_active=True)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context.update(self._build_purchase_context())
+        return context
     
     @extend_schema(
         summary="Increment variant stock",
@@ -2740,6 +2887,146 @@ class OrderViewSet(viewsets.ModelViewSet):
             raise ValidationError({'error': str(e)})
 
     @extend_schema(
+        summary='Update order item quantity',
+        description='Update quantity of a specific item in a draft order. Stock and order total are reconciled atomically.',
+        request=inline_serializer(
+            name='OrderUpdateItemQuantityRequest',
+            fields={
+                'order_item_id': serializers.IntegerField(min_value=1),
+                'quantity': serializers.IntegerField(min_value=1),
+            },
+        ),
+        responses={
+            200: {'description': 'Order item updated successfully'},
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'},
+            404: {'description': 'Order or order item not found'},
+        },
+        tags=['Orders'],
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative], url_path='update-item')
+    def update_item(self, request, order_id=None):
+        """Update quantity for an order item in a draft order."""
+        from django.db import transaction
+
+        order = self.get_object()
+        if order.status != OrderStatusChoices.DRAFT:
+            raise ValidationError('Can only update items in draft orders.')
+
+        serializer = inline_serializer(
+            name='OrderUpdateItemQuantityRuntimeSerializer',
+            fields={
+                'order_item_id': serializers.IntegerField(min_value=1),
+                'quantity': serializers.IntegerField(min_value=1),
+            },
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        order_item_id = serializer.validated_data['order_item_id']
+        new_quantity = serializer.validated_data['quantity']
+
+        with transaction.atomic():
+            locked_order = get_object_or_404(Order.objects.select_for_update(), pk=order.pk)
+            order_item = get_object_or_404(
+                OrderItem.objects.select_for_update(),
+                id=order_item_id,
+                order=locked_order,
+            )
+
+            old_quantity = int(order_item.quantity)
+            quantity_delta = int(new_quantity) - old_quantity
+
+            if quantity_delta != 0:
+                if not order_item.product_variant:
+                    raise ValidationError({'order_item_id': 'This order item has no active product variant.'})
+
+                if quantity_delta > 0:
+                    order_item.product_variant.can_attendee_purchase_quantity(
+                        locked_order.attendee,
+                        quantity_delta,
+                        raise_exception=True,
+                    )
+                    order_item.product_variant.decrement_stock(quantity_delta)
+                else:
+                    order_item.product_variant.increment_stock(abs(quantity_delta))
+
+            order_item.quantity = new_quantity
+            order_item.total_price = (order_item.unit_price.amount * new_quantity).quantize(decimal.Decimal('0.01'))
+            order_item.full_clean()
+            order_item.save()
+
+            locked_order.total_amount = locked_order.get_total_amount()
+            locked_order.save(update_fields=['total_amount', 'updated_at'])
+
+            item_serializer = OrderItemSerializer(order_item, context={'request': request})
+            return Response({
+                'status': 'success',
+                'message': 'Order item quantity updated.',
+                'order_item': item_serializer.data,
+                'order_total': str(locked_order.total_amount),
+            }, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary='Remove order item',
+        description='Remove a specific order item from a draft order. Stock is restored and order total recalculated.',
+        request=inline_serializer(
+            name='OrderRemoveItemRequest',
+            fields={
+                'order_item_id': serializers.IntegerField(min_value=1),
+            },
+        ),
+        responses={
+            200: {'description': 'Order item removed successfully'},
+            400: {'description': 'Validation error'},
+            403: {'description': 'Permission denied'},
+            404: {'description': 'Order or order item not found'},
+        },
+        tags=['Orders'],
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative], url_path='remove-item')
+    def remove_item(self, request, order_id=None):
+        """Remove an item from a draft order."""
+        from django.db import transaction
+
+        order = self.get_object()
+        if order.status != OrderStatusChoices.DRAFT:
+            raise ValidationError('Can only remove items from draft orders.')
+
+        serializer = inline_serializer(
+            name='OrderRemoveItemRuntimeSerializer',
+            fields={
+                'order_item_id': serializers.IntegerField(min_value=1),
+            },
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        order_item_id = serializer.validated_data['order_item_id']
+
+        with transaction.atomic():
+            locked_order = get_object_or_404(Order.objects.select_for_update(), pk=order.pk)
+            order_item = get_object_or_404(
+                OrderItem.objects.select_for_update(),
+                id=order_item_id,
+                order=locked_order,
+            )
+
+            if order_item.product_variant:
+                order_item.product_variant.increment_stock(int(order_item.quantity))
+
+            order_item.delete()
+
+            locked_order.total_amount = locked_order.get_total_amount()
+            locked_order.save(update_fields=['total_amount', 'updated_at'])
+
+            return Response({
+                'status': 'success',
+                'message': 'Order item removed.',
+                'order_total': str(locked_order.total_amount),
+            }, status=status.HTTP_200_OK)
+
+    @extend_schema(
         summary='Preview order pricing',
         description='Simulate product order totals and discount impacts for an attendee without creating a persisted order.',
         request=inline_serializer(
@@ -3010,6 +3297,15 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             locked_order.transition_to(OrderStatusChoices.PENDING)
 
+            attendee_name = (
+                f"{locked_order.attendee.first_name} {locked_order.attendee.last_name}".strip()
+                or str(locked_order.attendee.attendee_id)
+            )
+            payment_description = (
+                f"Payment made for attendee {attendee_name} "
+                f"for {locked_order.attendee.event.title} with price of {locked_order.total_amount}"
+            )
+
             # Create payment for non-free orders
             # Create payment with order as target
             payment = Payment.objects.create(
@@ -3019,6 +3315,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 base_amount=locked_order.total_amount,
                 status=PaymentStatusChoices.PENDING,
                 target=locked_order,
+                description=payment_description,
                 metadata=locked_order.get_metadata()
             )
             
@@ -3037,6 +3334,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 'order_reference': locked_order.order_reference_id,
                 'payment_id': str(payment.payment_id),
                 'payment_reference': payment.payment_reference,
+                'payment_description': payment.description,
                 'total_amount': str(locked_order.total_amount.amount),
                 'currency': str(locked_order.total_amount.currency.code),
                 '_links': {
@@ -3059,10 +3357,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                         currency=locked_order.total_amount.currency.code,
                         payment_reference=payment.payment_reference,
                         customer_email=request.user.email,
-                        metadata=stripe_metadata
+                        metadata=stripe_metadata,
+                        description=payment.description,
                     )
                     
-                    payment.stripe_payment_intent_id = payment_intent['id']
+                    payment.stripe_payment_intent = payment_intent['id']
                     payment.save()
                     
                     response_data['stripe_client_secret'] = payment_intent['client_secret']

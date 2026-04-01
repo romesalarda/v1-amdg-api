@@ -37,6 +37,8 @@ from apps.products.models import (
 from apps.events.models import Event
 from apps.common.models import Resource
 from apps.common.api.serializers import AvailabilityWindowSerializer
+from apps.payments.evaluator import discount_applies
+from apps.payments.models.discounts import DiscountType
 
 User = get_user_model()
 
@@ -309,7 +311,55 @@ class ProductImageField(serializers.Field):
         return data
 
 
-class ProductListSerializer(serializers.ModelSerializer):
+class ContextAwarePricingMixin:
+    """Shared helpers for attendee-aware pricing and eligibility fields."""
+
+    def _get_context_attendee(self):
+        if not self.context.get('context_enabled', False):
+            return None
+        return self.context.get('context_attendee')
+
+    def _is_attendee_context_valid_for_variant(self, obj) -> bool:
+        attendee = self._get_context_attendee()
+        if not attendee:
+            return False
+        return attendee.event_id == obj.product.event_id
+
+    def _is_attendee_context_valid_for_product(self, obj) -> bool:
+        attendee = self._get_context_attendee()
+        if not attendee:
+            return False
+        return attendee.event_id == obj.event_id
+
+    def _get_attendee_context(self):
+        attendee = self._get_context_attendee()
+        if not attendee:
+            return None
+        return attendee.pricing_context()
+
+    def _get_applicable_discounts(self, obj) -> list:
+        attendee_context = self._get_attendee_context()
+        if attendee_context is None:
+            return []
+
+        discounts = []
+        for discount in obj.discounts:
+            if not discount_applies(discount, attendee_context):
+                continue
+            discounts.append({
+                'discount_id': str(discount.discount_id),
+                'name': discount.name,
+                'discount_type': discount.discount_type,
+                'value': str(
+                    discount.percentage
+                    if discount.discount_type == DiscountType.PERCENTAGE
+                    else discount.amount
+                ),
+            })
+        return discounts
+
+
+class ProductListSerializer(ContextAwarePricingMixin, serializers.ModelSerializer):
     """List serializer for Product with essential information and HATEOAS."""
     
     _links = serializers.SerializerMethodField()
@@ -318,6 +368,10 @@ class ProductListSerializer(serializers.ModelSerializer):
     variant_count = serializers.IntegerField(source='variants.count', read_only=True)
     categories = serializers.StringRelatedField(many=True, read_only=True)
     main_image = serializers.SerializerMethodField()
+    context_can_purchase = serializers.SerializerMethodField()
+    context_has_discount = serializers.SerializerMethodField()
+    context_final_price = serializers.SerializerMethodField()
+    context_discounts = serializers.SerializerMethodField()
     added_at = EventTimezoneField(read_only=True)
     
     class Meta:
@@ -326,6 +380,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             'id', 'product_id', 'display_code', 'title', 'event', 'event_name',
             'base_amount', 'base_amount_currency', 'percentage_modifier', 'final_price', 'verified',
             'is_active', 'variant_count', 'categories', 'main_image',
+            'context_can_purchase', 'context_has_discount', 'context_final_price', 'context_discounts',
             'added_at', '_links'
         )
         read_only_fields = ('id', 'product_id', 'display_code', 'added_at', 'variant_count')
@@ -353,6 +408,47 @@ class ProductListSerializer(serializers.ModelSerializer):
                 'url': request.build_absolute_uri(main_img.image.url) if request else None,
             }
         return None
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_context_can_purchase(self, obj):
+        """Return attendee-context eligibility for product-level purchase rules."""
+        if not self._is_attendee_context_valid_for_product(obj):
+            return None
+
+        attendee = self._get_context_attendee()
+        try:
+            return bool(obj.is_purchasable and obj.evaluate_rules(context=attendee.get_base_context()))
+        except Exception:
+            return False
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_context_has_discount(self, obj):
+        """Whether attendee context matches at least one product-level discount."""
+        if not self._is_attendee_context_valid_for_product(obj):
+            return None
+        return len(self._get_applicable_discounts(obj)) > 0
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_context_final_price(self, obj):
+        """Final attendee-context price at product level."""
+        if not self._is_attendee_context_valid_for_product(obj):
+            return None
+
+        attendee_context = self._get_attendee_context()
+        if attendee_context is None:
+            return None
+
+        try:
+            return str(obj.total_amount_for_context(attendee_context))
+        except Exception:
+            return None
+
+    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
+    def get_context_discounts(self, obj):
+        """Applicable discounts for this product in attendee context."""
+        if not self._is_attendee_context_valid_for_product(obj):
+            return None
+        return self._get_applicable_discounts(obj)
     
     @extend_schema_field({
         'type': 'object',
@@ -457,17 +553,9 @@ class ProductDetailSerializer(ProductListSerializer):
     @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
     def get_variants(self, obj) -> list:
         """Return summary of product variants."""
-        request = self.context.get('request')
         variants = obj.variants.filter(is_active=True)[:20]
-        return [{
-            'id': v.variant_id,
-            'size': v.size,
-            'color': v.color,
-            'stock_quantity': v.stock_quantity,
-            'is_active': v.is_active,
-            'url': request.build_absolute_uri(f"/api/products/list/{obj.product_id}/variants/{v.variant_id}/") if request else None,
-            'image_url': request.build_absolute_uri(v.resources.filter(tag='VARIANT_PHOTO_MAIN').first().image.url) if request and v.resources.filter(tag='VARIANT_PHOTO_MAIN').exists() else None,
-        } for v in variants]
+        serializer = ProductVariantListSerializer(variants, many=True, context=self.context)
+        return serializer.data
 
 
 class ProductCreateSerializer(serializers.ModelSerializer):
@@ -769,7 +857,7 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
 # PRODUCT VARIANT SERIALIZERS
 # ============================================================================
 
-class ProductVariantListSerializer(serializers.ModelSerializer):
+class ProductVariantListSerializer(ContextAwarePricingMixin, serializers.ModelSerializer):
     """List serializer for ProductVariant with essential information."""
     
     _links = serializers.SerializerMethodField()
@@ -778,6 +866,11 @@ class ProductVariantListSerializer(serializers.ModelSerializer):
     size_display = serializers.CharField(source='get_size_display', read_only=True)
     is_in_stock = serializers.SerializerMethodField()
     images = serializers.SerializerMethodField()
+    context_can_purchase = serializers.SerializerMethodField()
+    context_remaining_quantity = serializers.SerializerMethodField()
+    context_has_discount = serializers.SerializerMethodField()
+    context_final_price = serializers.SerializerMethodField()
+    context_discounts = serializers.SerializerMethodField()
     added_at = EventTimezoneField(read_only=True)
     
     class Meta:
@@ -786,6 +879,8 @@ class ProductVariantListSerializer(serializers.ModelSerializer):
             'id', 'variant_id', 'product', 'product_title', 'size', 'size_display',
             'color', 'stock_quantity', 'max_purchase_quantity_per_order',
             'final_price', 'is_active', 'verified', 'is_in_stock',
+            'context_can_purchase', 'context_remaining_quantity', 'context_has_discount',
+            'context_final_price', 'context_discounts',
             'images', 'added_at', '_links'
         )
         read_only_fields = ('id', 'variant_id', 'added_at')
@@ -797,6 +892,58 @@ class ProductVariantListSerializer(serializers.ModelSerializer):
     def get_is_in_stock(self, obj) -> bool:
         """Check if variant has stock."""
         return obj.stock_quantity > 0
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_context_can_purchase(self, obj):
+        """Whether attendee can purchase this variant in current context."""
+        if not self._is_attendee_context_valid_for_variant(obj):
+            return None
+
+        attendee = self._get_context_attendee()
+        try:
+            return obj.can_attendee_purchase(attendee)
+        except Exception:
+            return False
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_context_remaining_quantity(self, obj):
+        """How many units attendee can still purchase for this variant."""
+        if not self._is_attendee_context_valid_for_variant(obj):
+            return None
+
+        attendee = self._get_context_attendee()
+        try:
+            purchased = int(obj.get_attendee_purchase_quantity(attendee))
+            remaining = int(obj.max_purchase_quantity_per_order) - purchased
+            return max(remaining, 0)
+        except Exception:
+            return 0
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_context_has_discount(self, obj):
+        """Whether attendee context matches at least one variant discount."""
+        if not self._is_attendee_context_valid_for_variant(obj):
+            return None
+        return len(self._get_applicable_discounts(obj)) > 0
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_context_final_price(self, obj):
+        """Final attendee-context unit price for this variant."""
+        if not self._is_attendee_context_valid_for_variant(obj):
+            return None
+
+        attendee = self._get_context_attendee()
+        try:
+            return str(obj.get_attendee_final_price(attendee))
+        except Exception:
+            return None
+
+    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
+    def get_context_discounts(self, obj):
+        """Applicable discounts for this variant in attendee context."""
+        if not self._is_attendee_context_valid_for_variant(obj):
+            return None
+        return self._get_applicable_discounts(obj)
     
     @extend_schema_field({
         'type': 'object',

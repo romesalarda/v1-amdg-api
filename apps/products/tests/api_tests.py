@@ -925,7 +925,7 @@ class OrderAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.customer_user)
         data = {
             'customer': self.customer_user.id,
-            'attendee': self.attendee.id,
+            'attendee': str(self.attendee.attendee_id),
             'items': [
                 {
                     'product_variant_id': str(self.variant.variant_id),
@@ -934,7 +934,7 @@ class OrderAPITestCase(APITestCase):
             ]
         }
         response = self.client.post('/api/products/orders/', data, format='json')
-        
+        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         
         # Verify order was created with correct total
@@ -951,7 +951,7 @@ class OrderAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.customer_user)
         data = {
             'customer': self.customer_user.id,
-            'attendee': self.attendee.id,
+            'attendee': str(self.attendee.attendee_id),
             'items': []
         }
         response = self.client.post('/api/products/orders/', data, format='json')
