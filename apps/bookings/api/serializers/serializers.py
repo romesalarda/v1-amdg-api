@@ -947,12 +947,19 @@ class BookingDetailSerializer(BookingListSerializer):
                 'payment_reference': {'type': 'string'},
                 'status': {'type': 'string'},
                 'amount': {'type': 'string'},
+                'method': {'type': 'string'},
                 'url': {'type': 'string', 'format': 'uri'},
+                'description': {'type': 'string'},
+                'method_id': {'type': 'string', 'format': 'uuid'},
+                'method_type': {'type': 'string'},
+                'method_title': {'type': 'string'},
+                'bank_reference': {'type': 'string'},
             }
         }
     })
     def get_payments(self, obj) -> list:
         """Return list of associated payments with links."""
+        from apps.payments.api.serializers import PaymentMethodDetailSerializer
         request = self.context.get('request')
         payments = []
         
@@ -963,6 +970,12 @@ class BookingDetailSerializer(BookingListSerializer):
                 'payment_reference': payment.payment_reference,
                 'status': payment.status,
                 'amount': str(payment.modified_amount),
+                'provided_details': payment.method.provided_details,
+                'method_id': payment.method.method_id,
+                'description': payment.description,
+                'method_type': payment.method.method_type,
+                'method_title': payment.method.title,
+                'bank_reference': payment.bank_transfer_reference,
             }
             if request:
                 payment_data['url'] = request.build_absolute_uri(f"/api/payments/list/{payment.payment_id}/")
