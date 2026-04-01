@@ -20,6 +20,7 @@ from rest_framework import viewsets, status, permissions, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, PermissionDenied
+from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 
 from rest_framework.pagination import PageNumberPagination
@@ -48,7 +49,7 @@ from apps.payments.api.serializers import (
     DiscountListSerializer, DiscountDetailSerializer, DiscountCreateUpdateSerializer
 )
 from .serializers import (
-    ProductCategorySerializer,
+    ProductCategorySerializer, ProductCategoryCreateUpdateSerializer,
     EventProductCategorySerializer, EventProductCategoryCreateUpdateSerializer,
     ProductListSerializer, ProductDetailSerializer, ProductCreateSerializer, ProductUpdateSerializer,
     ProductVariantListSerializer, ProductVariantDetailSerializer, ProductVariantCreateUpdateSerializer,
@@ -67,12 +68,79 @@ from .permissions import (
 
 import decimal
 
+User = get_user_model()
+
 
 class StandardPagination(PageNumberPagination):
     """Standard pagination configuration for product endpoints."""
     page_size = 20
     page_size_query_param = 'page_size'
     max_page_size = 100
+
+
+class PurchaseContextMixin:
+    """Resolve optional attendee/customer context for serializer output enrichment."""
+
+    def _user_has_attendee_access(self, attendee, user):
+        if user.is_superuser or user.is_staff:
+            return True
+
+        attendee_owner_match = attendee.user_id == user.id
+        attendee_booking_match = bool(
+            attendee.booking_id and attendee.booking and attendee.booking.made_by_id == user.id
+        )
+        return attendee_owner_match or attendee_booking_match
+
+    def _resolve_effective_customer(self):
+        request_user = self.request.user
+        customer_id = self.request.query_params.get('customer_id')
+
+        if not customer_id or not (request_user.is_superuser or request_user.is_staff):
+            return request_user
+
+        try:
+            return User.objects.get(pk=customer_id)
+        except (User.DoesNotExist, ValueError, TypeError):
+            return request_user
+
+    def _resolve_attendee_context(self, effective_customer):
+        attendee_id = self.request.query_params.get('attendee_id')
+        if not attendee_id:
+            return None, False
+
+        from apps.attendee.models import Attendee
+
+        attendee = (
+            Attendee.objects
+            .select_related('booking', 'event', 'user')
+            .filter(attendee_id=attendee_id)
+            .first()
+        )
+        if attendee is None:
+            return None, False
+
+        if not self._user_has_attendee_access(attendee, effective_customer):
+            return None, False
+
+        requested_customer = self.request.query_params.get('customer_id')
+        if requested_customer and (self.request.user.is_superuser or self.request.user.is_staff):
+            attendee_owner_match = attendee.user_id == effective_customer.id
+            attendee_booking_match = bool(
+                attendee.booking_id and attendee.booking and attendee.booking.made_by_id == effective_customer.id
+            )
+            if not attendee_owner_match and not attendee_booking_match:
+                return None, False
+
+        return attendee, True
+
+    def _build_purchase_context(self):
+        effective_customer = self._resolve_effective_customer()
+        attendee, context_enabled = self._resolve_attendee_context(effective_customer)
+        return {
+            'context_enabled': context_enabled,
+            'context_customer': effective_customer,
+            'context_attendee': attendee,
+        }
 
 
 # ============================================================================
@@ -91,7 +159,7 @@ class StandardPagination(PageNumberPagination):
         tags=["Product Categories"],
     ),
 )
-class ProductCategoryViewSet(viewsets.ReadOnlyModelViewSet):
+class ProductCategoryViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing product categories.
     
@@ -110,7 +178,12 @@ class ProductCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['name', 'created_at']
     ordering = ['name']
     serializer_class = ProductCategorySerializer
-    http_method_names = ['get', 'head', 'options']
+
+    def get_serializer_class(self):
+        """Use stricter serializer for writes while keeping rich read responses."""
+        if self.action in ['create', 'update', 'partial_update']:
+            return ProductCategoryCreateUpdateSerializer
+        return ProductCategorySerializer
 
 
 @extend_schema_view(
@@ -171,6 +244,22 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         summary="List products",
         description="Retrieve a paginated list of products. Supports extensive filtering for e-commerce-style search including price ranges, categories, stock availability, and full-text search.",
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID to enable attendee-specific pricing and eligibility context.',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='customer_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional customer identifier override (admin/staff only).',
+                required=False,
+            ),
+        ],
         tags=["Products"],
         examples=[
             OpenApiExample(
@@ -188,6 +277,22 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
     retrieve=extend_schema(
         summary="Retrieve product details",
         description="Get detailed information about a specific product including images, variants, availability windows, and rules.",
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID to enable attendee-specific pricing and eligibility context.',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='customer_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional customer identifier override (admin/staff only).',
+                required=False,
+            ),
+        ],
         tags=["Products"],
     ),
     create=extend_schema(
@@ -260,7 +365,7 @@ class EventProductCategoryViewSet(viewsets.ModelViewSet):
         tags=["Products"],
     ),
 )
-class ProductViewSet(viewsets.ModelViewSet):
+class ProductViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing products.
     
@@ -310,6 +415,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         # Event admins can see their event's products regardless of active status
         # For now, show all active products to authenticated users
         return queryset.filter(is_active=True)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context.update(self._build_purchase_context())
+        return context
     
     @extend_schema(
         summary="Add image to product",
@@ -1214,11 +1324,43 @@ class ProductViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         summary="List product variants",
         description="Retrieve a paginated list of product variants. Supports filtering by size, color, stock, price ranges. Can be accessed as nested route under products or standalone.",
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID to enable attendee-specific pricing and eligibility context.',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='customer_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional customer identifier override (admin/staff only).',
+                required=False,
+            ),
+        ],
         tags=["Product Variants"],
     ),
     retrieve=extend_schema(
         summary="Retrieve variant details",
         description="Get detailed information about a specific product variant including stock, pricing, and product details.",
+        parameters=[
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID to enable attendee-specific pricing and eligibility context.',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='customer_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional customer identifier override (admin/staff only).',
+                required=False,
+            ),
+        ],
         tags=["Product Variants"],
     ),
     create=extend_schema(
@@ -1242,7 +1384,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         tags=["Product Variants"],
     ),
 )
-class ProductVariantViewSet(viewsets.ModelViewSet):
+class ProductVariantViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing product variants.
     
@@ -1294,6 +1436,11 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
         
         # Regular users see only active variants of active products
         return queryset.filter(is_active=True, product__is_active=True)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context.update(self._build_purchase_context())
+        return context
     
     @extend_schema(
         summary="Increment variant stock",
