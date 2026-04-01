@@ -746,6 +746,48 @@ class EventMyOutstandingPaymentSerializer(serializers.Serializer):
 
         return data
 
+
+class EventMyPaymentSummaryItemSerializer(serializers.Serializer):
+    payment_id = serializers.UUIDField(read_only=True)
+    payment_reference = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    amount = serializers.CharField(read_only=True)
+    currency = serializers.CharField(read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    method_type = serializers.CharField(read_only=True, allow_null=True)
+    method_title = serializers.CharField(read_only=True, allow_null=True)
+    provided_details = serializers.JSONField(read_only=True, allow_null=True)
+    bank_reference = serializers.CharField(read_only=True, allow_null=True)
+    source = serializers.ChoiceField(choices=['BOOKING', 'SHOP_ORDER'], read_only=True)
+    is_outstanding = serializers.BooleanField(read_only=True)
+    descriptor = serializers.CharField(read_only=True, allow_null=True)
+
+    order_id = serializers.UUIDField(read_only=True, allow_null=True)
+    order_reference = serializers.CharField(read_only=True, allow_null=True)
+    order_status = serializers.CharField(read_only=True, allow_null=True)
+
+    attendee_id = serializers.UUIDField(read_only=True, allow_null=True)
+    attendee_display_id = serializers.CharField(read_only=True, allow_null=True)
+    attendee_name = serializers.CharField(read_only=True, allow_null=True)
+
+
+class EventMyPaymentSummaryTotalsSerializer(serializers.Serializer):
+    total_payments = serializers.IntegerField(read_only=True)
+    outstanding_payments = serializers.IntegerField(read_only=True)
+    booking_outstanding_payments = serializers.IntegerField(read_only=True)
+    shop_outstanding_payments = serializers.IntegerField(read_only=True)
+    total_outstanding_amount = serializers.CharField(read_only=True)
+
+
+class EventMyPaymentSummarySerializer(serializers.Serializer):
+    booking_reference = serializers.CharField(read_only=True)
+    attendee_filter = serializers.CharField(read_only=True, allow_null=True)
+    totals = EventMyPaymentSummaryTotalsSerializer(read_only=True)
+    booking_payments = EventMyPaymentSummaryItemSerializer(many=True, read_only=True)
+    shop_payments = EventMyPaymentSummaryItemSerializer(many=True, read_only=True)
+    attendee_payments = EventMyPaymentSummaryItemSerializer(many=True, read_only=True)
+    outstanding_payments = EventMyPaymentSummaryItemSerializer(many=True, read_only=True)
+
 class EventCreateUpdateSerializer(serializers.ModelSerializer):
     timezone = serializers.CharField()
     _links = serializers.SerializerMethodField(read_only=True)
