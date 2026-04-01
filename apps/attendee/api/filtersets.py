@@ -794,7 +794,7 @@ class EmergencyContactFilterSet(django_filters.FilterSet):
 class ConsentFilterSet(django_filters.FilterSet):
     """FilterSet for Consent."""
     
-    event = django_filters.UUIDFilter(field_name='event__event_id')
+    event = django_filters.CharFilter(field_name='event__url_safe_title')
     code = django_filters.CharFilter(lookup_expr='iexact')
     title = django_filters.CharFilter(lookup_expr='icontains')
     required = django_filters.BooleanFilter()
@@ -820,7 +820,7 @@ class AttendeeConsentFilterSet(django_filters.FilterSet):
 class EventAttendanceFilterSet(django_filters.FilterSet):
     """FilterSet for EventAttendance."""
     
-    event = django_filters.UUIDFilter(field_name='event__event_id')
+    event = django_filters.CharFilter(field_name='event__url_safe_title')
     attendee = django_filters.UUIDFilter(field_name='attendee__attendee_id')
     is_checked_in = django_filters.BooleanFilter(method='filter_is_checked_in')
     is_checked_out = django_filters.BooleanFilter(method='filter_is_checked_out')

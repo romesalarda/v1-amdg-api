@@ -9,6 +9,8 @@ from django.db.models import Q, Prefetch, Count
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from decimal import Decimal
+import uuid
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -46,8 +48,11 @@ from apps.events.api.serializers import (
     EventVenueSerializer, EventStaffInviteSerializer, EventStaffInviteListSerializer,
     EventMyBookingResponseSerializer,
         EventMyOutstandingPaymentSerializer,
+        EventMyPaymentSummarySerializer,
 )
 from apps.bookings.models import Booking
+from apps.products.models.orders import Order
+from apps.payments.models import PaymentStatusChoices
 
 from apps.events.services import OutstandingPaymentsService
 from apps.events.api.filtersets import (
@@ -583,6 +588,198 @@ class EventViewSet(viewsets.ModelViewSet):
 
         # Return paginated response
         return paginator.get_paginated_response(serializer.data)
+
+    def _serialize_payment_summary_item(self, payment, source, order=None, attendee=None):
+        amount = None
+        currency = None
+        if getattr(payment, 'base_amount', None):
+            amount = str(payment.base_amount)
+            currency = str(payment.base_amount.currency)
+
+        method = getattr(payment, 'method', None)
+        descriptor = payment.target_type.model if getattr(payment, 'target_type', None) else None
+
+        return {
+            'payment_id': payment.payment_id,
+            'payment_reference': payment.payment_reference,
+            'status': payment.status,
+            'amount': amount,
+            'currency': currency,
+            'created_at': payment.created_at,
+            'method_type': getattr(method, 'method_type', None),
+            'method_title': getattr(method, 'title', None),
+            'provided_details': getattr(method, 'provided_details', None),
+            'bank_reference': payment.bank_transfer_reference,
+            'source': source,
+            'is_outstanding': payment.status in [
+                PaymentStatusChoices.DRAFTING,
+                PaymentStatusChoices.PENDING,
+            ],
+            'descriptor': descriptor,
+            'order_id': getattr(order, 'order_id', None),
+            'order_reference': getattr(order, 'order_reference_id', None),
+            'order_status': getattr(order, 'status', None),
+            'attendee_id': getattr(attendee, 'attendee_id', None),
+            'attendee_display_id': getattr(attendee, 'attendee_display_id', None),
+            'attendee_name': getattr(attendee, 'full_name', None),
+        }
+
+    @extend_schema(
+        summary='Get Unified Payment Summary For Current User Booking',
+        description=(
+            'Retrieve a unified booking payment summary for the current authenticated user, '
+            'including booking-level payments and shop/order payments for attendees in the booking. '
+            'Supports optional attendee filtering to focus attendee-specific payments while still '
+            'returning booking-wide payment context.'
+        ),
+        tags=['Events'],
+        parameters=[
+            OpenApiParameter(
+                name='booking_reference',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional booking reference to target a specific booking within this event.'
+            ),
+            OpenApiParameter(
+                name='attendee_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional attendee UUID filter for attendee-specific payment section.'
+            ),
+        ],
+        responses={
+            200: EventMyPaymentSummarySerializer,
+            401: OpenApiResponse(description='Authentication required'),
+            404: OpenApiResponse(description='Event or booking not found'),
+        }
+    )
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='my-payment-summary',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def my_payment_summary(self, request, url_safe_title=None):
+        event = self.get_object()
+
+        bookings_qs = Booking.objects.filter(event=event).filter(
+            Q(made_by=request.user) | Q(attendees__user=request.user)
+        ).distinct().order_by('-booked_at', '-id')
+
+        booking_reference = request.query_params.get('booking_reference')
+        if booking_reference:
+            bookings_qs = bookings_qs.filter(booking_reference=booking_reference)
+
+        booking = bookings_qs.first()
+        if not booking:
+            return Response(
+                {'detail': 'Booking not found for this event.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        attendee_filter = request.query_params.get('attendee_id')
+        # test if the attendee id is a uuid, if not, fetch the attendee id 
+        if attendee_filter:
+            try:
+                uuid.UUID(attendee_filter)  
+
+
+            except ValueError:
+                # expected firstname-lastname attempt to parse
+
+                try:
+                    first_name, last_name = attendee_filter.split('-')
+                except ValueError:
+                    return Response(
+                        {'detail': 'Invalid attendee_id format. Must be UUID or first-last name separated by hyphen.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                
+                attendee = booking.attendees.filter(
+                    Q(user__first_name__iexact=first_name, user__last_name__iexact=last_name) |
+                    Q(attendee_display_id=attendee_filter)
+                ).first()
+                if attendee:
+                    attendee_filter = str(attendee.attendee_id)
+                else:
+                    return Response(
+                        {'detail': 'Attendee not found for this booking.'},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+        booking_attendees = booking.attendees.filter(event=event)
+
+        booking_payments_qs = booking.payments.select_related('method', 'target_type').order_by('-created_at')
+
+        order_qs = Order.objects.filter(
+            attendee__booking=booking,
+            attendee__event=event,
+            payment__isnull=False,
+        ).select_related('payment__method', 'payment__target_type', 'attendee').order_by('-created_at')
+
+        if attendee_filter:
+            order_qs = order_qs.filter(attendee__attendee_id=attendee_filter)
+
+        booking_payment_items = [
+            self._serialize_payment_summary_item(payment=payment, source='BOOKING')
+            for payment in booking_payments_qs
+        ]
+
+        shop_payment_items = [
+            self._serialize_payment_summary_item(
+                payment=order.payment,
+                source='SHOP_ORDER',
+                order=order,
+                attendee=order.attendee,
+            )
+            for order in order_qs
+            if order.payment is not None
+        ]
+
+        attendee_payment_items = shop_payment_items
+        if not attendee_filter:
+            attendee_ids = set(booking_attendees.values_list('attendee_id', flat=True))
+            attendee_payment_items = [
+                item for item in shop_payment_items
+                if item.get('attendee_id') in attendee_ids
+            ]
+
+        all_items = booking_payment_items + shop_payment_items
+        outstanding_items = [item for item in all_items if item.get('is_outstanding')]
+
+        outstanding_total = Decimal('0.00')
+        for item in outstanding_items:
+            amount = str(item.get('amount') or '')
+            try:
+                outstanding_total += Decimal(amount.split(' ')[0])
+            except Exception:
+                continue
+
+        booking_outstanding = len([
+            item for item in booking_payment_items if item.get('is_outstanding')
+        ])
+        shop_outstanding = len([
+            item for item in shop_payment_items if item.get('is_outstanding')
+        ])
+
+        payload = {
+            'booking_reference': booking.booking_reference,
+            'attendee_filter': attendee_filter,
+            'totals': {
+                'total_payments': len(all_items),
+                'outstanding_payments': len(outstanding_items),
+                'booking_outstanding_payments': booking_outstanding,
+                'shop_outstanding_payments': shop_outstanding,
+                'total_outstanding_amount': f'{outstanding_total:.2f}',
+            },
+            'booking_payments': booking_payment_items,
+            'shop_payments': shop_payment_items,
+            'attendee_payments': attendee_payment_items,
+            'outstanding_payments': outstanding_items,
+        }
+
+        serializer = EventMyPaymentSummarySerializer(payload, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Get sponsorable events",
