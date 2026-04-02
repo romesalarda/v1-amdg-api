@@ -486,10 +486,10 @@ class CheckoutValidationService:
     @staticmethod
     def validate_checkout_request(
         intent_id,
-        method_id: int,
+        method_id: Optional[int],
         attendee_selections: List[Dict[str, Any]],
         user: Optional[CommunityUser] = None
-    ) -> Tuple[BookingIntent, PaymentMethod]:
+    ) -> Tuple[BookingIntent, Optional[PaymentMethod]]:
         """
         Comprehensive validation of entire checkout request.
         
@@ -502,12 +502,12 @@ class CheckoutValidationService:
         
         Args:
             intent_id: UUID of booking intent
-            method_id: ID of payment method
+            method_id: Optional ID of payment method
             attendee_selections: List of attendee selection dicts
             user: Authenticated user (for ownership validation)
             
         Returns:
-            Tuple of (BookingIntent, PaymentMethod) if valid
+            Tuple of (BookingIntent, PaymentMethod|None) if valid
             
         Raises:
             ValidationError with field-specific errors
@@ -516,8 +516,11 @@ class CheckoutValidationService:
         intent = CheckoutValidationService.validate_booking_intent(intent_id, user)
         event = intent.event
         
-        # Validate payment method
-        method = CheckoutValidationService.validate_payment_method(method_id, event)
+        # Validate payment method only when explicitly provided.
+        # Free checkouts can defer this requirement to the view after pricing is computed.
+        method = None
+        if method_id not in (None, 0) and method_id > 0:
+            method = CheckoutValidationService.validate_payment_method(method_id, event)
         
         # Validate attendee count
         CheckoutValidationService.validate_attendee_count(
