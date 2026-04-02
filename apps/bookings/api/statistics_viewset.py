@@ -177,8 +177,10 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
+        from apps.utils.querying import get_event_or_url_safe_title
+        event = request.query_params.get('event_id')
         filters = {
-            'event_id': request.query_params.get('event_id'),
+            'event_id': get_event_or_url_safe_title(event).event_id if event else None,
             'organization_id': request.query_params.get('organization_id'),
             'include_deleted': request.query_params.get('include_deleted', 'false').lower() == 'true',
         }

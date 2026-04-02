@@ -127,7 +127,7 @@ LIMIT_PARAM = OpenApiParameter(
 # ============================================================================
 # STATISTICS VIEWSET
 # ============================================================================
-
+from apps.utils.querying import get_event_or_url_safe_title
 @extend_schema_view(
     list=extend_schema(
         summary="Available statistics endpoints",
@@ -186,15 +186,8 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         
         # Event ID (validate UUID format)
         event_id = request.query_params.get('event_id')
-        if event_id:
-            try:
-                # Validate UUID format
-                uuid.UUID(event_id)
-                filters['event_id'] = event_id
-            except ValueError:
-                raise exceptions.ValidationError({
-                    'event_id': 'Invalid UUID format.'
-                })
+        event_id = get_event_or_url_safe_title(event_id).event_id if event_id else None
+        filters['event_id'] = event_id
         
         # Include deleted (boolean)
         include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'

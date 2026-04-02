@@ -80,6 +80,7 @@ LIMIT_PARAM = OpenApiParameter(
 	default=20,
 )
 
+from apps.utils.querying import get_event_or_url_safe_title
 
 class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	"""Statistics endpoints for organisations, events, members and payments."""
@@ -147,7 +148,10 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 		try:
 			UUID(value)
 		except ValueError as exc:
-			raise exceptions.ValidationError({"event_id": "Must be a valid UUID."}) from exc
+			
+			value = str(get_event_or_url_safe_title(value).event_id)
+			
+
 
 		event = Event.objects.filter(event_id=value).first()
 		if event is None:

@@ -646,7 +646,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
     
     queryset = EventSponsor.objects.select_related(
         'organisation', 'event', 'added_by', 'verified_by', 'processed_by', 'package'
-    )
+    ).order_by('-added_at')
     permission_classes = [permissions.IsAuthenticated, IsOrganisationControllerOrEventAdmin]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]

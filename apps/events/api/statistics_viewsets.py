@@ -159,14 +159,19 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         """Extract common filter parameters from request."""
         from datetime import datetime
         from rest_framework.exceptions import ValidationError
-        
+        from apps.utils.querying import get_event_or_url_safe_title
+
         filters = {}
         
         if request.query_params.get('event'):
             event = request.query_params['event']
             if not event or not isinstance(event, str) or len(event.strip()) == 0:
                 raise ValidationError({'event': 'Invalid format for event.'})
-            filters['event_id'] = event.strip()
+            
+            # first test if its a uuid, most likely it will be the URL safe title, but we want to support both
+        if request.query_params.get('event_id'):
+            event_id = get_event_or_url_safe_title(request.query_params['event_id']).event_id
+            filters['event_id'] = str(event_id)
             
         if request.query_params.get('event_type_id'):
             filters['event_type_id'] = int(request.query_params['event_type_id'])
@@ -192,7 +197,6 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
                 filters['date_to'] = date_str
             except ValueError:
                 raise ValidationError({'date_to': 'Invalid date format. Use YYYY-MM-DD.'})
-        
         return filters
     
     def _add_filter_metadata(self, data, request):

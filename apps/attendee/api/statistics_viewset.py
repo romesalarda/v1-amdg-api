@@ -24,6 +24,8 @@ from drf_spectacular.utils import (
 from drf_spectacular.types import OpenApiTypes
 from django.utils import timezone
 from datetime import datetime, date
+from django.shortcuts import get_object_or_404
+from urllib3 import request
 
 from apps.attendee import statistics
 from apps.attendee.models import Attendee
@@ -44,6 +46,9 @@ from apps.attendee.api.serializers.statistics import (
     AttendeeOverviewStatsSerializer,
     DemographicsSerializer,
 )
+
+from apps.utils.querying import get_event_or_url_safe_title
+import uuid
 
 
 # ============================================================================
@@ -118,6 +123,7 @@ GROUP_BY_PARAM = OpenApiParameter(
 # STATISTICS VIEWSET
 # ============================================================================
 
+
 @extend_schema_view(
     list=extend_schema(
         summary="Available statistics endpoints",
@@ -148,8 +154,10 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
     
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
+
+        event_id = request.query_params.get('event_id')
         return {
-            'event_id': request.query_params.get('event_id'),
+            'event_id': str(get_event_or_url_safe_title(event_id).event_id),
             'include_deleted': request.query_params.get('include_deleted', 'false').lower() == 'true',
         }
     
@@ -159,7 +167,7 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
         
         event_id = request.query_params.get('event_id')
         if event_id:
-            filters_applied['event_id'] = event_id
+            filters_applied['event_id'] = str(get_event_or_url_safe_title(event_id).event_id)
         
         include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'
         if include_deleted:
