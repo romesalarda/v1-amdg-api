@@ -14,7 +14,7 @@ class CountryLocationAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Location Information', {
-            'fields': ('country', 'general_sector', 'specific_sector', 'active')
+            'fields': ('country', 'general_sector', 'specific_sector', 'active', 'longitude', 'latitude')
         }),
         ('Metadata', {
             'fields': ('date_added',),
@@ -32,7 +32,7 @@ class ClusterLocationAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Cluster Information', {
-            'fields': ('cluster_name', 'cluster_code', 'country', 'description', 'active')
+            'fields': ('cluster_name', 'cluster_code', 'country', 'description', 'active', 'longitude', 'latitude')
         }),
         ('Dates', {
             'fields': ('established_date', 'date_added', 'date_updated'),
@@ -51,7 +51,7 @@ class ChapterLocationAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Chapter Information', {
-            'fields': ('chapter_name', 'chapter_code', 'cluster', 'description', 'active')
+            'fields': ('chapter_name', 'chapter_code', 'cluster', 'description', 'active', 'longitude', 'latitude')
         }),
         ('Dates', {
             'fields': ('established_date', 'date_added', 'date_updated'),
@@ -70,7 +70,7 @@ class AreaLocationAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Area Information', {
-            'fields': ('area_name', 'area_code', 'chapter', 'description', 'active')
+            'fields': ('area_name', 'area_code', 'chapter', 'description', 'active', 'longitude', 'latitude')
         }),
         ('Identification', {
             'fields': ('area_id',),

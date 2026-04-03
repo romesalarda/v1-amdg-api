@@ -518,9 +518,9 @@ class EventSponsorFilterSet(filters.FilterSet):
         help_text="Filter by organisation UUID"
     )
 
-    event_id = filters.UUIDFilter(
-        field_name='event__event_id',
-        help_text="Filter by event UUID"
+    event_id = filters.CharFilter(
+        field_name='event__url_safe_title',
+        help_text="Filter by event URL-safe title"
     )
 
     package_id = filters.UUIDFilter(
@@ -597,9 +597,9 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
         help_text="Search in package name and description"
     )
 
-    event_id = filters.UUIDFilter(
-        field_name='event__event_id',
-        help_text="Filter by event UUID"
+    event_id = filters.CharFilter(
+        field_name='event__url_safe_title',
+        help_text="Filter by event URL-safe title"
     )
     
     tier = filters.NumberFilter(
@@ -670,9 +670,9 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
 class EventSponsorInviteFilterSet(filters.FilterSet):
     """Filterset for EventSponsorInvite model."""
 
-    event_id = filters.UUIDFilter(
-        field_name='event__event_id',
-        help_text="Filter by event UUID"
+    event_id = filters.CharFilter(
+        field_name='event__url_safe_title',
+        help_text="Filter by event URL-safe title"
     )
 
     organisation_id = filters.UUIDFilter(

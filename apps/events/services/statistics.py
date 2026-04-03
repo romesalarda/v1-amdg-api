@@ -33,11 +33,19 @@ from apps.attendee.models import Attendee
 from apps.products.models import Product
 from apps.payments.models import Payment, PaymentStatusChoices
 from apps.organisations.models import EventSponsor, EventSponsorPackage
-
+import uuid
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+def _is_valid_uuid(value):
+    """Check if the provided value is a valid UUID."""
+    try:
+        uuid.UUID(str(value))
+        return True
+    except ValueError:
+        return False
 
 def _get_base_queryset(
     event_id: Optional[str] = None,
@@ -65,7 +73,10 @@ def _get_base_queryset(
         queryset = queryset.filter(deleted_at__isnull=True)
     
     if event_id:
-        queryset = queryset.filter(url_safe_title=event_id)
+        if _is_valid_uuid(event_id):
+            queryset = queryset.filter(event_id=event_id)
+        else:
+            queryset = queryset.filter(url_safe_title=event_id)
     
     if event_type_id:
         queryset = queryset.filter(event_type_id=event_type_id)

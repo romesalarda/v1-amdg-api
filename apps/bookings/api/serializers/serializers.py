@@ -967,16 +967,19 @@ class BookingDetailSerializer(BookingListSerializer):
         
         # Get payments through the PaymentMixin
         for payment in obj.payments.all():
+
+
+            method = payment.method if payment.method else None
             payment_data = {
                 'payment_id': str(payment.payment_id),
                 'payment_reference': payment.payment_reference,
                 'status': payment.status,
                 'amount': str(payment.modified_amount),
-                'provided_details': payment.method.provided_details,
-                'method_id': payment.method.method_id,
+                'provided_details': method.provided_details if method else None,
+                'method_id': method.method_id if method else None,
                 'description': payment.description,
-                'method_type': payment.method.method_type,
-                'method_title': payment.method.title,
+                'method_type': method.method_type if method else None,
+                'method_title': method.title if method else None,
                 'bank_reference': payment.bank_transfer_reference,
             }
             if request:

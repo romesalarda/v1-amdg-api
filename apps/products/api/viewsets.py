@@ -3180,7 +3180,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         request=inline_serializer(
             name='OrderCheckoutRequest',
             fields={
-                'payment_method_id': serializers.IntegerField(help_text="ID of payment method to use")
+                'payment_method_id': serializers.IntegerField(
+                    required=False,
+                    allow_null=True,
+                    help_text="Optional payment method ID. Required when order total is greater than 0."
+                )
             }
         ),
         responses={

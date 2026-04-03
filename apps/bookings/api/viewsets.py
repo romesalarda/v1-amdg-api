@@ -645,6 +645,37 @@ class BookingViewSet(viewsets.ModelViewSet):
                     'booking_finalized': False,
                 }
 
+                if total_amount.amount == 0:
+                    payment = Payment.objects.create(
+                        user=user,
+                        event=intent.event,
+                        method=payment_method,
+                        base_amount=total_amount,
+                        percentage_modifier=Decimal('0.00'),
+                        description=f"Checkout intent {intent.booking_intent_id} - {intent.event.title} (free)",
+                        status=PaymentStatusChoices.COMPLETED,
+                        metadata=payment_metadata,
+                    )
+
+                    if idempotency_key:
+                        intent.last_checkout_idempotency_key = idempotency_key
+                        intent.save(update_fields=['last_checkout_idempotency_key'])
+
+                    finalization = BookingCheckoutFinalizer.finalize_for_stripe(payment, actor=user)
+                    booking = finalization['booking']
+                    response_data = build_response(
+                        payment,
+                        'confirmed',
+                        'Registration completed. No payment required.',
+                        booking=booking,
+                    )
+                    return Response(response_data, status=status.HTTP_201_CREATED)
+
+                if not payment_method:
+                    raise ValidationError({
+                        'payment_method_id': 'Payment method is required when total amount is greater than 0.'
+                    })
+
                 payment = Payment.objects.create(
                     user=user,
                     event=intent.event,

@@ -1531,11 +1531,16 @@ class OrderCheckoutSerializer(serializers.Serializer):
     """
     
     payment_method_id = serializers.IntegerField(
-        help_text="ID of the PaymentMethod to use for this order"
+        required=False,
+        allow_null=True,
+        help_text="Optional payment method ID. Required only when order total is greater than 0."
     )
     
     def validate_payment_method_id(self, value):
         """Validate payment method exists and is active."""
+        if value in (None, 0) or value < 0:
+            return None
+
         from apps.payments.models import PaymentMethod
         
         try:
@@ -1571,9 +1576,20 @@ class OrderCheckoutSerializer(serializers.Serializer):
                 'order': 'Order must have at least one item.'
             })
         
+        # Free orders do not require a payment method.
+        if order.total_amount and order.total_amount.amount == 0:
+            attrs['payment_method'] = None
+            return attrs
+
+        method_id = attrs.get('payment_method_id')
+        if not method_id:
+            raise serializers.ValidationError({
+                'payment_method_id': 'Payment method is required when order total is greater than 0.'
+            })
+
         # Validate payment method belongs to same event as order
         from apps.payments.models import PaymentMethod
-        payment_method = PaymentMethod.objects.get(id=attrs['payment_method_id'])
+        payment_method = PaymentMethod.objects.get(id=method_id)
         
         order_event = order.attendee.event if order.attendee else None
         if not order_event:

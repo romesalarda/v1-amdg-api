@@ -48,7 +48,7 @@ from apps.products.api.serializers.statistics import (
     ProductRevenueBreakdownSerializer,
     ProductOverviewStatisticsSerializer,
 )
-
+from django.db.models import Q
 import uuid
 
 
@@ -217,7 +217,19 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             if filters['event_id']:
                 filters['event_id'] = uuid.UUID(filters['event_id'])
         except (ValueError, TypeError):
-            raise exceptions.ValidationError("Invalid event_id format. Must be a valid UUID.")
+            
+            try:
+                from apps.events.models import Event
+                
+                event = Event.objects.filter(Q(url_safe_title=filters['event_id'])).first()
+                if event:
+                    filters['event_id'] = event.event_id
+                else:
+                    raise exceptions.ValidationError("Event with given UUID or URL-safe title not found.")
+            except exceptions.ValidationError as e:
+                raise e
+            
+            # raise exceptions.ValidationError("Invalid event_id format. Must be a valid UUID.")
         
         # Optional integer fields
         if request.query_params.get('category_id'):

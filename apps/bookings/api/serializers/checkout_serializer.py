@@ -645,7 +645,9 @@ class CheckoutSerializer(serializers.Serializer):
         help_text="UUID of the BookingIntent to complete"
     )
     payment_method_id = serializers.IntegerField(
-        help_text="ID of the PaymentMethod to use (must be active and match event)"
+        required=False,
+        allow_null=True,
+        help_text="Optional payment method ID. Required for paid checkouts; omitted for free checkouts."
     )
     stripe_payment_intent_id = serializers.CharField(
         required=False,
@@ -681,6 +683,10 @@ class CheckoutSerializer(serializers.Serializer):
     
     def validate_payment_method_id(self, value):
         """Validate payment method exists and is active."""
+        # Support legacy/free-checkout placeholders from clients.
+        if value in (None, 0) or value < 0:
+            return None
+
         from apps.payments.models import PaymentMethod
         
         try:

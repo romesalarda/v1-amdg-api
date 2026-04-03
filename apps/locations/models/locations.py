@@ -70,6 +70,8 @@ class CountryLocation (models.Model):
     specific_sector = models.CharField(verbose_name="specific world sector", choices=SpecificSectorType)
     date_added = models.DateField(auto_now_add=True)
     active = models.BooleanField(verbose_name="is-active-country", default=True)
+    longitude = models.FloatField(verbose_name="longitude", blank=True, null=True)
+    latitude = models.FloatField(verbose_name="latitude", blank=True, null=True)
     
     def __str__(self):
         return f"{self.general_sector} -> {self.specific_sector} -> {self.country}"
@@ -94,6 +96,9 @@ class ClusterLocation (models.Model):
     
     date_added = models.DateField(auto_now_add=True)
     date_updated = models.DateField(auto_now=True)
+
+    longitude = models.FloatField(verbose_name="longitude", blank=True, null=True)
+    latitude = models.FloatField(verbose_name="latitude", blank=True, null=True)
     
     def save(self, *args, **kwargs):
         if not self.cluster_code:
@@ -126,6 +131,9 @@ class ChapterLocation (models.Model):
     
     date_added = models.DateField(auto_now_add=True)
     date_updated = models.DateField(auto_now=True)
+
+    longitude = models.FloatField(verbose_name="longitude", blank=True, null=True)
+    latitude = models.FloatField(verbose_name="latitude", blank=True, null=True)
 
     class Meta:
         unique_together = ("chapter_name", "cluster")
@@ -163,6 +171,8 @@ class AreaLocation (models.Model):
     date_added = models.DateField(auto_now_add=True)
     date_updated = models.DateField(auto_now=True)
 
+    longitude = models.FloatField(verbose_name="longitude", blank=True, null=True)
+    latitude = models.FloatField(verbose_name="latitude", blank=True, null=True)
     class Meta:
         unique_together = ("area_name", "chapter")
         constraints = [
@@ -189,12 +199,16 @@ class AreaLocation (models.Model):
     def title(self):
         return f"{self.area_name}"
     
+    
 class RelativeArea(models.Model):
     '''
     assisting model for relative locations
     '''
     name = models.CharField(verbose_name=_("name of relative location"), max_length=100) 
     relative_area = models.ForeignKey(AreaLocation, on_delete=models.SET_NULL, null=True, related_name="relative_search_areas")
+
+    longitude = models.FloatField(verbose_name="longitude", blank=True, null=True)
+    latitude = models.FloatField(verbose_name="latitude", blank=True, null=True)
     
     def save(self, *args, **kwargs):
         self.name = self.name.strip().title()

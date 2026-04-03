@@ -392,7 +392,6 @@ def calculate_event_performance_statistics(
 			Decimal("0.00"),
 		),
 	).order_by("-completed_payment_amount", "-attendee_count")
-
 	rows = []
 	for event in annotated[:limit]:
 		rows.append(

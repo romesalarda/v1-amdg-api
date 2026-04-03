@@ -52,8 +52,8 @@ class CountryLocationListSerializer(serializers.ModelSerializer):
     class Meta:
         model = CountryLocation
         fields = (
-            'id', 'country', 'general_sector', 'specific_sector', 'country_name', 'general_sector_display', 'specific_sector_display', 
-            'active', 'date_added', '_links'
+            'id', 'country', 'general_sector', 'specific_sector', 'country_name', 'general_sector_display', 'specific_sector_display',
+            'latitude', 'longitude', 'active', 'date_added', '_links'
         )
         read_only_fields = ('id', 'date_added')
         extra_kwargs = {
@@ -131,7 +131,7 @@ class ClusterLocationListSerializer(serializers.ModelSerializer):
         model = ClusterLocation
         fields = (
             'id', 'cluster_name', 'cluster_code', 'country', 'description',
-            'active', 'established_date', 'date_added', 'date_updated',
+            'latitude', 'longitude', 'active', 'established_date', 'date_added', 'date_updated',
             '_links'
         )
         read_only_fields = ('id', 'date_added', 'date_updated')
@@ -401,7 +401,7 @@ class ChapterLocationListSerializer(serializers.ModelSerializer):
         model = ChapterLocation
         fields = (
             'id', 'chapter_name', 'chapter_code', 'cluster', 'cluster_name',
-            'description', 'active', 'established_date',
+            'description', 'latitude', 'longitude', 'active', 'established_date',
             'date_added', 'date_updated', '_links'
         )
         read_only_fields = ('id', 'date_added', 'date_updated')
@@ -528,7 +528,7 @@ class AreaLocationListSerializer(serializers.ModelSerializer):
         model = AreaLocation
         fields = (
             'id', 'area_id_str', 'area_name', 'area_code', 'chapter', 'chapter_name',
-            'description', 'active', 'established_date',
+            'description', 'latitude', 'longitude', 'active', 'established_date',
             'date_added', 'date_updated', '_links'
         )
         read_only_fields = ('id', 'area_id_str', 'date_added', 'date_updated')
