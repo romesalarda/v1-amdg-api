@@ -21,6 +21,7 @@ from apps.locations.api.viewsets import (
     VenueContactViewSet,
     VenueMetadataViewSet,
 )
+from apps.locations.api.statistics_viewsets import LocationStatisticsViewSet
 
 app_name = 'locations'
 
@@ -40,5 +41,10 @@ router.register(r'venue-contacts', VenueContactViewSet, basename='venuecontact')
 router.register(r'venue-metadata', VenueMetadataViewSet, basename='venuemetadata')
 
 urlpatterns = [
+    path(
+        'locations/statistics/distribution-map/',
+        LocationStatisticsViewSet.as_view({'get': 'distribution_map'}),
+        name='location-distribution-map',
+    ),
     path('locations/', include(router.urls)),
 ]
