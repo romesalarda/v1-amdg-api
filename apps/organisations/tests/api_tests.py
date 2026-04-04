@@ -62,6 +62,7 @@ class OrganisationAPITest(TestCase):
             description='Catholic community',
             created_by=self.admin_user
         )
+        self.organisation_slug = self.organisation.url_safe_title
         
         # Add controller
         OrganisationControl.objects.create(
@@ -78,6 +79,7 @@ class OrganisationAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('results', response.data)
         self.assertEqual(len(response.data['results']), 1)
+        self.assertIn('url_safe_title', response.data['results'][0])
     
     def test_list_organisations_authenticated(self):
         """Test listing organisations with authentication."""
@@ -90,15 +92,22 @@ class OrganisationAPITest(TestCase):
     
     def test_retrieve_organisation_detail(self):
         """Test retrieving organisation details."""
-        url = reverse('organisations:organisation-detail', kwargs={'pk': self.organisation.id})
+        url = reverse('organisations:organisation-detail', kwargs={'url_safe_title': self.organisation_slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['title'], 'St. Mary\'s Parish')
+        self.assertEqual(response.data['url_safe_title'], self.organisation_slug)
         self.assertIn('_links', response.data)
         self.assertIn('self', response.data['_links'])
         self.assertIn('contacts', response.data['_links'])
         self.assertIn('memberships', response.data['_links'])
+
+    def test_retrieve_organisation_detail_by_numeric_id_still_works(self):
+        """Test numeric organisation detail URLs remain valid during migration."""
+        response = self.client.get(f'/api/organisations/list/{self.organisation.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
     
     def test_create_organisation_authenticated(self):
         """Test creating an organisation."""
@@ -131,7 +140,7 @@ class OrganisationAPITest(TestCase):
     def test_update_organisation_as_controller(self):
         """Test updating organisation as controller."""
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisation-detail', kwargs={'pk': self.organisation.id})
+        url = reverse('organisations:organisation-detail', kwargs={'url_safe_title': self.organisation_slug})
         data = {
             'title': 'St. Mary\'s Parish',
             'description': 'Updated description'
@@ -145,7 +154,7 @@ class OrganisationAPITest(TestCase):
     def test_update_organisation_as_non_controller_fails(self):
         """Test updating organisation as non-controller fails."""
         self.client.force_authenticate(user=self.regular_user)
-        url = reverse('organisations:organisation-detail', kwargs={'pk': self.organisation.id})
+        url = reverse('organisations:organisation-detail', kwargs={'url_safe_title': self.organisation_slug})
         data = {'description': 'Unauthorized update'}
         response = self.client.patch(url, data, format='json')
         
@@ -154,7 +163,7 @@ class OrganisationAPITest(TestCase):
     def test_delete_organisation_as_controller(self):
         """Test deleting organisation as controller."""
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisation-detail', kwargs={'pk': self.organisation.id})
+        url = reverse('organisations:organisation-detail', kwargs={'url_safe_title': self.organisation_slug})
         response = self.client.delete(url)
         
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -169,7 +178,7 @@ class OrganisationAPITest(TestCase):
             email='fr.john@parish.org'
         )
         
-        url = reverse('organisations:organisation-contacts', kwargs={'pk': self.organisation.id})
+        url = reverse('organisations:organisation-contacts', kwargs={'url_safe_title': self.organisation_slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -184,7 +193,7 @@ class OrganisationAPITest(TestCase):
             added_by=self.admin_user
         )
         
-        url = reverse('organisations:organisation-memberships', kwargs={'pk': self.organisation.id})
+        url = reverse('organisations:organisation-memberships', kwargs={'url_safe_title': self.organisation_slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -224,6 +233,7 @@ class OrganisationContactAPITest(TestCase):
             title='Test Parish',
             created_by=self.admin_user
         )
+        self.organisation_slug = self.organisation.url_safe_title
         OrganisationControl.objects.create(
             organisation=self.organisation,
             user=self.controller_user,
@@ -285,7 +295,7 @@ class OrganisationContactAPITest(TestCase):
         """Test filtering contacts by organisation."""
         self.client.force_authenticate(user=self.controller_user)
         url = reverse('organisations:organisationcontact-list')
-        response = self.client.get(url, {'organisation': self.organisation.id})
+        response = self.client.get(url, {'organisation': self.organisation_slug})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
@@ -528,6 +538,7 @@ class OrganisationInviteAPITest(TestCase):
             title='Test Parish',
             created_by=self.admin_user
         )
+        self.organisation_slug = self.organisation.url_safe_title
         OrganisationControl.objects.create(
             organisation=self.organisation,
             user=self.controller_user,
@@ -939,10 +950,12 @@ class EventSponsorInviteAndCheckoutAPITest(TestCase):
             end_datetime=timezone.now() + timedelta(days=31),
             organisation=self.event_org,
         )
-        EventSettings.objects.create(
+        EventSettings.objects.update_or_create(
             event=self.event,
-            payment_enabled=True,
-            accepting_sponsorships_enabled=True,
+            defaults={
+                'payment_enabled': True,
+                'accepting_sponsorships_enabled': True,
+            },
         )
 
         self.package = EventSponsorPackage.objects.create(
@@ -1035,6 +1048,7 @@ class LeaderAPITest(TestCase):
             title='Test Parish',
             created_by=self.admin_user
         )
+        self.organisation_slug = self.organisation.url_safe_title
         OrganisationControl.objects.create(
             organisation=self.organisation,
             user=self.controller_user,
@@ -1159,7 +1173,7 @@ class LeaderAPITest(TestCase):
         
         self.client.force_authenticate(user=self.controller_user)
         url = reverse('organisations:leader-list')
-        response = self.client.get(url, {'organisation': self.organisation.id})
+        response = self.client.get(url, {'organisation': self.organisation_slug})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)

@@ -50,6 +50,8 @@ class OrganisationStatisticsAPITest(TestCase):
 
         self.org1 = Organisation.objects.create(title="Org 1", created_by=self.superuser)
         self.org2 = Organisation.objects.create(title="Org 2", created_by=self.superuser)
+        self.org1_slug = self.org1.url_safe_title
+        self.org2_slug = self.org2.url_safe_title
 
         OrganisationControl.objects.create(
             organisation=self.org1,
@@ -307,7 +309,7 @@ class OrganisationStatisticsAPITest(TestCase):
         self.client.force_authenticate(user=self.outsider)
         url = reverse("organisations:organisationstatistics-overview")
 
-        response = self.client.get(url, {"organisation_id": self.org1.id})
+        response = self.client.get(url, {"organisation_id": self.org1_slug})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -315,7 +317,7 @@ class OrganisationStatisticsAPITest(TestCase):
         self.client.force_authenticate(user=self.superuser)
         url = reverse("organisations:organisationstatistics-overview")
 
-        response = self.client.get(url, {"organisation_id": self.org2.id})
+        response = self.client.get(url, {"organisation_id": self.org2_slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["total_events"], 1)

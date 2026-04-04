@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.core.validators import EmailValidator, RegexValidator, MinLengthValidator
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.utils.text import slugify
 
 from core.utils.validators import PhoneNumberValidator
 from core.utils.display import generate_alphanumeric_id
@@ -17,6 +18,9 @@ class Organisation(models.Model):
     
     title = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True)
+    short_description = models.CharField(max_length=500, blank=True, help_text="A short description of the organisation for display in lists and summaries.")
+
+    url_safe_title = models.CharField(max_length=255, unique=True, blank=True, null=True, help_text="URL-safe version of the title, auto-generated if not provided.")
     
     landing_image = models.ImageField(upload_to='organisation/landing-images/', blank=True, null=True)
     landing_image_uploaded_at = models.DateTimeField(auto_now_add=True)
@@ -36,6 +40,12 @@ class Organisation(models.Model):
     def __str__(self):
         return self.title
     
+    def save(self, *args, **kwargs):
+        if not self.url_safe_title:
+            self.url_safe_title = slugify(self.title + "-" + str(uuid.uuid4())[:8])  # Ensure uniqueness with a short UUID suffix     
+        super().save(*args, **kwargs)
+
+
 class OrganisationContact(models.Model):
     '''
     Model representing a contact person for an organisation.

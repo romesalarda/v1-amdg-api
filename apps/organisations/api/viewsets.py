@@ -26,6 +26,7 @@ from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
 from django.db.models import Q, Prefetch, Count, Sum
+from django.http import Http404
 from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth import get_user_model
@@ -48,6 +49,7 @@ from apps.organisations.models import (
 )
 from apps.events.models import Event
 from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
+from apps.utils.querying import get_organisation_or_url_safe_title
 from .serializers import (
     OrganisationListSerializer, OrganisationDetailSerializer, OrganisationCreateUpdateSerializer,
     OrganisationContactSerializer, OrganisationContactCreateUpdateSerializer,
@@ -126,6 +128,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     queryset = Organisation.objects.select_related('created_by').prefetch_related(
         'contacts', 'memberships', 'controllers'
     )
+    lookup_field = 'url_safe_title'
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOrganisationControllerOrEventAdmin | IsReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -133,6 +136,12 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     search_fields = ['title', 'description']
     ordering_fields = ['title', 'added_at', 'updated_at']
     ordering = ['title']
+
+    def get_object(self):
+        lookup_value = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
+        organisation = get_organisation_or_url_safe_title(lookup_value)
+        self.check_object_permissions(self.request, organisation)
+        return organisation
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -149,7 +158,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         tags=["Organisations"],
     )
     @action(detail=True, methods=['get'])
-    def contacts(self, request, pk=None):
+    def contacts(self, request, url_safe_title=None, pk=None):
         """Get all contacts for an organisation."""
         organisation = self.get_object()
         contacts = organisation.contacts.all()
@@ -165,7 +174,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         tags=["Organisations"],
     )
     @action(detail=True, methods=['get'])
-    def memberships(self, request, pk=None):
+    def memberships(self, request, url_safe_title=None, pk=None):
         """Get all memberships for an organisation."""
         organisation = self.get_object()
         memberships = organisation.memberships.select_related('user', 'added_by').all()
@@ -662,13 +671,8 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             return None, Response({'organisation_id': ['organisation_id is required.']}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            organisation_id_value = int(organisation_id)
-        except ValueError:
-            return None, Response({'organisation_id': ['organisation_id must be an integer.']}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            organisation = Organisation.objects.get(pk=organisation_id_value)
-        except Organisation.DoesNotExist:
+            organisation = get_organisation_or_url_safe_title(organisation_id)
+        except Http404:
             return None, Response({'organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
 
         is_org_controller = request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
@@ -695,18 +699,16 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
         sponsor_org_id = request.query_params.get('sponsor_organisation_id')
         if sponsor_org_id:
             try:
-                sponsor_org_id_value = int(sponsor_org_id)
-            except ValueError:
-                return None, Response({'sponsor_organisation_id': ['sponsor_organisation_id must be an integer.']}, status=status.HTTP_400_BAD_REQUEST)
-            queryset = queryset.filter(organisation_id=sponsor_org_id_value)
+                queryset = queryset.filter(organisation=get_organisation_or_url_safe_title(sponsor_org_id))
+            except Http404:
+                return None, Response({'sponsor_organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
 
         event_org_id = request.query_params.get('event_organisation_id')
         if event_org_id:
             try:
-                event_org_id_value = int(event_org_id)
-            except ValueError:
-                return None, Response({'event_organisation_id': ['event_organisation_id must be an integer.']}, status=status.HTTP_400_BAD_REQUEST)
-            queryset = queryset.filter(event__organisation_id=event_org_id_value)
+                queryset = queryset.filter(event__organisation=get_organisation_or_url_safe_title(event_org_id))
+            except Http404:
+                return None, Response({'event_organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
 
         return queryset, None
 
@@ -762,9 +764,9 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Sponsors"],
         parameters=[
-            OpenApiParameter(name='organisation_id', type=OpenApiTypes.INT, required=True, description='Organisation ID.'),
+            OpenApiParameter(name='organisation_id', type=OpenApiTypes.STR, required=True, description='Organisation id or url_safe_title.'),
             OpenApiParameter(name='event_id', type=OpenApiTypes.UUID, required=False, description='Event public UUID.'),
-            OpenApiParameter(name='sponsor_organisation_id', type=OpenApiTypes.INT, required=False, description='Sponsor organisation ID.'),
+            OpenApiParameter(name='sponsor_organisation_id', type=OpenApiTypes.STR, required=False, description='Sponsor organisation id or url_safe_title.'),
         ],
         responses={200: EventSponsorLedgerSerializer(many=True)},
     )
@@ -804,9 +806,9 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
         ),
         tags=["Event Sponsors"],
         parameters=[
-            OpenApiParameter(name='organisation_id', type=OpenApiTypes.INT, required=True, description='Organisation ID.'),
+            OpenApiParameter(name='organisation_id', type=OpenApiTypes.STR, required=True, description='Organisation id or url_safe_title.'),
             OpenApiParameter(name='event_id', type=OpenApiTypes.UUID, required=False, description='Event public UUID.'),
-            OpenApiParameter(name='event_organisation_id', type=OpenApiTypes.INT, required=False, description='Event organisation ID.'),
+            OpenApiParameter(name='event_organisation_id', type=OpenApiTypes.STR, required=False, description='Event organisation id or url_safe_title.'),
         ],
         responses={200: EventSponsorLedgerSerializer(many=True)},
     )
@@ -1043,8 +1045,8 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             return Response({'event_id': ['event_id is required.']}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            organisation = Organisation.objects.get(pk=organisation_id)
-        except Organisation.DoesNotExist:
+            organisation = get_organisation_or_url_safe_title(organisation_id)
+        except Http404:
             return Response({'organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
 
         try:
@@ -1312,7 +1314,7 @@ User = get_user_model()
         tags=["Organisation Leaders"],
         parameters=[
             OpenApiParameter(name='user', type=OpenApiTypes.INT, description='Filter by user ID'),
-            OpenApiParameter(name='organisation', type=OpenApiTypes.INT, description='Filter by organisation ID'),
+            OpenApiParameter(name='organisation', type=OpenApiTypes.STR, description='Filter by organisation id or url_safe_title'),
             OpenApiParameter(name='location_type', type=OpenApiTypes.STR, description='Filter by location type (country, cluster, chapter, area)'),
             OpenApiParameter(name='location_id', type=OpenApiTypes.INT, description='Filter by location ID'),
         ]
@@ -1372,7 +1374,7 @@ class LeaderViewSet(viewsets.ModelViewSet):
             "Candidates are verified members or controllers of that organisation."
         ),
         parameters=[
-            OpenApiParameter(name='organisation', type=OpenApiTypes.INT, required=True, description='Organisation ID'),
+            OpenApiParameter(name='organisation', type=OpenApiTypes.STR, required=True, description='Organisation id or url_safe_title'),
             OpenApiParameter(name='search', type=OpenApiTypes.STR, required=False, description='Search by name, username, or email'),
             OpenApiParameter(name='location_type', type=OpenApiTypes.STR, required=False, description='Optional location type to exclude existing leaders'),
             OpenApiParameter(name='location_id', type=OpenApiTypes.INT, required=False, description='Optional location id to exclude existing leaders'),
@@ -1387,8 +1389,8 @@ class LeaderViewSet(viewsets.ModelViewSet):
             return Response({'error': 'organisation query parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            organisation = Organisation.objects.get(pk=organisation_id)
-        except Organisation.DoesNotExist:
+            organisation = get_organisation_or_url_safe_title(organisation_id)
+        except Http404:
             return Response({'error': 'Organisation not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         if not request.user.is_superuser and not request.user.is_staff:
