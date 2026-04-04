@@ -4,6 +4,7 @@ Organisation Statistics API ViewSet.
 from datetime import datetime
 from uuid import UUID
 
+from django.http import Http404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
 from rest_framework import exceptions, viewsets
@@ -24,15 +25,16 @@ from apps.organisations.api.serializers.statistics import (
 )
 from apps.events.models import Event
 from apps.organisations.models import Organisation, OrganisationControl
+from apps.utils.querying import get_event_or_url_safe_title, get_organisation_or_url_safe_title
 
 
 ORGANISATION_ID_PARAM = OpenApiParameter(
 	name="organisation_id",
-	type=OpenApiTypes.INT,
+	type=OpenApiTypes.STR,
 	location=OpenApiParameter.QUERY,
 	description=(
-		"Organisation id. Non-superusers can only access organisations they control. "
-		"Superusers may request any organisation id."
+		"Organisation id or url_safe_title. Non-superusers can only access organisations they control. "
+		"Superusers may request any organisation identifier."
 	),
 	required=False,
 )
@@ -79,9 +81,6 @@ LIMIT_PARAM = OpenApiParameter(
 	required=False,
 	default=20,
 )
-
-from apps.utils.querying import get_event_or_url_safe_title
-
 class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 	"""Statistics endpoints for organisations, events, members and payments."""
 
@@ -102,20 +101,19 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 
 		if org_id_raw:
 			try:
-				org_id = int(org_id_raw)
-			except ValueError as exc:
-				raise exceptions.ValidationError({"organisation_id": "Must be an integer."}) from exc
+				organisation = get_organisation_or_url_safe_title(org_id_raw)
+			except Http404 as exc:
+				raise exceptions.NotFound("Organisation not found.") from exc
+			org_id = organisation.id
 
 			if request.user.is_superuser:
-				if not Organisation.objects.filter(id=org_id).exists():
-					raise exceptions.NotFound("Organisation not found.")
 				return {
 					"organisation_ids": [org_id],
 					"scope_label": "single_organisation",
 					"requested_organisation_id": org_id,
 				}
 
-			if not OrganisationControl.objects.filter(organisation_id=org_id, user=request.user).exists():
+			if not OrganisationControl.objects.filter(organisation=organisation, user=request.user).exists():
 				raise exceptions.PermissionDenied(
 					"You can only access statistics for organisations you control."
 				)
@@ -147,10 +145,8 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 
 		try:
 			UUID(value)
-		except ValueError as exc:
-			
+		except ValueError:
 			value = str(get_event_or_url_safe_title(value).event_id)
-			
 
 
 		event = Event.objects.filter(event_id=value).first()

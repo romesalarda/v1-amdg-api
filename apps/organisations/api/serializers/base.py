@@ -52,6 +52,7 @@ class OrganisationListSerializer(serializers.ModelSerializer):
     """List serializer for Organisation with HATEOAS links."""
     
     _links = serializers.SerializerMethodField()
+    url_safe_title = serializers.CharField(read_only=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
     added_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
@@ -59,7 +60,7 @@ class OrganisationListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organisation
         fields = (
-            'id', 'title', 'description', 'external_website',
+            'id', 'title', 'url_safe_title', 'description', 'external_website',
             'required_acceptance_code', 'requires_manual_verification',
             'created_by', 'created_by_name', 'added_at', 'updated_at', 
             'landing_image', 'logo',
@@ -86,9 +87,9 @@ class OrganisationListSerializer(serializers.ModelSerializer):
             return {}
         
         links = {
-            'self': request.build_absolute_uri(f"/api/organisations/list/{obj.id}/"),
-            'contacts': request.build_absolute_uri(f"/api/organisations/list/{obj.id}/contacts/"),
-            'memberships': request.build_absolute_uri(f"/api/organisations/list/{obj.id}/memberships/"),
+            'self': request.build_absolute_uri(f"/api/organisations/list/{obj.url_safe_title}/"),
+            'contacts': request.build_absolute_uri(f"/api/organisations/list/{obj.url_safe_title}/contacts/"),
+            'memberships': request.build_absolute_uri(f"/api/organisations/list/{obj.url_safe_title}/memberships/"),
         }
         
         if obj.created_by:
@@ -219,7 +220,7 @@ class OrganisationContactSerializer(serializers.ModelSerializer):
         
         return {
             'self': request.build_absolute_uri(f"/api/organisations/contacts/{obj.id}/"),
-            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.url_safe_title}/"),
         }
 
 
@@ -275,7 +276,7 @@ class OrganisationControlSerializer(serializers.ModelSerializer):
         
         return {
             'self': request.build_absolute_uri(f"/api/organisations/controls/{obj.id}/"),
-            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.url_safe_title}/"),
             'user': request.build_absolute_uri(f"/api/users/{obj.user.id}/"),
         }
 
@@ -356,7 +357,7 @@ class UserOrganisationMembershipListSerializer(serializers.ModelSerializer):
         
         links = {
             'self': request.build_absolute_uri(f"/api/organisations/memberships/{obj.id}/"),
-            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.url_safe_title}/"),
             'user': request.build_absolute_uri(f"/api/users/{obj.user.id}/"),
         }
         
@@ -471,7 +472,7 @@ class OrganisationAcceptanceCodeSerializer(serializers.ModelSerializer):
         
         return {
             'self': request.build_absolute_uri(f"/api/organisations/acceptance-codes/{obj.id}/"),
-            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.url_safe_title}/"),
         }
 
 
@@ -547,7 +548,7 @@ class OrganisationInviteListSerializer(serializers.ModelSerializer):
         
         links = {
             'self': request.build_absolute_uri(f"/api/organisations/invites/{obj.id}/"),
-            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.url_safe_title}/"),
         }
         
         if obj.target_user:
@@ -654,7 +655,7 @@ class InvolvedEventOrganisationSerializer(serializers.ModelSerializer):
         
         return {
             'self': request.build_absolute_uri(f"/api/organisations/involved-events/{obj.id}/"),
-            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.url_safe_title}/"),
             'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
         }
 
@@ -773,7 +774,7 @@ class EventSponsorListSerializer(serializers.ModelSerializer):
         
         return {
             'self': request.build_absolute_uri(f"/api/organisations/sponsors/{obj.sponsor_id}/"),
-            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.url_safe_title}/"),
             'event': request.build_absolute_uri(f"/api/event/list/{obj.event.event_id}/"),
             'packages': request.build_absolute_uri(f"/api/organisations/sponsors/{obj.sponsor_id}/packages/"),
         }
@@ -1138,7 +1139,7 @@ class EventSponsorInviteListSerializer(serializers.ModelSerializer):
 
         if obj.organisation_id:
             links['organisation'] = request.build_absolute_uri(
-                f"/api/organisations/list/{obj.organisation_id}/"
+                f"/api/organisations/list/{obj.organisation.url_safe_title}/"
             )
 
         return links
@@ -1269,7 +1270,7 @@ class LeaderListSerializer(serializers.ModelSerializer):
 
         if obj.organisation:
             links['organisation'] = request.build_absolute_uri(
-                f"/api/organisations/list/{obj.organisation.id}/"
+                f"/api/organisations/list/{obj.organisation.url_safe_title}/"
             )
 
         if obj.authority_object and obj.target_type:
@@ -1464,7 +1465,7 @@ class LocationLeaderInviteListSerializer(serializers.ModelSerializer):
 
         links = {
             'self': request.build_absolute_uri(f"/api/organisations/leader-invites/{obj.id}/"),
-            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.id}/"),
+            'organisation': request.build_absolute_uri(f"/api/organisations/list/{obj.organisation.url_safe_title}/"),
         }
 
         if obj.target_user:

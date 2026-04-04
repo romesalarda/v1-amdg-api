@@ -36,6 +36,28 @@ from apps.organisations.models import (
 from apps.common.models.verification import VerificationStatus as OrganisationSponsorVerificationStatus
 
 
+def _resolve_organisation_identifier(value):
+    if not value:
+        return None
+
+    try:
+        organisation_id = int(value)
+    except (TypeError, ValueError):
+        organisation_id = None
+
+    if organisation_id is not None:
+        return Organisation.objects.filter(pk=organisation_id).first()
+
+    return Organisation.objects.filter(url_safe_title=value).first()
+
+
+def _filter_by_organisation_identifier(queryset, relation_name, value):
+    organisation = _resolve_organisation_identifier(value)
+    if not organisation:
+        return queryset.none()
+    return queryset.filter(**{relation_name: organisation})
+
+
 class OrganisationFilterSet(filters.FilterSet):
     """
     Advanced filterset for Organisation model.
@@ -157,9 +179,9 @@ class OrganisationContactFilterSet(filters.FilterSet):
         help_text="Search in name, email, and label"
     )
     
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+    organisation = filters.CharFilter(
+        method='filter_organisation',
+        help_text="Filter by organisation id or url_safe_title"
     )
     
     label = filters.CharFilter(
@@ -182,6 +204,9 @@ class OrganisationContactFilterSet(filters.FilterSet):
             Q(label__icontains=value)
         )
 
+    def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
 
 class OrganisationControlFilterSet(filters.FilterSet):
     """
@@ -194,9 +219,9 @@ class OrganisationControlFilterSet(filters.FilterSet):
     - Date ranges
     """
     
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+    organisation = filters.CharFilter(
+        method='filter_organisation',
+        help_text="Filter by organisation id or url_safe_title"
     )
     
     user = filters.NumberFilter(
@@ -224,6 +249,9 @@ class OrganisationControlFilterSet(filters.FilterSet):
         model = OrganisationControl
         fields = ['organisation', 'user', 'added_by']
 
+    def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
 
 class UserOrganisationMembershipFilterSet(filters.FilterSet):
     """
@@ -236,9 +264,9 @@ class UserOrganisationMembershipFilterSet(filters.FilterSet):
     - Date ranges
     """
     
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+    organisation = filters.CharFilter(
+        method='filter_organisation',
+        help_text="Filter by organisation id or url_safe_title"
     )
     
     user = filters.NumberFilter(
@@ -294,6 +322,9 @@ class UserOrganisationMembershipFilterSet(filters.FilterSet):
             return queryset.filter(organisation__requires_manual_verification=True)
         return queryset.filter(organisation__requires_manual_verification=False)
 
+    def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
 
 class OrganisationAcceptanceCodeFilterSet(filters.FilterSet):
     """
@@ -306,9 +337,9 @@ class OrganisationAcceptanceCodeFilterSet(filters.FilterSet):
     - Usage
     """
     
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+    organisation = filters.CharFilter(
+        method='filter_organisation',
+        help_text="Filter by organisation id or url_safe_title"
     )
     
     is_active = filters.BooleanFilter(
@@ -376,6 +407,9 @@ class OrganisationAcceptanceCodeFilterSet(filters.FilterSet):
             return queryset.filter(uses__lt=F('max_uses'))
         return queryset.filter(uses__gte=F('max_uses'))
 
+    def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
 
 class OrganisationInviteFilterSet(filters.FilterSet):
     """
@@ -388,9 +422,9 @@ class OrganisationInviteFilterSet(filters.FilterSet):
     - Validity
     """
     
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+    organisation = filters.CharFilter(
+        method='filter_organisation',
+        help_text="Filter by organisation id or url_safe_title"
     )
     
     target_user = filters.NumberFilter(
@@ -450,6 +484,9 @@ class OrganisationInviteFilterSet(filters.FilterSet):
             Q(expires_at__isnull=True) | Q(expires_at__gte=now)
         )
 
+    def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
 
 class InvolvedEventOrganisationFilterSet(filters.FilterSet):
     """
@@ -461,9 +498,9 @@ class InvolvedEventOrganisationFilterSet(filters.FilterSet):
     - Role
     """
     
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+    organisation = filters.CharFilter(
+        method='filter_organisation',
+        help_text="Filter by organisation id or url_safe_title"
     )
     
     event = filters.NumberFilter(
@@ -497,6 +534,9 @@ class InvolvedEventOrganisationFilterSet(filters.FilterSet):
         model = InvolvedEventOrganisation
         fields = ['organisation', 'event', 'role', 'added_by']
 
+    def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
 
 class EventSponsorFilterSet(filters.FilterSet):
     """
@@ -513,9 +553,9 @@ class EventSponsorFilterSet(filters.FilterSet):
         help_text="Search in sponsor name and description"
     )
 
-    organisation_id = filters.UUIDFilter(
-        field_name='organisation__organisation_id',
-        help_text="Filter by organisation UUID"
+    organisation_id = filters.CharFilter(
+        method='filter_organisation_id',
+        help_text="Filter by organisation id or url_safe_title"
     )
 
     event_id = filters.CharFilter(
@@ -578,6 +618,9 @@ class EventSponsorFilterSet(filters.FilterSet):
         if value:
             return queryset.filter(processed_at__isnull=False)
         return queryset.filter(processed_at__isnull=True)
+
+    def filter_organisation_id(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
 
 
 
@@ -675,9 +718,9 @@ class EventSponsorInviteFilterSet(filters.FilterSet):
         help_text="Filter by event URL-safe title"
     )
 
-    organisation_id = filters.UUIDFilter(
-        field_name='organisation__organisation_id',
-        help_text="Filter by organisation UUID"
+    organisation_id = filters.CharFilter(
+        method='filter_organisation_id',
+        help_text="Filter by organisation id or url_safe_title"
     )
 
     email = filters.CharFilter(
@@ -717,6 +760,9 @@ class EventSponsorInviteFilterSet(filters.FilterSet):
         model = EventSponsorInvite
         fields = ['event_id', 'organisation_id', 'email', 'accepted', 'declined']
 
+    def filter_organisation_id(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
 
 class LeaderFilterSet(filters.FilterSet):
     """Filterset for typed location leaders."""
@@ -726,9 +772,9 @@ class LeaderFilterSet(filters.FilterSet):
         help_text="Filter by user ID"
     )
 
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+    organisation = filters.CharFilter(
+        method='filter_organisation',
+        help_text="Filter by organisation id or url_safe_title"
     )
 
     location_type = filters.ChoiceFilter(
@@ -783,13 +829,16 @@ class LeaderFilterSet(filters.FilterSet):
             return queryset
         return queryset.filter(target_id=value)
 
+    def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
 
 class LocationLeaderInviteFilterSet(filters.FilterSet):
     """Filterset for location leader invites."""
 
-    organisation = filters.NumberFilter(
-        field_name='organisation',
-        help_text="Filter by organisation ID"
+    organisation = filters.CharFilter(
+        method='filter_organisation',
+        help_text="Filter by organisation id or url_safe_title"
     )
 
     target_user = filters.NumberFilter(
@@ -836,3 +885,6 @@ class LocationLeaderInviteFilterSet(filters.FilterSet):
         if value:
             return queryset.filter(valid_filter)
         return queryset.exclude(valid_filter)
+
+    def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
