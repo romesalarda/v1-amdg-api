@@ -156,8 +156,9 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
         """Extract common filter parameters from request."""
 
         event_id = request.query_params.get('event_id')
+        event_id = str(get_event_or_url_safe_title(event_id).event_id) if event_id else None
         return {
-            'event_id': str(get_event_or_url_safe_title(event_id).event_id),
+            'event_id': event_id,
             'include_deleted': request.query_params.get('include_deleted', 'false').lower() == 'true',
         }
     

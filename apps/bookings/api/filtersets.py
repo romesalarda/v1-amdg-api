@@ -19,6 +19,7 @@ Version: 1.0.0
 from django_filters import rest_framework as filters
 from django.db.models import Q
 from django.utils import timezone
+import uuid
 
 from apps.bookings.models import (
     Booking, BookingIntent, BookingIntentStatusChoices,
@@ -27,6 +28,26 @@ from apps.bookings.models import (
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
 from apps.common.models import VerificationStatus
+
+
+def filter_by_event_reference(queryset, value, base_field='event'):
+    """Filter by event PK, event UUID, or URL-safe title for backwards compatibility."""
+    if value is None:
+        return queryset
+
+    raw_value = str(value).strip()
+    if not raw_value:
+        return queryset
+
+    if raw_value.isdigit():
+        return queryset.filter(**{f'{base_field}__id': int(raw_value)})
+
+    try:
+        parsed_uuid = uuid.UUID(raw_value)
+    except ValueError:
+        return queryset.filter(**{f'{base_field}__url_safe_title': raw_value})
+
+    return queryset.filter(**{f'{base_field}__event_id': parsed_uuid})
 
 
 class BookingIntentFilterSet(filters.FilterSet):
@@ -51,6 +72,11 @@ class BookingIntentFilterSet(filters.FilterSet):
         field_name='status',
         choices=BookingIntentStatusChoices.choices,
         help_text='Filter by intent status'
+    )
+
+    event = filters.CharFilter(
+        method='filter_event',
+        help_text='Filter by event PK, UUID, or URL-safe title'
     )
     
     event_id = filters.UUIDFilter(
@@ -118,6 +144,10 @@ class BookingIntentFilterSet(filters.FilterSet):
                 ]) | Q(expires_at__lte=timezone.now())
             )
 
+    def filter_event(self, queryset, name, value):
+        """Filter intents by event identifier."""
+        return filter_by_event_reference(queryset, value, base_field='event')
+
 
 class BookingFilterSet(filters.FilterSet):
     """
@@ -153,9 +183,8 @@ class BookingFilterSet(filters.FilterSet):
     
     # Event filter
     event = filters.CharFilter(
-        field_name='event__url_safe_title',
-        help_text="Filter by event URL-safe title"
-        
+        method='filter_event',
+        help_text="Filter by event PK, UUID, or URL-safe title"
     )
     event_id = filters.UUIDFilter(
         field_name='event__event_id',
@@ -176,12 +205,12 @@ class BookingFilterSet(filters.FilterSet):
     # Date range filters
     booked_after = filters.DateTimeFilter(
         field_name='booked_at',
-        lookup_expr='gte',
+        lookup_expr='date__gte',
         help_text="Filter bookings made after this date (ISO 8601 format)"
     )
     booked_before = filters.DateTimeFilter(
         field_name='booked_at',
-        lookup_expr='lte',
+        lookup_expr='date__lte',
         help_text="Filter bookings made before this date"
     )
     booked_date = filters.DateFilter(
@@ -241,6 +270,10 @@ class BookingFilterSet(filters.FilterSet):
             Q(made_by__username__icontains=value) |
             Q(made_by__email__icontains=value)
         ).distinct()
+
+    def filter_event(self, queryset, name, value):
+        """Filter bookings by event identifier."""
+        return filter_by_event_reference(queryset, value, base_field='event')
 
 
 class TicketFilterSet(filters.FilterSet):
@@ -369,9 +402,8 @@ class TicketTypeFilterSet(filters.FilterSet):
     )
 
     event = filters.CharFilter(
-        field_name='event__url_safe_title',
-        lookup_expr='exact',
-        help_text="Filter by event URL-safe title"
+        method='filter_event',
+        help_text="Filter by event PK, UUID, or URL-safe title"
     )
     
     # Scope filter
@@ -443,6 +475,10 @@ class TicketTypeFilterSet(filters.FilterSet):
             Q(code__icontains=value)
         )
 
+    def filter_event(self, queryset, name, value):
+        """Filter ticket types by event identifier."""
+        return filter_by_event_reference(queryset, value, base_field='event')
+
 
 class BookingPackageFilterSet(filters.FilterSet):
     """
@@ -463,9 +499,8 @@ class BookingPackageFilterSet(filters.FilterSet):
     
     # Event filter
     event = filters.CharFilter(
-        field_name='event__url_safe_title',
-        lookup_expr='exact',
-        help_text="Filter by event URL-safe title"
+        method='filter_event',
+        help_text="Filter by event PK, UUID, or URL-safe title"
     )
     event_id = filters.UUIDFilter(
         field_name='event__event_id',
@@ -517,6 +552,10 @@ class BookingPackageFilterSet(filters.FilterSet):
     class Meta:
         model = BookingPackage
         fields = []
+
+    def filter_event(self, queryset, name, value):
+        """Filter booking packages by event identifier."""
+        return filter_by_event_reference(queryset, value, base_field='event')
     
     def filter_eligible_for_attendee(self, queryset, name, value):
         """

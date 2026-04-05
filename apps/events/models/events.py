@@ -29,6 +29,31 @@ class EventStatusChoices(models.TextChoices):
     CANCELLED = 'CANCELLED', 'Cancelled' # event is cancelled
     POSTPONED = 'POSTPONED', 'Postponed' # event is postponed
     ARCHIVED = 'ARCHIVED', 'Archived' # event is archived for record-keeping
+
+
+allowed_transitions = {
+    EventStatusChoices.DRAFTING: [EventStatusChoices.PUBLISHED, EventStatusChoices.CANCELLED, EventStatusChoices.POSTPONED],
+    EventStatusChoices.PUBLISHED: [EventStatusChoices.OPEN, EventStatusChoices.CANCELLED, EventStatusChoices.POSTPONED],
+    EventStatusChoices.OPEN: [EventStatusChoices.CLOSED, EventStatusChoices.IN_PROGRESS, EventStatusChoices.CANCELLED],
+    EventStatusChoices.CLOSED: [EventStatusChoices.COMPLETED, EventStatusChoices.ARCHIVED],
+    EventStatusChoices.IN_PROGRESS: [EventStatusChoices.COMPLETED, EventStatusChoices.CANCELLED],
+    EventStatusChoices.COMPLETED: [EventStatusChoices.ARCHIVED],
+    EventStatusChoices.CANCELLED: [EventStatusChoices.ARCHIVED],
+    EventStatusChoices.POSTPONED: [EventStatusChoices.PUBLISHED, EventStatusChoices.CANCELLED],
+    EventStatusChoices.ARCHIVED: [],
+}
+
+closed_statuses = [
+    EventStatusChoices.CLOSED,
+    EventStatusChoices.COMPLETED,
+    EventStatusChoices.CANCELLED,
+    EventStatusChoices.ARCHIVED
+]
+
+open_statuses = [
+    EventStatusChoices.OPEN,
+    EventStatusChoices.IN_PROGRESS
+]
     
 MAX_EVENT_CODE_LENGTH = 5
     
@@ -114,7 +139,12 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         help_text=_("The organisation hosting this event."),
         null=True,
         )
-        
+    
+    last_opened = models.DateTimeField(blank=True, null=True, help_text=_("The last time this event was opened for registration."))
+    last_closed = models.DateTimeField(blank=True, null=True, help_text=_("The last time this event was closed for registration."))
+
+    external_link = models.URLField(blank=True, null=True, help_text=_("External link for the event, e.g. a website or registration page."))
+    external_event = models.BooleanField(default=False, help_text=_("Whether this event is primarily external and only listed on the platform for visibility. External events will not have registration or product selling features enabled."))
     class Meta:
         ordering = ['-created_at']
         indexes = [
@@ -163,12 +193,39 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         
             
     def latest_authorisation(self):
+        '''
+        returns the most recent EventAuthorization for this event, or None if no authorizations exist
+        '''
         return (
             self.authorizations
             .order_by('-reviewed_at')
             .first()
         )
     
+    @property
+    def uptime_status(self):
+        now = timezone.now().astimezone(self.timezone)
+        if self.start_datetime.astimezone(self.timezone) > now:
+            return "UPCOMING"
+        elif self.end_datetime.astimezone(self.timezone) < now:
+            return "PAST"
+        else:
+            return "ONGOING"
+        
+    @property
+    def uptime(self):
+        # return the number of days, hours, minute this event has been open for registration, or time until registration opens if in the future
+        now = timezone.now().astimezone(self.timezone)
+        if self.start_datetime.astimezone(self.timezone) > now:
+            delta = self.start_datetime.astimezone(self.timezone) - now
+            return f"Registration opens in {delta.days} days, {delta.seconds // 3600} hours"
+        elif self.end_datetime.astimezone(self.timezone) < now:
+            delta = now - self.end_datetime.astimezone(self.timezone)
+            return f"Event ended {delta.days} days, {delta.seconds // 3600} hours ago"
+        else:
+            delta = now - self.start_datetime.astimezone(self.timezone)
+            return f"Event has been ongoing for {delta.days} days, {delta.seconds // 3600} hours"
+            
     @property
     def start_date_tzaware(self):
         # timezone-aware date
@@ -298,6 +355,26 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             })
         
         return tasks
+    
+    def transition_status(self, new_status):
+        '''
+        Transition the event to a new status, ensuring that the transition is valid based on allowed_transitions.
+        :param new_status: The new status to transition to
+        :raises ValidationError: If the transition is not allowed
+
+        '''
+        if new_status not in allowed_transitions[self.status]:
+            raise ValidationError(f"Invalid status transition from {self.status} to {new_status}.")
+        old_status = self.status
+
+        if old_status == EventStatusChoices.OPEN and new_status in closed_statuses:
+            self.last_closed = timezone.now()
+        elif new_status == EventStatusChoices.OPEN:
+            self.last_opened = timezone.now()
+
+        self.status = new_status
+        self.save()
+        
     
     @property
     def max_capacity_reached(self) -> bool:
@@ -496,9 +573,14 @@ class EventSettings(models.Model):
     default_timezone = TimeZoneField(default=settings.TIME_ZONE)
 
     max_attendees_per_booking = models.PositiveIntegerField(
-        default=10,
+        default=5,
         help_text="Maximum number of attendees that can be included in a single booking."
     ) # maximum number of attendees that can be included in a single booking
+
+    max_attendees_per_user = models.PositiveIntegerField(
+        default=5,
+        help_text="Maximum number of attendees that a single user can register across all their bookings for this event."
+    ) # maximum number of attendees that a single user can register across all their bookings for this
 
     class Meta:
         verbose_name = "Event Setting"

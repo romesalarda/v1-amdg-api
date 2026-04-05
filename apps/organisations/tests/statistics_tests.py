@@ -25,6 +25,7 @@ from apps.organisations.models import (
     OrganisationControl,
     UserOrganisationMembership,
 )
+from apps.organisations.statistics import calculate_event_performance_statistics
 from apps.payments.models import Payment, PaymentStatusChoices
 from apps.payments.models.donations import Donation
 
@@ -358,3 +359,79 @@ class OrganisationStatisticsAPITest(TestCase):
         self.assertEqual(summary["accepted"], 1)
         self.assertEqual(summary["declined"], 1)
         self.assertEqual(summary["pending"], 1)
+
+    def test_event_performance_completed_payment_amount_not_multiplied_by_attendees(self):
+        from apps.attendee.models import Attendee
+
+        event_type = EventType.objects.create(
+            title="Summit",
+            code="SUMMIT",
+            created_by=self.superuser,
+        )
+        event = Event.objects.create(
+            title="Join Inflation Guard",
+            display_code="JIG001",
+            display_identifier="JIG001-1",
+            status=EventStatusChoices.OPEN,
+            created_by=self.superuser,
+            event_type=event_type,
+            start_datetime=timezone.now() + timedelta(days=1),
+            end_datetime=timezone.now() + timedelta(days=2),
+            organisation=self.org1,
+        )
+
+        Attendee.objects.create(
+            first_name="One",
+            last_name="A",
+            email="one-a@example.com",
+            event=event,
+            date_of_birth=timezone.now().date() - timedelta(days=30 * 365),
+            user=self.controller,
+            defined_by=self.controller,
+        )
+        Attendee.objects.create(
+            first_name="Two",
+            last_name="B",
+            email="two-b@example.com",
+            event=event,
+            date_of_birth=timezone.now().date() - timedelta(days=31 * 365),
+            user=self.controller,
+            defined_by=self.controller,
+        )
+        Attendee.objects.create(
+            first_name="Three",
+            last_name="C",
+            email="three-c@example.com",
+            event=event,
+            date_of_birth=timezone.now().date() - timedelta(days=32 * 365),
+            user=self.controller,
+            defined_by=self.controller,
+        )
+
+        booking_ct = ContentType.objects.get_for_model(Booking)
+        Payment.objects.create(
+            user=self.controller,
+            event=event,
+            base_amount=Money(100, "GBP"),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=booking_ct,
+            target_id="101",
+        )
+        Payment.objects.create(
+            user=self.controller,
+            event=event,
+            base_amount=Money(50, "GBP"),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=booking_ct,
+            target_id="102",
+        )
+
+        result = calculate_event_performance_statistics(
+            organisation_ids=[self.org1.id],
+            limit=100,
+        )
+
+        event_row = next(row for row in result["events"] if row["event_id"] == str(event.event_id))
+        self.assertEqual(event_row["attendee_count"], 3)
+        self.assertEqual(event_row["completed_payment_count"], 2)
+        self.assertEqual(event_row["completed_payment_amount"], 150.0)

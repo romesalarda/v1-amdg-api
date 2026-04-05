@@ -176,12 +176,6 @@ class CheckoutValidationService:
             raise ValidationError({
                 'attendees': f'Attendee draft missing required fields: {", ".join(missing_fields)}'
             })
-        
-        # Validate area_from is present
-        if not draft.get('area_from'):
-            raise ValidationError({
-                'attendees': 'Each draft attendee must include area_from.'
-            })
     
     @staticmethod
     def validate_attendee_event_consistency(
@@ -328,7 +322,16 @@ class CheckoutValidationService:
         Raises:
             ValidationError with 'attendees' field error
         """
+        required_consent_ids = set(
+            Consent.objects.filter(event=event, required=True, active=True)
+            .values_list('id', flat=True)
+        )
+
         if not consents:
+            if required_consent_ids:
+                raise ValidationError({
+                    'attendees': f'Missing required consents: {sorted(required_consent_ids)}'
+                })
             return
         
         consent_ids = [item.get('consent_id') for item in consents]
@@ -351,10 +354,6 @@ class CheckoutValidationService:
             })
         
         # Validate required consents are given
-        required_consent_ids = set(
-            Consent.objects.filter(event=event, required=True, active=True)
-            .values_list('id', flat=True)
-        )
         consent_given_ids = {
             item.get('consent_id')
             for item in consents
@@ -381,7 +380,16 @@ class CheckoutValidationService:
         Raises:
             ValidationError with 'attendees' field error
         """
+        required_question_ids = set(
+            EventQuestion.objects.filter(event=event, required=True)
+            .values_list('id', flat=True)
+        )
+
         if not answers:
+            if required_question_ids:
+                raise ValidationError({
+                    'attendees': f'Required questions not answered: {sorted(required_question_ids)}'
+                })
             return
         
         question_ids = [item.get('question_id') for item in answers]
@@ -457,13 +465,17 @@ class CheckoutValidationService:
                         )
                     })
             
-            elif question.question_type == EventQuestionTypeChoices.TEXT:
+            elif question.question_type in [
+                EventQuestionTypeChoices.SHORT_ANSWER,
+                EventQuestionTypeChoices.LONG_ANSWER,
+                EventQuestionTypeChoices.UPLOAD,
+            ]:
                 if not answer_text and not upload_resource_id and not upload_url:
                     raise ValidationError({
                         'attendees': f'Question {question_id} (text) requires answer text.'
                     })
             
-            elif question.question_type == EventQuestionTypeChoices.NUMERIC:
+            elif question.question_type == EventQuestionTypeChoices.SLIDER:
                 if answer_text:
                     try:
                         float(answer_text)
@@ -482,6 +494,13 @@ class CheckoutValidationService:
                     raise ValidationError({
                         'attendees': f'Required question {question_id} has no answer.'
                     })
+
+        answered_question_ids = set(question_ids)
+        missing_required_questions = required_question_ids - answered_question_ids
+        if missing_required_questions:
+            raise ValidationError({
+                'attendees': f'Required questions not answered: {sorted(missing_required_questions)}'
+            })
     
     @staticmethod
     def validate_checkout_request(

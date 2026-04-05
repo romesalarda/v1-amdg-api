@@ -320,8 +320,9 @@ class UserOrganisationMembershipViewSet(viewsets.ModelViewSet):
     )
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = UserOrganisationMembershipFilterSet
+    search_fields = ['user__username', 'user__email', 'user__first_name', 'user__last_name']
     ordering_fields = ['added_at', 'verified_at']
     ordering = ['-added_at']
     http_method_names = ['get', 'post', 'delete', 'head', 'options']

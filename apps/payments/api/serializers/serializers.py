@@ -241,7 +241,7 @@ class PaymentDetailSerializer(PaymentListSerializer):
         fields = PaymentListSerializer.Meta.fields + (
             'description', 'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount',
             'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference',
-            'metadata', 'refund_requests', 'donations', 'history_actions', 'updated_at', 'target_type'
+            'metadata', 'refund_requests', 'donations', 'history_actions', 'updated_at'
         )
     
     def get_base_amount(self, obj) -> str:
@@ -295,7 +295,6 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         ('booking', 'Booking'),
         ('order', 'Order'),
         ('ticket', 'Ticket'),
-        ('donation', 'Donation'),
         ('sponsorship', 'Sponsorship'),
         ('none', 'None'),
     )
@@ -304,7 +303,6 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         'booking': ('apps.bookings.models', 'Booking', None),
         'order': ('apps.products.models', 'Order', 'order_id'),
         'ticket': ('apps.bookings.models', 'Ticket', 'ticket_id'),
-        'donation': ('apps.payments.models', 'Donation', 'donation_id'),
         'sponsorship': ('apps.organisations.models', 'EventSponsor', 'sponsor_id'),
     }
 
@@ -321,7 +319,7 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
         allow_null=True,
-        help_text="Payment target type: booking, order, ticket, donation, sponsorship, or none."
+        help_text="Payment target type: booking, order, ticket, sponsorship, or none."
     )
     target_id = serializers.CharField(
         write_only=True,

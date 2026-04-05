@@ -70,7 +70,7 @@ class AvailabilityWindowModelTest(TestCase):
             available_to=now
         )
         
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValidationError):
             window.clean()
     
     def test_within_window_method(self):
@@ -284,6 +284,7 @@ class TestSoftDeleteModel(SoftDeleteModel):
     name = User._meta.get_field('email').__class__(max_length=100)
     
     class Meta:
+        abstract = True
         app_label = 'common'
 
 
@@ -292,6 +293,7 @@ class TestVerificationModel(RequiresVerificationModel):
     name = User._meta.get_field('email').__class__(max_length=100)
     
     class Meta:
+        abstract = True
         app_label = 'common'
 
 
@@ -300,6 +302,7 @@ class TestAttendableModel(Attendable):
     name = User._meta.get_field('email').__class__(max_length=100)
     
     class Meta:
+        abstract = True
         app_label = 'common'
 
 

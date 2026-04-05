@@ -533,7 +533,7 @@ class ProductStatisticsBaseTestCase(TestCase):
         
         self._create_order_with_items(
             customer=self.regular_user,
-            attendee=self.attendees[0],
+            attendee=self.attendees[3],
             status=OrderStatusChoices.DRAFT,
             total_amount=45.00,
             created_days_ago=8,
