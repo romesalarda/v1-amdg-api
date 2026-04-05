@@ -205,12 +205,12 @@ class BookingFilterSet(filters.FilterSet):
     # Date range filters
     booked_after = filters.DateTimeFilter(
         field_name='booked_at',
-        lookup_expr='gte',
+        lookup_expr='date__gte',
         help_text="Filter bookings made after this date (ISO 8601 format)"
     )
     booked_before = filters.DateTimeFilter(
         field_name='booked_at',
-        lookup_expr='lte',
+        lookup_expr='date__lte',
         help_text="Filter bookings made before this date"
     )
     booked_date = filters.DateFilter(

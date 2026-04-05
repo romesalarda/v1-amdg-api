@@ -284,6 +284,7 @@ class TestSoftDeleteModel(SoftDeleteModel):
     name = User._meta.get_field('email').__class__(max_length=100)
     
     class Meta:
+        abstract = True
         app_label = 'common'
 
 
@@ -292,6 +293,7 @@ class TestVerificationModel(RequiresVerificationModel):
     name = User._meta.get_field('email').__class__(max_length=100)
     
     class Meta:
+        abstract = True
         app_label = 'common'
 
 
@@ -300,6 +302,7 @@ class TestAttendableModel(Attendable):
     name = User._meta.get_field('email').__class__(max_length=100)
     
     class Meta:
+        abstract = True
         app_label = 'common'
 
 
