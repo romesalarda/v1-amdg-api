@@ -70,7 +70,7 @@ class AvailabilityWindowModelTest(TestCase):
             available_to=now
         )
         
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValidationError):
             window.clean()
     
     def test_within_window_method(self):
