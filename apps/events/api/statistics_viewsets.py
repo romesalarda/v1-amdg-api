@@ -167,8 +167,11 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
             event = request.query_params['event']
             if not event or not isinstance(event, str) or len(event.strip()) == 0:
                 raise ValidationError({'event': 'Invalid format for event.'})
-            
-            # first test if its a uuid, most likely it will be the URL safe title, but we want to support both
+
+            # Support both URL-safe title and UUID through the legacy `event` param.
+            resolved_event = get_event_or_url_safe_title(event)
+            filters['event_id'] = str(resolved_event.event_id)
+
         if request.query_params.get('event_id'):
             event_id = get_event_or_url_safe_title(request.query_params['event_id']).event_id
             filters['event_id'] = str(event_id)
