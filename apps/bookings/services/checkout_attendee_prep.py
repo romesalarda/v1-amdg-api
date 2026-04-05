@@ -32,6 +32,7 @@ from apps.attendee.models.personal.accessibility import (
 from apps.attendee.models.personal.emergency import EmergencyContact
 from apps.attendee.models.personal.consent import AttendeeConsent, Consent
 from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
+from apps.common.models import Resource
 from apps.bookings.models import Booking
 from apps.users.models import CommunityUser
 
@@ -326,6 +327,19 @@ class CheckoutAttendeePreparationService:
                 # Parse answer based on question type
                 answer_text = answer.get('answer_text')
                 selected_option_ids = answer.get('selected_option_ids', [])
+                upload_resource_id = answer.get('upload_resource_id')
+                upload_url = answer.get('upload_url')
+
+                if upload_resource_id:
+                    try:
+                        resource = Resource.objects.get(id=upload_resource_id)
+                    except Resource.DoesNotExist:
+                        raise AttendeePreparationError(
+                            f"Upload resource {upload_resource_id} not found for attendee answer."
+                        )
+                    answer_text = resource.resource_url
+                elif upload_url:
+                    answer_text = upload_url
                 
                 # Create the question answer record
                 question_answer = EventQuestionAnswer.objects.create(

@@ -15,6 +15,7 @@ from apps.attendee.models.personal.emergency import EmergencyContact
 from apps.attendee.models.personal.medical import AttendeeMedicalCondition
 from apps.bookings.models import Booking, BookingIntent
 from apps.bookings.models.products import PackageProduct
+from apps.common.models import Resource
 from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
 from apps.payments.models import Payment, PaymentMethodTypeChoices, PaymentStatusChoices
 from apps.products.models import Order, OrderStatusChoices
@@ -319,10 +320,22 @@ class BookingCheckoutFinalizer:
 
         question_answers = draft.get("question_answers", []) or []
         for answer in question_answers:
+            answer_text = answer.get("answer_text") or ""
+            upload_resource_id = answer.get("upload_resource_id")
+            upload_url = answer.get("upload_url")
+
+            if upload_resource_id:
+                try:
+                    answer_text = Resource.objects.get(id=upload_resource_id).resource_url
+                except Resource.DoesNotExist:
+                    answer_text = ""
+            elif upload_url:
+                answer_text = upload_url
+
             answer_obj = EventQuestionAnswer.objects.create(
                 question_id=answer["question_id"],
                 attendee=attendee,
-                answer_text=answer.get("answer_text") or "",
+                answer_text=answer_text,
             )
 
             selected_option_ids = answer.get("selected_option_ids", [])

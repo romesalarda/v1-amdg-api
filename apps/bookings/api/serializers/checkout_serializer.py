@@ -78,8 +78,8 @@ class ProductSelectionSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'package_product_id': f'PackageProduct with id {package_product_id} does not exist.'
             })
-        
-        # Validate ProductVariant exists and belongs to the product
+
+        # Validate ProductVariant exists
         try:
             variant = ProductVariant.objects.get(variant_id=variant_id)
         except ProductVariant.DoesNotExist:
@@ -423,8 +423,9 @@ class AttendeeDraftSerializer(serializers.Serializer):
         help_text="Relationship to the user making the booking"
     )
     area_from = serializers.IntegerField(
-        required=True,
-        help_text="ID of AreaLocation (active areas only)"
+        required=False,
+        allow_null=True,
+        help_text="Optional ID of AreaLocation (active areas only)"
     )
     personal_info = AttendeePersonalInfoDraftSerializer(
         required=False,
@@ -443,6 +444,9 @@ class AttendeeDraftSerializer(serializers.Serializer):
 
     def validate_area_from(self, value):
         """Ensure area_from points to an active AreaLocation."""
+        if value in (None, ''):
+            return None
+
         from apps.locations.models import AreaLocation
 
         try:
@@ -645,9 +649,8 @@ class CheckoutSerializer(serializers.Serializer):
         help_text="UUID of the BookingIntent to complete"
     )
     payment_method_id = serializers.IntegerField(
-        required=False,
-        allow_null=True,
-        help_text="Optional payment method ID. Required for paid checkouts; omitted for free checkouts."
+        required=True,
+        help_text="Payment method ID for checkout."
     )
     stripe_payment_intent_id = serializers.CharField(
         required=False,
@@ -735,6 +738,9 @@ class CheckoutSerializer(serializers.Serializer):
         # Store validated objects for processing
         attrs['_intent'] = intent
         attrs['_payment_method'] = method
+
+        if stripe_payment_intent_id:
+            attrs['_stripe_payment_intent_id'] = stripe_payment_intent_id
         
         return attrs
 
