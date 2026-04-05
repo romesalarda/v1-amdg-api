@@ -75,7 +75,8 @@ class RequiresVerificationModel(models.Model):
         
     @property
     def is_verified(self) -> bool:
-        return self.verification_status == VerificationStatus.VERIFIED
+        # Processed implies the object passed verification first.
+        return self.verification_status in {VerificationStatus.VERIFIED, VerificationStatus.PROCESSED}
     
     @property
     def is_rejected(self) -> bool:
