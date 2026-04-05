@@ -1,5 +1,6 @@
 
 from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import ValidationError
 import uuid
 
 
@@ -16,6 +17,9 @@ def get_organisation_or_url_safe_title(organisation_identifier):
 def get_event_or_url_safe_title(event_id):
     """Helper function to retrieve an Event instance by UUID or URL-safe title."""
     from apps.events.models import Event  # Import here to avoid circular imports
+
+    if not event_id:
+        return None
 
     try:
         # Try to interpret event_id as a UUID

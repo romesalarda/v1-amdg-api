@@ -529,7 +529,8 @@ class AttendeeFilterSet(django_filters.FilterSet):
         from apps.payments.models import Payment
 
         selected_target = self.form.cleaned_data.get('payment_target')
-        if selected_target in PAYMENT_TARGET_CHOICES:
+        valid_targets = {choice[0] for choice in PAYMENT_TARGET_CHOICES}
+        if selected_target in valid_targets:
             targets = {selected_target}
         else:
             targets = {'booking'}

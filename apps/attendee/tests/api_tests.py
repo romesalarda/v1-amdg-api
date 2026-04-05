@@ -266,7 +266,7 @@ class AttendeeFilteringTests(AttendeeAPITestCase):
     def test_filter_by_event(self):
         """Test filtering attendees by event."""
         self.client.force_authenticate(user=self.admin_user)
-        response = self.client.get(f'/api/attendees/?event={self.event.event_id}')
+        response = self.client.get(f'/api/attendees/?event={self.event.url_safe_title}')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(response.data['results']), 2)
@@ -420,6 +420,16 @@ class AttendeePaymentFilteringTests(AttendeeAPITestCase):
 
     def test_filter_by_payment_status_with_ticket_target_still_works(self):
         self.client.force_authenticate(user=self.admin_user)
+        Payment.objects.create(
+            user=self.other_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(75, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+            target_type=ContentType.objects.get_for_model(Ticket),
+            target_id=self.ticket.ticket_id,
+        )
+     
         response = self.client.get('/api/attendees/?payment_status=PENDING&payment_target=ticket')
         self._assert_only_primary_attendee(response)
 
