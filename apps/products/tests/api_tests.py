@@ -923,6 +923,11 @@ class OrderAPITestCase(APITestCase):
     def test_create_order_with_items(self):
         """Test creating an order with items."""
         self.client.force_authenticate(user=self.customer_user)
+
+        # setUp creates a draft order for this attendee; close it before creating a new one.
+        self.order.status = OrderStatusChoices.CANCELLED
+        self.order.save(update_fields=['status'])
+
         data = {
             'customer': self.customer_user.id,
             'attendee': str(self.attendee.attendee_id),
