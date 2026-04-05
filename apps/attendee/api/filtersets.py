@@ -183,8 +183,11 @@ class AttendeeFilterSet(django_filters.FilterSet):
     def _filter_attendees_by_payment_queryset(self, queryset, payment_queryset, targets=None):
         """Filter attendees by payment queryset across booking, order, and ticket payment paths."""
         selected_targets = set(targets or {'booking', 'order', 'ticket'})
-        criteria = Q()
+        attendee_event_ids = queryset.values_list('event_id', flat=True).distinct()
+        if attendee_event_ids.exists():
+            payment_queryset = payment_queryset.filter(event_id__in=attendee_event_ids)
 
+        criteria = Q()
         if 'ticket' in selected_targets:
             criteria |= Q(tickets__payment__in=payment_queryset)
         if 'order' in selected_targets:
@@ -524,7 +527,18 @@ class AttendeeFilterSet(django_filters.FilterSet):
     def filter_payment_status(self, queryset, name, value):
         """Filter attendees by payment status."""
         from apps.payments.models import Payment
-        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(status=value))
+
+        selected_target = self.form.cleaned_data.get('payment_target')
+        if selected_target in PAYMENT_TARGET_CHOICES:
+            targets = {selected_target}
+        else:
+            targets = {'booking'}
+
+        return self._filter_attendees_by_payment_queryset(
+            queryset,
+            Payment.objects.filter(status=value),
+            targets=targets,
+        )
 
     def filter_payment_target(self, queryset, name, value):
         """Filter attendees by payment target type without exposing GenericFK internals."""

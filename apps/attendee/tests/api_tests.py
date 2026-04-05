@@ -394,6 +394,35 @@ class AttendeePaymentFilteringTests(AttendeeAPITestCase):
         response = self.client.get(f'/api/attendees/?payment_id={self.booking_payment.payment_id}')
         self._assert_only_primary_attendee(response)
 
+    def test_filter_by_payment_status_defaults_to_booking_payments(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/attendees/?payment_status=PENDING')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(len(response.data['results']), 0)
+
+    def test_filter_by_payment_status_matches_pending_booking_payments(self):
+        booking_ct = ContentType.objects.get_for_model(Booking)
+        Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(100, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+            target_type=booking_ct,
+            target_id=self.booking.id,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/attendees/?payment_status=PENDING')
+        self._assert_only_primary_attendee(response)
+
+    def test_filter_by_payment_status_with_ticket_target_still_works(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/attendees/?payment_status=PENDING&payment_target=ticket')
+        self._assert_only_primary_attendee(response)
+
     def test_filter_by_payment_reference(self):
         self.client.force_authenticate(user=self.admin_user)
         response = self.client.get(f'/api/attendees/?payment_reference={self.booking_payment.payment_reference}')

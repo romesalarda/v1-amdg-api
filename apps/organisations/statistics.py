@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from django.contrib.contenttypes.models import ContentType
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, DecimalField, IntegerField, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -384,12 +384,29 @@ def calculate_event_performance_statistics(
 	if date_to:
 		events_qs = events_qs.filter(start_datetime__date__lte=date_to)
 
+	completed_payments_by_event = Payment.objects.filter(
+		event_id=OuterRef("pk"),
+		status=PaymentStatusChoices.COMPLETED,
+	).values("event_id").annotate(
+		total_count=Count("id"),
+		total_amount=Coalesce(Sum("base_amount"), Decimal("0.00")),
+	)
+
 	annotated = events_qs.annotate(
 		attendee_count=Count("attendees", filter=Q(attendees__deleted_at__isnull=True), distinct=True),
-		completed_payment_count=Count("payments", filter=Q(payments__status=PaymentStatusChoices.COMPLETED), distinct=True),
+		completed_payment_count=Coalesce(
+			Subquery(
+				completed_payments_by_event.values("total_count")[:1],
+				output_field=IntegerField(),
+			),
+			Value(0),
+		),
 		completed_payment_amount=Coalesce(
-			Sum("payments__base_amount", filter=Q(payments__status=PaymentStatusChoices.COMPLETED)),
-			Decimal("0.00"),
+			Subquery(
+				completed_payments_by_event.values("total_amount")[:1],
+				output_field=DecimalField(max_digits=18, decimal_places=2),
+			),
+			Value(Decimal("0.00")),
 		),
 	).order_by("-completed_payment_amount", "-attendee_count")
 	rows = []

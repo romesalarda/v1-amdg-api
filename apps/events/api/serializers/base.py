@@ -131,6 +131,7 @@ class EventListSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     landing_images = ResourceSerializer(many=True, read_only=True)
     main_landing_image = ResourceSerializer(read_only=True)
+    attendee_overview = serializers.SerializerMethodField(read_only=True)
     # TODO: field that shows if a user can register - check available windows and registration settings, show details with how many days until registration opens/closes if applicable
 
     timezone = serializers.CharField()
@@ -142,10 +143,36 @@ class EventListSerializer(serializers.ModelSerializer):
             'id','event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title', 
             'landing_images', 'main_landing_image',
             'status', 'status_display', 'event_type', 'event_type_name', 'organisation', 
-            'organisation_name', 'short_description', 'start_datetime', 'end_datetime',
+            'organisation_name', 'short_description', 'start_datetime', 'end_datetime', 'attendee_overview',
             'timezone', 'created_at', 'created_by', '_links'
         )
         read_only_fields = ('event_id', 'url_safe_title', 'created_at')
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'total_attendees': {'type': 'integer', 'description': 'Total number of attendees'},
+            'confirmed_attendees': {'type': 'integer', 'description': 'Number of confirmed attendees'},
+            'pending_attendees': {'type': 'integer', 'description': 'Number of pending attendees'},
+            'cancelled_attendees': {'type': 'integer', 'description': 'Number of cancelled attendees'},
+            'max_attendance': {'type': 'integer', 'description': 'Maximum attendance for the event'},
+            'percentage_full': {'type': 'number', 'format': 'float', 'description': 'Percentage of confirmed attendees relative to maximum attendance'}
+        },
+        'required': ['total_attendees', 'confirmed_attendees', 'pending_attendees', 'cancelled_attendees', 'max_attendance']
+    })
+    def get_attendee_overview(self, obj):
+        """Return a summary of attendee counts by status for this event."""
+        from apps.attendee.models import AttendeeStatus
+        attendees = obj.attendees.all() 
+        overview = {
+            'total_attendees': attendees.count(),
+            'confirmed_attendees': attendees.filter(status=AttendeeStatus.REGISTERED).count(),
+            'pending_attendees': attendees.filter(status=AttendeeStatus.PENDING_PAYMENT).count(),
+            'cancelled_attendees': attendees.filter(status=AttendeeStatus.CANCELLED).count(),
+            'max_attendance': obj.maximum_attendance,
+            'percentage_full': (attendees.filter(status=AttendeeStatus.REGISTERED).count() / obj.maximum_attendance * 100) if obj.maximum_attendance else None
+        }
+        return overview
 
     
     @extend_schema_field({

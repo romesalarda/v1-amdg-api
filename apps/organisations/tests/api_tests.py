@@ -515,6 +515,53 @@ class UserOrganisationMembershipAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
 
+    def test_search_memberships_by_user_fields(self):
+        """Test searching memberships by member name and email."""
+        alpha_user = User.objects.create_user(
+            email='alpha.member@example.com',
+            password='pass123',
+            first_name='Alpha',
+            last_name='Member'
+        )
+        beta_user = User.objects.create_user(
+            email='beta.user@example.com',
+            password='pass123',
+            first_name='Beta',
+            last_name='User'
+        )
+
+        UserOrganisationMembership.objects.create(
+            organisation=self.organisation,
+            user=alpha_user,
+            added_by=self.controller_user
+        )
+        UserOrganisationMembership.objects.create(
+            organisation=self.organisation,
+            user=beta_user,
+            added_by=self.controller_user
+        )
+
+        self.client.force_authenticate(user=self.controller_user)
+        url = reverse('organisations:organisationmembership-list')
+
+        response = self.client.get(url, {
+            'organisation': str(self.organisation.id),
+            'search': 'alpha.member'
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['user_email'], 'alpha.member@example.com')
+
+        response = self.client.get(url, {
+            'organisation': str(self.organisation.id),
+            'search': 'Beta'
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['user_email'], 'beta.user@example.com')
+
 
 class OrganisationInviteAPITest(TestCase):
     """Test OrganisationInvite API endpoints with accept action."""
