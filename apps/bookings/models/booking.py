@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.conf import settings
 from apps.bookings.models.ticket import TicketType
 from django.utils import timezone
+from apps.events.models import EventStatusChoices
 import uuid
 
 from apps.common.models import SoftDeleteModel
@@ -247,8 +248,8 @@ class BookingIntent(SoftDeleteModel): # intents delete after expiry
         """
         if not self.is_active:
             return False
-        
-        if not self.event.can_participants_register:
+
+        if self.event.status != EventStatusChoices.OPEN or not self.event.is_approved:
             return False
         
         # Final capacity check

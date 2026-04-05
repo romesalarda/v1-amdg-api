@@ -34,7 +34,7 @@ from apps.bookings.models import (
     TicketType, Ticket, TicketScopeChoices, TicketStatusChoices,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
 )
-from apps.events.models import Event
+from apps.events.models import Event, EventStatusChoices
 from apps.common.models import VerificationStatus
 from apps.common.api.serializers import AvailabilityWindowSerializer
 
@@ -178,12 +178,12 @@ class BookingIntentCreateSerializer(serializers.ModelSerializer):
         fields = ['booking_intent_id', 'event', 'event_id', 'intended_ticket_count', 'status', 'is_active']
     
     def validate_event(self, value):
-        """Validate the event exists and is open for registration."""
+        """Validate the event is open, approved, and has capacity for intent creation."""
         if value.max_capacity_reached:
             raise serializers.ValidationError(
                 "This event has reached its maximum capacity."
             )
-        if not value.can_participants_register:
+        if value.status != EventStatusChoices.OPEN or not value.is_approved:
             raise serializers.ValidationError(
                 "This event is not currently open for registration."
             )
