@@ -31,7 +31,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 # Import models
 from django.db import transaction
 from apps.products.models import Order
-from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices
+from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices, PaymentMethod
 from djmoney.money import Money
 from core.utils.display import generate_human_readable_id
 from decimal import Decimal
@@ -648,6 +648,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                     'booking_finalized': False,
                 }
 
+                reserved_payment = serializer.validated_data.get('_payment_obj')
+
                 if total_amount.amount == 0:
                     payment = Payment.objects.create(
                         user=user,
@@ -679,16 +681,27 @@ class BookingViewSet(viewsets.ModelViewSet):
                         'payment_method_id': 'Payment method is required when total amount is greater than 0.'
                     })
 
-                payment = Payment.objects.create(
-                    user=user,
-                    event=intent.event,
-                    method=payment_method,
-                    base_amount=total_amount,
-                    percentage_modifier=Decimal('0.00'),
-                    description=f"Checkout intent {intent.booking_intent_id} - {intent.event.title}",
-                    status=PaymentStatusChoices.PENDING,
-                    metadata=payment_metadata,
-                )
+                if reserved_payment:
+                    payment = reserved_payment
+                    payment.method = payment_method
+                    payment.base_amount = total_amount
+                    payment.percentage_modifier = Decimal('0.00')
+                    payment.description = f"Checkout intent {intent.booking_intent_id} - {intent.event.title}"
+                    payment.status = PaymentStatusChoices.DRAFTING
+                    payment.metadata = {**(payment.metadata or {}), **payment_metadata}
+                    payment.save()
+                    payment.transition_to(PaymentStatusChoices.PENDING)
+                else:
+                    payment = Payment.objects.create(
+                        user=user,
+                        event=intent.event,
+                        method=payment_method,
+                        base_amount=total_amount,
+                        percentage_modifier=Decimal('0.00'),
+                        description=f"Checkout intent {intent.booking_intent_id} - {intent.event.title}",
+                        status=PaymentStatusChoices.PENDING,
+                        metadata=payment_metadata,
+                    )
 
                 bank_transfer_evidence = None
                 if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_obj:
@@ -847,6 +860,92 @@ class BookingViewSet(viewsets.ModelViewSet):
                     'All changes have been rolled back. Please try again or contact support.'
                 )
             })
+
+    @extend_schema(
+        summary="Reserve bank transfer reference",
+        description=(
+            "Create or reuse a draft bank transfer payment for an active booking intent so the customer can see the reference before checkout."
+        ),
+        tags=["Bookings"],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'booking_intent_id': {'type': 'string', 'format': 'uuid'},
+                    'payment_method_id': {'type': 'integer'},
+                },
+                'required': ['booking_intent_id', 'payment_method_id'],
+            }
+        },
+        responses={
+            201: OpenApiResponse(description='Draft bank transfer payment reserved.'),
+            400: OpenApiResponse(description='Validation error.'),
+        },
+        operation_id="bookings_reserve_bank_transfer_payment",
+    )
+    @action(detail=False, methods=['post'], url_path='reserve-bank-transfer-payment')
+    def reserve_bank_transfer_payment(self, request):
+        user = request.user
+        intent_id = request.data.get('booking_intent_id')
+        payment_method_id = request.data.get('payment_method_id')
+
+        if not intent_id:
+            raise ValidationError({'booking_intent_id': 'booking_intent_id is required.'})
+        if not payment_method_id:
+            raise ValidationError({'payment_method_id': 'payment_method_id is required.'})
+
+        try:
+            intent = BookingIntent.objects.select_related('event').get(booking_intent_id=intent_id, made_by=user)
+        except BookingIntent.DoesNotExist:
+            raise ValidationError({'booking_intent_id': 'Booking intent not found for this user.'})
+
+        if not intent.is_active:
+            raise ValidationError({'booking_intent_id': 'Booking intent is no longer active.'})
+
+        try:
+            payment_method = PaymentMethod.objects.get(id=payment_method_id, event=intent.event)
+        except PaymentMethod.DoesNotExist:
+            raise ValidationError({'payment_method_id': 'Payment method not found for this event.'})
+
+        if payment_method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER:
+            raise ValidationError({'payment_method_id': 'Only bank transfer payments can be reserved.'})
+
+        existing_payment = Payment.objects.filter(
+            user=user,
+            event=intent.event,
+            method=payment_method,
+            status=PaymentStatusChoices.DRAFTING,
+            metadata__contains={
+                'checkout_intent_id': str(intent.booking_intent_id),
+                'payment_type': 'booking_checkout_reservation',
+            },
+        ).order_by('-created_at').first()
+
+        if existing_payment:
+            payment = existing_payment
+        else:
+            payment = Payment.objects.create(
+                user=user,
+                event=intent.event,
+                method=payment_method,
+                base_amount=Money(0, 'GBP'),
+                percentage_modifier=Decimal('0.00'),
+                description=f"Bank transfer reservation for intent {intent.booking_intent_id} - {intent.event.title}",
+                status=PaymentStatusChoices.DRAFTING,
+                metadata={
+                    'checkout_intent_id': str(intent.booking_intent_id),
+                    'payment_type': 'booking_checkout_reservation',
+                    'booking_finalized': False,
+                },
+            )
+
+        return Response({
+            'payment_id': str(payment.payment_id),
+            'payment_reference': payment.payment_reference,
+            'bank_transfer_reference': payment.bank_transfer_reference,
+            'status': payment.status,
+            'message': 'Bank transfer reference reserved.',
+        }, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         summary="Upload bank transfer evidence for checkout",

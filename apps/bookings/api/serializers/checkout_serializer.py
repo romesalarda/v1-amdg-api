@@ -653,6 +653,11 @@ class CheckoutSerializer(serializers.Serializer):
         required=True,
         help_text="Payment method ID for checkout."
     )
+    payment_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Optional draft payment ID reserved before checkout for bank transfer flows"
+    )
     stripe_payment_intent_id = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -727,6 +732,7 @@ class CheckoutSerializer(serializers.Serializer):
         
         intent_id = attrs.get('booking_intent_id')
         method_id = attrs.get('payment_method_id')
+        payment_id = attrs.get('payment_id')
         attendee_selections = attrs.get('attendees', [])
         stripe_payment_intent_id = attrs.get('stripe_payment_intent_id')
         bank_transfer_evidence_id = attrs.get('bank_transfer_evidence_id')
@@ -745,6 +751,45 @@ class CheckoutSerializer(serializers.Serializer):
         # Store validated objects for processing
         attrs['_intent'] = intent
         attrs['_payment_method'] = method
+
+        payment_obj = None
+        if payment_id:
+            from apps.payments.models import Payment
+
+            try:
+                payment_obj = Payment.objects.select_related('method', 'event', 'user').get(payment_id=payment_id)
+            except Payment.DoesNotExist:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment was not found.'
+                })
+
+            if payment_obj.user_id != getattr(user, 'id', None):
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment does not belong to the authenticated user.'
+                })
+
+            if payment_obj.event_id != intent.event_id:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment does not belong to this event.'
+                })
+
+            if payment_obj.method_id and method and payment_obj.method_id != method.id:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment does not match the selected payment method.'
+                })
+
+            if payment_obj.status not in {'DRAFTING', 'PENDING'}:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment can no longer be used for checkout.'
+                })
+
+            payment_metadata = payment_obj.metadata or {}
+            if str(payment_metadata.get('checkout_intent_id') or '') != str(intent.booking_intent_id):
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment does not belong to this booking intent.'
+                })
+
+            attrs['_payment_obj'] = payment_obj
 
         if method and method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_id:
             raise serializers.ValidationError({
