@@ -16,6 +16,7 @@ Author: AMDG Platform Team
 Version: 1.0.0
 """
 import json
+import uuid
 
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
@@ -435,7 +436,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         payment_method = serializer.validated_data['_payment_method']
         attendee_selections = serializer.validated_data['attendees']
         stripe_payment_intent_id = serializer.validated_data.get('_stripe_payment_intent_id')
-        bank_transfer_evidence_payload = serializer.validated_data.get('_bank_transfer_evidence_payload')
+        bank_transfer_evidence_obj = serializer.validated_data.get('_bank_transfer_evidence_obj')
         user = request.user
         idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
         
@@ -690,23 +691,19 @@ class BookingViewSet(viewsets.ModelViewSet):
                 )
 
                 bank_transfer_evidence = None
-                if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:
-                    evidence_kwargs = {
-                        'payment': payment,
-                        'transfer_id': bank_transfer_evidence_payload['transfer_id'],
-                        'evidence_file': bank_transfer_evidence_payload['evidence_file'],
-                    }
-                    if bank_transfer_evidence_payload.get('payer_name'):
-                        evidence_kwargs['payer_name'] = bank_transfer_evidence_payload['payer_name']
-                    if bank_transfer_evidence_payload.get('payer_account_last4'):
-                        evidence_kwargs['payer_account_last4'] = bank_transfer_evidence_payload['payer_account_last4']
-                    if bank_transfer_evidence_payload.get('amount_on_evidence'):
-                        evidence_kwargs['amount_on_evidence'] = bank_transfer_evidence_payload['amount_on_evidence']
+                if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_obj:
+                    metadata = dict(bank_transfer_evidence_obj.metadata or {})
+                    if bank_transfer_evidence_obj.payment_id and bank_transfer_evidence_obj.payment_id != payment.id:
+                        raise ValidationError({'bank_transfer_evidence_id': 'Evidence has already been consumed by another payment.'})
 
-                    try:
-                        bank_transfer_evidence = BankTransferEvidence.objects.create(**evidence_kwargs)
-                    except Exception as exc:
-                        raise ValidationError({'bank_transfer_evidence': str(exc)})
+                    bank_transfer_evidence_obj.payment = payment
+                    bank_transfer_evidence_obj.transfer_id = payment.bank_transfer_reference
+                    metadata['consumed'] = True
+                    metadata['consumed_at'] = timezone.now().isoformat()
+                    metadata['consumed_by_payment_id'] = str(payment.payment_id)
+                    bank_transfer_evidence_obj.metadata = metadata
+                    bank_transfer_evidence_obj.save(update_fields=['payment', 'transfer_id', 'metadata', 'updated_at'])
+                    bank_transfer_evidence = bank_transfer_evidence_obj
 
                 if idempotency_key:
                     intent.last_checkout_idempotency_key = idempotency_key
@@ -827,7 +824,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         except ValidationError:
             # Re-raise validation errors
             raise
-        
+
         except Exception as e:
             # Log unexpected errors
             logger.error(
@@ -842,7 +839,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     'error_message': str(e),
                 }
             )
-            
+
             # Return generic error (transaction will auto-rollback)
             raise ValidationError({
                 'checkout': (
@@ -850,6 +847,89 @@ class BookingViewSet(viewsets.ModelViewSet):
                     'All changes have been rolled back. Please try again or contact support.'
                 )
             })
+
+    @extend_schema(
+        summary="Upload bank transfer evidence for checkout",
+        description=(
+            "Upload bank transfer evidence before checkout and bind it to an active booking intent. "
+            "The returned bank_transfer_evidence_id can then be submitted in JSON checkout payload."
+        ),
+        tags=["Bookings"],
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'booking_intent_id': {'type': 'string', 'format': 'uuid'},
+                    'evidence_file': {'type': 'string', 'format': 'binary'},
+                    'payer_name': {'type': 'string'},
+                    'payer_account_last4': {'type': 'string'},
+                    'amount_on_evidence': {'type': 'string'},
+                },
+                'required': ['booking_intent_id', 'evidence_file', 'payer_name', 'payer_account_last4', 'amount_on_evidence'],
+            }
+        },
+        responses={
+            201: OpenApiResponse(description='Evidence uploaded and bound to intent.'),
+            400: OpenApiResponse(description='Validation error.'),
+        },
+        operation_id="bookings_upload_bank_transfer_evidence",
+    )
+    @action(detail=False, methods=['post'], url_path='upload-bank-transfer-evidence')
+    def upload_bank_transfer_evidence(self, request):
+        user = request.user
+        intent_id = request.data.get('booking_intent_id')
+        if not intent_id:
+            raise ValidationError({'booking_intent_id': 'booking_intent_id is required.'})
+
+        try:
+            intent = BookingIntent.objects.get(booking_intent_id=intent_id, made_by=user)
+        except BookingIntent.DoesNotExist:
+            raise ValidationError({'booking_intent_id': 'Booking intent not found for this user.'})
+
+        if not intent.is_active:
+            raise ValidationError({'booking_intent_id': 'Booking intent is no longer active.'})
+
+        evidence_file = request.FILES.get('evidence_file')
+        if not evidence_file:
+            raise ValidationError({'evidence_file': 'evidence_file is required.'})
+
+        payer_name = str(request.data.get('payer_name') or '').strip()
+        if not payer_name:
+            raise ValidationError({'payer_name': 'payer_name is required.'})
+
+        payer_account_last4 = str(request.data.get('payer_account_last4') or '').strip()
+        if not payer_account_last4 or not payer_account_last4.isdigit() or len(payer_account_last4) != 4:
+            raise ValidationError({'payer_account_last4': 'payer_account_last4 must be exactly 4 digits.'})
+
+        raw_amount = request.data.get('amount_on_evidence')
+        try:
+            amount = Decimal(str(raw_amount))
+        except Exception:
+            raise ValidationError({'amount_on_evidence': 'amount_on_evidence must be a valid number.'})
+        if amount <= 0:
+            raise ValidationError({'amount_on_evidence': 'amount_on_evidence must be greater than zero.'})
+
+        transfer_id = f"TMP-{uuid.uuid4().hex[:16].upper()}"
+        evidence = BankTransferEvidence.objects.create(
+            transfer_id=transfer_id,
+            evidence_file=evidence_file,
+            payer_name=payer_name,
+            payer_account_last4=payer_account_last4,
+            amount_on_evidence=Money(amount, 'GBP'),
+            metadata={
+                'booking_intent_id': str(intent.booking_intent_id),
+                'uploaded_by_user_id': user.id,
+                'precheckout_upload': True,
+                'consumed': False,
+                'intent_expires_at': intent.expires_at.isoformat() if intent.expires_at else None,
+            },
+        )
+
+        return Response({
+            'bank_transfer_evidence_id': str(evidence.bank_transfer_id),
+            'uploaded_at': evidence.uploaded_at,
+            'message': 'Evidence uploaded. Use bank_transfer_evidence_id in checkout payload.',
+        }, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         summary="Preview checkout pricing",

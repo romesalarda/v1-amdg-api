@@ -278,10 +278,10 @@ class OrderCheckoutAPITestCase(TestCase):
             url,
             {
                 'payment_method_id': str(self.bank_method.id),
-                'bank_transfer_evidence.transfer_id': 'BT-ORDER-IMM-001',
                 'bank_transfer_evidence.evidence_file': evidence_file,
                 'bank_transfer_evidence.payer_name': 'Order Payer',
                 'bank_transfer_evidence.payer_account_last4': '1234',
+                'bank_transfer_evidence.amount_on_evidence': '20.00',
             },
             format='multipart'
         )
@@ -294,7 +294,7 @@ class OrderCheckoutAPITestCase(TestCase):
         order.refresh_from_db()
         self.assertIsNotNone(order.payment)
         evidence = BankTransferEvidence.objects.get(payment=order.payment)
-        self.assertEqual(evidence.transfer_id, 'BT-ORDER-IMM-001')
+        self.assertEqual(evidence.transfer_id, order.payment.bank_transfer_reference)
         self.assertEqual(evidence.payer_name, 'Order Payer')
         self.assertEqual(evidence.payer_account_last4, '1234')
     

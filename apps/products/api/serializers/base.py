@@ -1562,19 +1562,16 @@ class OrderCheckoutSerializer(serializers.Serializer):
         if not any_payload_present:
             return None
 
-        if not transfer_id:
-            raise serializers.ValidationError({
-                'bank_transfer_evidence.transfer_id': 'transfer_id is required when evidence payload is provided.'
-            })
         if not evidence_file:
             raise serializers.ValidationError({
                 'bank_transfer_evidence.evidence_file': 'evidence_file is required when evidence payload is provided.'
             })
 
         payload = {
-            'transfer_id': str(transfer_id).strip(),
             'evidence_file': evidence_file,
         }
+        if transfer_id:
+            payload['transfer_id'] = str(transfer_id).strip()
         if payer_name:
             payload['payer_name'] = str(payer_name).strip()
         if payer_account_last4:
@@ -1668,9 +1665,24 @@ class OrderCheckoutSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'bank_transfer_evidence': (
                     'Bank transfer evidence is required immediately for this payment method. '
-                    'Provide bank_transfer_evidence.transfer_id and bank_transfer_evidence.evidence_file.'
+                    'Provide bank_transfer_evidence.evidence_file, bank_transfer_evidence.payer_name, '
+                    'bank_transfer_evidence.payer_account_last4, and bank_transfer_evidence.amount_on_evidence.'
                 )
             })
+
+        if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:
+            if not bank_transfer_evidence_payload.get('payer_name'):
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence.payer_name': 'payer_name is required when evidence payload is provided.'
+                })
+            if not bank_transfer_evidence_payload.get('payer_account_last4'):
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence.payer_account_last4': 'payer_account_last4 is required when evidence payload is provided.'
+                })
+            if not bank_transfer_evidence_payload.get('amount_on_evidence'):
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence.amount_on_evidence': 'amount_on_evidence is required when evidence payload is provided.'
+                })
 
         attrs['_bank_transfer_evidence_payload'] = bank_transfer_evidence_payload
         

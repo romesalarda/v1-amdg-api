@@ -3345,7 +3345,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:
                 evidence_kwargs = {
                     'payment': payment,
-                    'transfer_id': bank_transfer_evidence_payload['transfer_id'],
+                    'transfer_id': payment.bank_transfer_reference,
                     'evidence_file': bank_transfer_evidence_payload['evidence_file'],
                 }
                 if bank_transfer_evidence_payload.get('payer_name'):

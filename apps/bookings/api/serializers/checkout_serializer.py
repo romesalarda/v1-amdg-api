@@ -27,6 +27,7 @@ from apps.bookings.models import (
 )
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.events.models import EventQuestion, EventQuestionTypeChoices
+from apps.payments.models import BankTransferEvidence
 
 
 # ============================================================================
@@ -657,61 +658,16 @@ class CheckoutSerializer(serializers.Serializer):
         allow_blank=True,
         help_text="Stripe PaymentIntent ID when payment is already confirmed (Stripe only)"
     )
+    bank_transfer_evidence_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Pre-uploaded bank transfer evidence ID bound to this booking intent"
+    )
     attendees = AttendeeCheckoutSerializer(
         many=True,
         help_text="List of attendee selections with packages and products"
     )
 
-    def _extract_bank_transfer_evidence_payload(self) -> dict | None:
-        """Extract optional nested multipart evidence payload from request/initial_data."""
-        request = self.context.get('request')
-        raw_data = self.initial_data or {}
-
-        transfer_id = raw_data.get('bank_transfer_evidence.transfer_id') or raw_data.get('bank_transfer_evidence[transfer_id]')
-        payer_name = raw_data.get('bank_transfer_evidence.payer_name') or raw_data.get('bank_transfer_evidence[payer_name]')
-        payer_account_last4 = raw_data.get('bank_transfer_evidence.payer_account_last4') or raw_data.get('bank_transfer_evidence[payer_account_last4]')
-        amount_on_evidence = raw_data.get('bank_transfer_evidence.amount_on_evidence') or raw_data.get('bank_transfer_evidence[amount_on_evidence]')
-
-        evidence_file = None
-        if request and hasattr(request, 'FILES'):
-            evidence_file = (
-                request.FILES.get('bank_transfer_evidence.evidence_file')
-                or request.FILES.get('bank_transfer_evidence[evidence_file]')
-            )
-
-        any_payload_present = any([
-            transfer_id,
-            payer_name,
-            payer_account_last4,
-            amount_on_evidence,
-            evidence_file,
-        ])
-
-        if not any_payload_present:
-            return None
-
-        if not transfer_id:
-            raise serializers.ValidationError({
-                'bank_transfer_evidence.transfer_id': 'transfer_id is required when bank transfer evidence is provided.'
-            })
-        if not evidence_file:
-            raise serializers.ValidationError({
-                'bank_transfer_evidence.evidence_file': 'evidence_file is required when bank transfer evidence is provided.'
-            })
-
-        payload = {
-            'transfer_id': str(transfer_id).strip(),
-            'evidence_file': evidence_file,
-        }
-        if payer_name:
-            payload['payer_name'] = str(payer_name).strip()
-        if payer_account_last4:
-            payload['payer_account_last4'] = str(payer_account_last4).strip()
-        if amount_on_evidence:
-            payload['amount_on_evidence'] = str(amount_on_evidence).strip()
-
-        return payload
-    
     def validate_booking_intent_id(self, value):
         """Validate booking intent exists and is active."""
         try:
@@ -773,6 +729,7 @@ class CheckoutSerializer(serializers.Serializer):
         method_id = attrs.get('payment_method_id')
         attendee_selections = attrs.get('attendees', [])
         stripe_payment_intent_id = attrs.get('stripe_payment_intent_id')
+        bank_transfer_evidence_id = attrs.get('bank_transfer_evidence_id')
         
         request = self.context.get('request')
         user = getattr(request, 'user', None) if request else None
@@ -789,27 +746,67 @@ class CheckoutSerializer(serializers.Serializer):
         attrs['_intent'] = intent
         attrs['_payment_method'] = method
 
-        bank_transfer_evidence_payload = self._extract_bank_transfer_evidence_payload()
-
-        if method and method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:
+        if method and method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_id:
             raise serializers.ValidationError({
-                'bank_transfer_evidence': 'Evidence payload is only valid when payment method is BANK_TRANSFER.'
+                'bank_transfer_evidence_id': 'bank_transfer_evidence_id is only valid when payment method is BANK_TRANSFER.'
             })
 
         if (
             method
             and method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
             and method.bank_transfer_required_immediately
-            and not bank_transfer_evidence_payload
+            and not bank_transfer_evidence_id
         ):
             raise serializers.ValidationError({
                 'bank_transfer_evidence': (
                     'Bank transfer evidence is required immediately for this payment method. '
-                    'Provide bank_transfer_evidence.transfer_id and bank_transfer_evidence.evidence_file.'
+                    'Upload evidence first, then provide bank_transfer_evidence_id during checkout.'
                 )
             })
 
-        attrs['_bank_transfer_evidence_payload'] = bank_transfer_evidence_payload
+        evidence_obj = None
+        if method and method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_id:
+            try:
+                evidence_obj = BankTransferEvidence.objects.select_related('payment').get(bank_transfer_id=bank_transfer_evidence_id)
+            except BankTransferEvidence.DoesNotExist:
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence_id': 'Uploaded bank transfer evidence was not found.'
+                })
+
+            if evidence_obj.payment_id:
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence_id': 'This evidence has already been consumed by a payment.'
+                })
+
+            metadata = evidence_obj.metadata or {}
+            if str(metadata.get('booking_intent_id') or '') != str(intent.booking_intent_id):
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence_id': 'Evidence does not belong to this booking intent.'
+                })
+
+            if int(metadata.get('uploaded_by_user_id') or 0) != int(getattr(user, 'id', 0) or 0):
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence_id': 'Evidence does not belong to the authenticated user.'
+                })
+
+            if not evidence_obj.evidence_file:
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence_id': 'Evidence file is missing for this upload.'
+                })
+            if not evidence_obj.payer_name:
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence_id': 'Payer name is missing for this upload.'
+                })
+            if not evidence_obj.payer_account_last4:
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence_id': 'Payer account last 4 is missing for this upload.'
+                })
+            if not evidence_obj.amount_on_evidence or evidence_obj.amount_on_evidence.amount <= 0:
+                raise serializers.ValidationError({
+                    'bank_transfer_evidence_id': 'Evidence amount must be greater than zero.'
+                })
+
+            attrs['_bank_transfer_evidence_obj'] = evidence_obj
 
         if stripe_payment_intent_id:
             attrs['_stripe_payment_intent_id'] = stripe_payment_intent_id
