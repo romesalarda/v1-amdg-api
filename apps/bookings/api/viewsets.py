@@ -30,7 +30,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 # Import models
 from django.db import transaction
 from apps.products.models import Order
-from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
+from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 from djmoney.money import Money
 from core.utils.display import generate_human_readable_id
 from decimal import Decimal
@@ -435,6 +435,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         payment_method = serializer.validated_data['_payment_method']
         attendee_selections = serializer.validated_data['attendees']
         stripe_payment_intent_id = serializer.validated_data.get('_stripe_payment_intent_id')
+        bank_transfer_evidence_payload = serializer.validated_data.get('_bank_transfer_evidence_payload')
         user = request.user
         idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
         
@@ -540,7 +541,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
             return total_amount
 
-        def build_response(payment_obj, status_label, message, booking=None, stripe_client_secret=None):
+        def build_response(payment_obj, status_label, message, booking=None, stripe_client_secret=None, bank_transfer_evidence=None):
             response_data = {
                 'booking_id': str(booking.id) if booking else None,
                 'booking_reference': booking.booking_reference if booking else None,
@@ -552,6 +553,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'message': message,
                 'orders': [],
                 'stripe_client_secret': stripe_client_secret,
+                'bank_transfer_evidence_id': str(bank_transfer_evidence.bank_transfer_id) if bank_transfer_evidence else None,
                 'bank_transfer_reference': payment_obj.bank_transfer_reference if payment_obj.method and payment_obj.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER else None,
                 'bank_transfer_instructions': None,
                 '_links': {},
@@ -687,6 +689,25 @@ class BookingViewSet(viewsets.ModelViewSet):
                     metadata=payment_metadata,
                 )
 
+                bank_transfer_evidence = None
+                if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:
+                    evidence_kwargs = {
+                        'payment': payment,
+                        'transfer_id': bank_transfer_evidence_payload['transfer_id'],
+                        'evidence_file': bank_transfer_evidence_payload['evidence_file'],
+                    }
+                    if bank_transfer_evidence_payload.get('payer_name'):
+                        evidence_kwargs['payer_name'] = bank_transfer_evidence_payload['payer_name']
+                    if bank_transfer_evidence_payload.get('payer_account_last4'):
+                        evidence_kwargs['payer_account_last4'] = bank_transfer_evidence_payload['payer_account_last4']
+                    if bank_transfer_evidence_payload.get('amount_on_evidence'):
+                        evidence_kwargs['amount_on_evidence'] = bank_transfer_evidence_payload['amount_on_evidence']
+
+                    try:
+                        bank_transfer_evidence = BankTransferEvidence.objects.create(**evidence_kwargs)
+                    except Exception as exc:
+                        raise ValidationError({'bank_transfer_evidence': str(exc)})
+
                 if idempotency_key:
                     intent.last_checkout_idempotency_key = idempotency_key
                     intent.save(update_fields=['last_checkout_idempotency_key'])
@@ -785,6 +806,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         'pending_verification',
                         'Checkout initiated. Complete bank transfer to finalize booking.',
                         booking=prefinalized_booking,
+                        bank_transfer_evidence=bank_transfer_evidence,
                     )
                     return Response(response_data, status=status.HTTP_201_CREATED)
 

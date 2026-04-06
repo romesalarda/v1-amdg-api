@@ -5,7 +5,8 @@ from django.urls import reverse
 from apps.payments.models import (
     Payment, PaymentMethod, Discount, DiscountRule,
     RefundRequest, RefundAssociation, RefundPolicy,
-    Donation, PaymentHistoryAction
+    Donation, PaymentHistoryAction,
+    CreditExpense, BankTransferEvidence
 )
 
 
@@ -164,9 +165,9 @@ class PaymentMethodAdmin(admin.ModelAdmin):
     
     list_display = (
         'title', 'code', 'method_type', 'is_active', 'event',
-        'created_at', 'get_payment_count'
+        'bank_transfer_required_immediately', 'created_at', 'get_payment_count'
     )
-    list_filter = ('method_type', 'is_active', 'event', 'created_at')
+    list_filter = ('method_type', 'is_active', 'bank_transfer_required_immediately', 'event', 'created_at')
     search_fields = ('title', 'code', 'description', 'event__name')
     readonly_fields = ('method_id', 'code', 'created_at', 'updated_at')
     date_hierarchy = 'created_at'
@@ -174,6 +175,10 @@ class PaymentMethodAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Basic Information', {
             'fields': ('method_id', 'title', 'code', 'description', 'method_type', 'is_active', 'event')
+        }),
+        ('Bank Transfer Policy', {
+            'fields': ('bank_transfer_required_immediately',),
+            'description': 'When enabled, checkout must include bank transfer evidence for this method.'
         }),
         ('Configuration', {
             'fields': ('provided_details',),
@@ -219,9 +224,16 @@ class PaymentAdmin(admin.ModelAdmin):
     
     list_display = (
         'payment_reference', 'get_target', 'get_payment_amount',
-        'status', 'method', 'user', 'event', 'created_at'
+        'status', 'method', 'get_bank_transfer_evidence_status', 'user', 'event', 'created_at'
     )
-    list_filter = ('status', 'method__method_type', 'event', 'created_at', 'updated_at')
+    list_filter = (
+        'status',
+        'method__method_type',
+        'bank_transfer_required_immediately',
+        'event',
+        'created_at',
+        'updated_at',
+    )
     search_fields = (
         'payment_reference', 'bank_transfer_reference', 
         'user__username', 'user__email', 'user__first_name', 'user__last_name'
@@ -229,7 +241,7 @@ class PaymentAdmin(admin.ModelAdmin):
     readonly_fields = (
         'payment_id', 'payment_reference',
         'created_at', 'updated_at', 'modified_amount',
-        'target', 'get_refund_summary', 'get_donation_summary'
+        'target', 'get_refund_summary', 'get_donation_summary', 'get_bank_transfer_evidence_status'
     )
     date_hierarchy = 'created_at'
     inlines = [PaymentHistoryActionInline]
@@ -246,7 +258,14 @@ class PaymentAdmin(admin.ModelAdmin):
             'description': 'Base amount with any applied modifiers'
         }),
         ('Payment Method', {
-            'fields': ('method', 'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference')
+            'fields': (
+                'method',
+                'bank_transfer_required_immediately',
+                'stripe_payment_intent',
+                'stripe_charge_id',
+                'bank_transfer_reference',
+                'get_bank_transfer_evidence_status',
+            )
         }),
         ('Target', {
             'fields': ('target_type', 'target_id', 'target'),
@@ -317,6 +336,29 @@ class PaymentAdmin(admin.ModelAdmin):
         html += f'<small>{donations.count()} donation(s)</small>'
         return format_html(html)
     get_donation_summary.short_description = 'Donations'
+
+    def get_bank_transfer_evidence_status(self, obj):
+        if not obj.method or obj.method.method_type != 'BANK_TRANSFER':
+            return '-'
+
+        latest = obj.bank_transfer_evidence.order_by('-uploaded_at').first()
+        if not latest:
+            return format_html('<span style="color: red;">Missing</span>')
+
+        status_color = {
+            'pending': 'orange',
+            'verified': 'green',
+            'processed': 'blue',
+            'rejected': 'red',
+        }.get(latest.verification_status, 'gray')
+
+        return format_html(
+            '<span style="color: {};">{}</span> <small>({})</small>',
+            status_color,
+            latest.verification_status,
+            latest.transfer_id,
+        )
+    get_bank_transfer_evidence_status.short_description = 'Bank Evidence'
     
     def mark_as_completed(self, request, queryset):
         """Bulk action to mark payments as completed."""
@@ -597,6 +639,158 @@ class DonationAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related(
             'payment', 'donated_by', 'verified_by', 'processed_by'
         )
+
+
+@admin.register(CreditExpense)
+class CreditExpenseAdmin(admin.ModelAdmin):
+    """Admin for CreditExpense model."""
+
+    list_display = (
+        'credit_id', 'description', 'amount', 'expense_type', 'event',
+        'is_settled', 'verification_status', 'created_by', 'created_at'
+    )
+    list_filter = ('expense_type', 'verification_status', 'is_settled', 'event', 'created_at')
+    search_fields = ('credit_id', 'description', 'event__name', 'created_by__username')
+    date_hierarchy = 'created_at'
+    readonly_fields = (
+        'credit_id', 'created_at', 'updated_at',
+        'verified_updated_at', 'verified_by', 'processed_at', 'processed_by', 'auto_processed',
+        'target_object_link',
+    )
+    actions = ['mark_verified', 'mark_rejected', 'mark_processed', 'mark_settled']
+
+    fieldsets = (
+        ('Credit Information', {
+            'fields': ('credit_id', 'event', 'created_by', 'description', 'expense_type')
+        }),
+        ('Amount & Settlement', {
+            'fields': ('amount', 'paid_date', 'is_settled')
+        }),
+        ('Target', {
+            'fields': ('target_type', 'target_id', 'target_object_link')
+        }),
+        ('Verification', {
+            'fields': ('verification_status', 'verified_by', 'verified_updated_at'),
+            'classes': ('collapse',)
+        }),
+        ('Processing', {
+            'fields': ('processed_by', 'processed_at', 'auto_processed'),
+            'classes': ('collapse',)
+        }),
+        ('Audit', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def target_object_link(self, obj):
+        if obj.target_object:
+            return format_html(
+                '<a href="{}">{}</a>',
+                f'/admin/{obj.target_type.app_label}/{obj.target_type.model}/{obj.target_id}/change/',
+                str(obj.target_object)
+            )
+        return '-'
+    target_object_link.short_description = 'Target Object'
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly_fields = list(super().get_readonly_fields(request, obj))
+        if obj and obj.verification_status in {'verified', 'processed'}:
+            readonly_fields.append('amount')
+        return readonly_fields
+
+    def mark_verified(self, request, queryset):
+        updated = 0
+        for credit in queryset.filter(verification_status='pending'):
+            credit.mark_verified(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} credit(s) verified.')
+    mark_verified.short_description = 'Verify selected credits'
+
+    def mark_rejected(self, request, queryset):
+        updated = 0
+        for credit in queryset.filter(verification_status='pending'):
+            credit.mark_rejected(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} credit(s) rejected.')
+    mark_rejected.short_description = 'Reject selected credits'
+
+    def mark_processed(self, request, queryset):
+        updated = 0
+        for credit in queryset.filter(verification_status='verified'):
+            credit.mark_processed(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} credit(s) processed.')
+    mark_processed.short_description = 'Process selected credits'
+
+    def mark_settled(self, request, queryset):
+        updated = queryset.update(is_settled=True)
+        self.message_user(request, f'{updated} credit(s) marked as settled.')
+    mark_settled.short_description = 'Mark selected as settled'
+
+
+@admin.register(BankTransferEvidence)
+class BankTransferEvidenceAdmin(admin.ModelAdmin):
+    """Admin for BankTransferEvidence model."""
+
+    list_display = (
+        'bank_transfer_id', 'transfer_id', 'payment', 'payer_name', 'payer_account_last4',
+        'verification_status', 'uploaded_at', 'auto_expiry_date'
+    )
+    list_filter = ('verification_status', 'uploaded_at', 'auto_expiry_date')
+    search_fields = ('bank_transfer_id', 'transfer_id', 'payer_name', 'payment__payment_reference')
+    date_hierarchy = 'uploaded_at'
+    readonly_fields = ('bank_transfer_id', 'uploaded_at', 'updated_at', 'auto_expiry_date')
+    actions = ['mark_verified', 'mark_rejected', 'confirm_payment_match']
+
+    fieldsets = (
+        ('Evidence', {
+            'fields': ('bank_transfer_id', 'transfer_id', 'evidence_file', 'payment')
+        }),
+        ('Payer Details', {
+            'fields': ('payer_name', 'payer_account_last4', 'amount_on_evidence')
+        }),
+        ('Metadata', {
+            'fields': ('metadata', 'auto_expiry_date'),
+            'classes': ('collapse',)
+        }),
+        ('Verification', {
+            'fields': ('verification_status', 'verified_by', 'verified_updated_at', 'processed_by', 'processed_at', 'auto_processed'),
+            'classes': ('collapse',)
+        }),
+        ('Audit', {
+            'fields': ('uploaded_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def mark_verified(self, request, queryset):
+        updated = 0
+        for evidence in queryset.filter(verification_status='pending'):
+            evidence.mark_verified(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} evidence item(s) verified.')
+    mark_verified.short_description = 'Verify selected evidence'
+
+    def mark_rejected(self, request, queryset):
+        updated = 0
+        for evidence in queryset.filter(verification_status='pending'):
+            evidence.mark_rejected(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} evidence item(s) rejected.')
+    mark_rejected.short_description = 'Reject selected evidence'
+
+    def confirm_payment_match(self, request, queryset):
+        updated = 0
+        for evidence in queryset:
+            if evidence.payment is None:
+                payment = Payment.objects.filter(bank_transfer_reference__icontains=evidence.transfer_id).first()
+                if payment:
+                    evidence.payment = payment
+                    evidence.save(update_fields=['payment'])
+                    updated += 1
+        self.message_user(request, f'{updated} evidence item(s) matched to payments.')
+    confirm_payment_match.short_description = 'Confirm payment match'
 
 
 @admin.register(PaymentHistoryAction)

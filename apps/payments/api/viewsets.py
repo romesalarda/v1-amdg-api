@@ -18,11 +18,12 @@ ViewSets:
 Author: AMDG Platform Team
 Version: 1.0.0
 """
-from rest_framework import viewsets, status, permissions, filters, serializers
+from rest_framework import viewsets, status, permissions, filters, serializers, exceptions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Prefetch
 from django.utils import timezone
@@ -43,7 +44,8 @@ from apps.payments.models import (
     Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
     Discount, DiscountRule,
     RefundRequest, RefundAssociation, RefundPolicy,
-    Donation, PaymentHistoryAction
+    Donation, PaymentHistoryAction,
+    CreditExpense, BankTransferEvidence
 )
 from apps.common.models import VerificationStatus
 from .serializers import (
@@ -55,20 +57,61 @@ from .serializers import (
     RefundAssociationSerializer, RefundAssociationCreateSerializer,
     RefundPolicySerializer, RefundPolicyCreateUpdateSerializer,
     DonationListSerializer, DonationDetailSerializer, DonationCreateSerializer,
-    PaymentHistoryActionSerializer
+    PaymentHistoryActionSerializer,
+    CreditExpenseListSerializer, CreditExpenseDetailSerializer, CreditExpenseCreateSerializer, CreditExpenseUpdateSerializer,
+    BankTransferEvidenceListSerializer, BankTransferEvidenceDetailSerializer, BankTransferEvidenceCreateSerializer, BankTransferEvidenceUpdateSerializer
 )
 from .filtersets import (
     PaymentFilterSet, PaymentMethodFilterSet, DiscountFilterSet, DiscountRuleFilterSet,
-    RefundRequestFilterSet, RefundPolicyFilterSet, DonationFilterSet, PaymentHistoryActionFilterSet
+    RefundRequestFilterSet, RefundPolicyFilterSet, DonationFilterSet, PaymentHistoryActionFilterSet,
+    CreditExpenseFilterSet, BankTransferEvidenceFilterSet
 )
 from .permissions import (
     IsAdministrativeStaff, IsAdministrativeStaffOnly, IsPaymentOwnerOrAdministrative,
-    IsRefundRequestOwnerOrAdministrative, IsReadOnly
+    IsRefundRequestOwnerOrAdministrative, IsReadOnly,
+    IsCreditAccessible, IsBankTransferEvidenceAccessible
 )
 from apps.payments.services.attendee_refunds import AttendeeRefundService
+from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
 
 
 logger = logging.getLogger(__name__)
+
+
+def _user_has_finance_role(user, event) -> bool:
+    if not user or not getattr(user, 'is_authenticated', False) or not event:
+        return False
+
+    return EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__name__icontains='finance'
+    ).exists() or EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__code__iexact='FIN'
+    ).exists()
+
+
+def _user_can_manage_credits(user, event) -> bool:
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+
+    if user.is_superuser or user.is_staff:
+        return True
+
+    if EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+    ).exists():
+        return True
+
+    return _user_has_finance_role(user, event)
+
+
+def _user_can_manage_bank_evidence(user, event) -> bool:
+    return _user_can_manage_credits(user, event)
 
 
 class StandardPagination(PageNumberPagination):
@@ -210,8 +253,10 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        payment.status = PaymentStatusChoices.COMPLETED
-        payment.save()
+        try:
+            payment.transition_to(PaymentStatusChoices.COMPLETED)
+        except DjangoValidationError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         
         # Log action
         PaymentHistoryAction.objects.create(
@@ -379,6 +424,16 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if not payment.bank_transfer_evidence.filter(verification_status=VerificationStatus.VERIFIED).exists():
+            return Response(
+                {
+                    'error': (
+                        'Cannot verify/complete bank transfer payment without a VERIFIED bank transfer evidence record.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         target = payment.target
         target_type = type(target).__name__
@@ -389,7 +444,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
         try:
             # Transition payment to completed
             payment.transition_to(PaymentStatusChoices.COMPLETED)
-            payment.save()
             
             # Log verification action
             PaymentHistoryAction.objects.create(
@@ -483,6 +537,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
             
             return Response(response_data, status=status.HTTP_200_OK)
             
+        except DjangoValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(
                 f"Error verifying bank transfer for payment {payment.payment_reference}: {str(e)}",
@@ -1990,3 +2046,135 @@ class PaymentHistoryActionViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['description', 'notes', 'action']
     ordering_fields = ['timestamp', 'action']
     ordering = ['-timestamp']
+
+
+class CreditExpenseViewSet(viewsets.ModelViewSet):
+    """CRUD viewset for credit expenses."""
+
+    queryset = CreditExpense.objects.select_related('event', 'created_by', 'verified_by', 'processed_by', 'target_type')
+    permission_classes = [permissions.IsAuthenticated, IsCreditAccessible]
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = CreditExpenseFilterSet
+    search_fields = ['credit_id', 'description', 'event__name', 'created_by__username']
+    ordering_fields = ['created_at', 'updated_at', 'amount', 'paid_date', 'expense_type', 'is_settled']
+    ordering = ['-created_at']
+    lookup_field = 'credit_id'
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return CreditExpenseListSerializer
+        if self.action == 'create':
+            return CreditExpenseCreateSerializer
+        if self.action in ['update', 'partial_update']:
+            return CreditExpenseUpdateSerializer
+        return CreditExpenseDetailSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if not user.is_authenticated:
+            return queryset.none()
+
+        if user.is_superuser or user.is_staff:
+            return queryset
+
+        accessible_event_ids = EventRoleAssignment.objects.filter(
+            user=user,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).values_list('event_id', flat=True)
+
+        finance_event_ids = EventRoleAssignment.objects.filter(
+            user=user,
+            role__name__icontains='finance'
+        ).values_list('event_id', flat=True)
+
+        return queryset.filter(
+            Q(created_by=user) |
+            Q(event_id__in=accessible_event_ids) |
+            Q(event_id__in=finance_event_ids)
+        ).distinct()
+
+    def perform_create(self, serializer):
+        event = serializer.validated_data.get('event')
+        if not _user_can_manage_credits(self.request.user, event):
+            raise exceptions.PermissionDenied('You do not have permission to create credits for this event.')
+
+        serializer.save(created_by=self.request.user)
+
+
+class BankTransferEvidenceViewSet(viewsets.ModelViewSet):
+    """CRUD viewset for bank transfer evidence uploads and confirmation."""
+
+    queryset = BankTransferEvidence.objects.select_related('payment', 'verified_by', 'processed_by')
+    permission_classes = [permissions.IsAuthenticated, IsBankTransferEvidenceAccessible]
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = BankTransferEvidenceFilterSet
+    search_fields = ['transfer_id', 'payer_name', 'payment__payment_reference']
+    ordering_fields = ['uploaded_at', 'updated_at', 'verification_status', 'auto_expiry_date']
+    ordering = ['-uploaded_at']
+    lookup_field = 'bank_transfer_id'
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return BankTransferEvidenceListSerializer
+        if self.action == 'create':
+            return BankTransferEvidenceCreateSerializer
+        if self.action in ['update', 'partial_update']:
+            return BankTransferEvidenceUpdateSerializer
+        return BankTransferEvidenceDetailSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if not user.is_authenticated:
+            return queryset.none()
+
+        if user.is_superuser or user.is_staff:
+            return queryset
+
+        managed_event_ids = EventRoleAssignment.objects.filter(
+            user=user,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).values_list('event_id', flat=True)
+
+        finance_event_ids = EventRoleAssignment.objects.filter(
+            user=user,
+            role__name__icontains='finance'
+        ).values_list('event_id', flat=True)
+
+        return queryset.filter(
+            Q(payment__user=user) |
+            Q(payment__event_id__in=managed_event_ids) |
+            Q(payment__event_id__in=finance_event_ids)
+        ).distinct()
+
+    def perform_create(self, serializer):
+        payment = serializer.validated_data.get('payment')
+        if payment and not _user_can_manage_bank_evidence(self.request.user, payment.event) and payment.user != self.request.user:
+            raise exceptions.PermissionDenied('You do not have permission to attach evidence to this payment.')
+
+        if not payment and not self.request.user.is_superuser and not self.request.user.is_staff:
+            raise exceptions.PermissionDenied('A payment is required unless you are an administrative user.')
+
+        serializer.save()
+
+    @action(detail=True, methods=['post'])
+    def confirm_payment_match(self, request, bank_transfer_id=None):
+        evidence = self.get_object()
+
+        if not _user_can_manage_bank_evidence(request.user, evidence.payment.event if evidence.payment else None):
+            raise exceptions.PermissionDenied('You do not have permission to confirm this evidence record.')
+
+        if not evidence.payment:
+            matched_payment = Payment.objects.filter(bank_transfer_reference__icontains=evidence.transfer_id).first()
+            if matched_payment:
+                evidence.payment = matched_payment
+                evidence.save(update_fields=['payment'])
+
+        evidence.mark_verified(request.user)
+        serializer = self.get_serializer(evidence)
+        return Response(serializer.data)

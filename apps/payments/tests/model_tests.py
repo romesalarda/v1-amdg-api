@@ -1,13 +1,20 @@
 from django.test import TestCase
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from datetime import timedelta
 from decimal import Decimal
+from djmoney.money import Money
 
-from apps.payments.models import Discount, DiscountRule, DiscountRuleTypeChoices, DiscountType
+from apps.payments.models import (
+    Discount, DiscountRule, DiscountRuleTypeChoices, DiscountType,
+    Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices,
+    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
+)
 from apps.payments.evaluator import DiscountRuleEvaluator, DiscountContext, discount_applies
 from apps.users.models import CommunityUser
-from apps.events.models import Event, EventType
+from apps.events.models import Event, EventType, EventStatusChoices
 from apps.organisations.models import Organisation
 
 
@@ -553,7 +560,6 @@ class DiscountAppliesTestCase(TestCase):
         
         result = discount_applies(self.discount, context)
         self.assertFalse(result)
-
     def test_discount_applies_multiple_rules_all_pass(self):
         """Test discount applies when all multiple rules pass."""
         DiscountRule.objects.create(
@@ -684,3 +690,119 @@ class DiscountAppliesTestCase(TestCase):
         
         result = discount_applies(self.discount, context)
         self.assertTrue(result)
+
+
+class CreditAndBankTransferModelTests(TestCase):
+    """Model-level tests for credits and bank transfer evidence."""
+
+    def setUp(self):
+        self.user = CommunityUser.objects.create_user(
+            username='finance-user',
+            email='finance-user@example.com',
+            password='testpass123'
+        )
+
+        self.organisation = Organisation.objects.create(
+            title='Credit Model Test Organisation',
+            created_by=self.user
+        )
+
+        self.event_type = EventType.objects.create(
+            title='Finance Test Event Type',
+            code='FINTEST'
+        )
+
+        start_time = timezone.now() + timedelta(days=14)
+        end_time = start_time + timedelta(days=1)
+
+        self.event = Event.objects.create(
+            title='Finance Test Event',
+            event_type=self.event_type,
+            created_by=self.user,
+            display_code='FIN001',
+            display_identifier='FIN001-TEST',
+            start_datetime=start_time,
+            end_datetime=end_time,
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
+        )
+
+        self.payment_method = PaymentMethod.objects.create(
+            title='Bank Transfer',
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.BANK_TRANSFER,
+            is_active=True,
+            provided_details={
+                'account_name': 'Test Account',
+                'sort_code': '12-34-56',
+                'account_number': '12345678'
+            }
+        )
+
+        self.payment = Payment.objects.create(
+            user=self.user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money('100.00', 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            bank_transfer_reference='TRX-ABC-123'
+        )
+
+    def test_credit_amount_must_be_positive(self):
+        credit = CreditExpense(
+            event=self.event,
+            amount=Money('0.00', 'GBP'),
+            description='Venue deposit for test event',
+            expense_type=CreditExpenseTypeChoices.VENUE_COST,
+            created_by=self.user,
+        )
+
+        with self.assertRaises(ValidationError):
+            credit.save()
+
+    def test_credit_amount_locked_after_verification(self):
+        credit = CreditExpense.objects.create(
+            event=self.event,
+            amount=Money('20.00', 'GBP'),
+            description='Venue deposit for test event',
+            expense_type=CreditExpenseTypeChoices.VENUE_COST,
+            created_by=self.user,
+        )
+        credit.mark_verified(self.user)
+        credit.amount = Money('25.00', 'GBP')
+
+        with self.assertRaises(ValidationError):
+            credit.save()
+
+    def test_bank_transfer_evidence_sets_auto_expiry_date(self):
+        evidence = BankTransferEvidence.objects.create(
+            transfer_id='TRX-ABC-123',
+            evidence_file=SimpleUploadedFile(
+                'proof.pdf',
+                b'%PDF-1.4 test bank transfer evidence',
+                content_type='application/pdf',
+            ),
+            payment=self.payment,
+            payer_name='Test Payer',
+            payer_account_last4='1234',
+            amount_on_evidence=Money('100.00', 'GBP'),
+        )
+
+        self.assertIsNotNone(evidence.auto_expiry_date)
+
+    def test_bank_transfer_evidence_amount_must_match_payment(self):
+        evidence = BankTransferEvidence(
+            transfer_id='TRX-MISMATCH-001',
+            evidence_file=SimpleUploadedFile(
+                'proof.pdf',
+                b'%PDF-1.4 mismatch test',
+                content_type='application/pdf',
+            ),
+            payment=self.payment,
+            payer_name='Test Payer',
+            payer_account_last4='1234',
+            amount_on_evidence=Money('50.00', 'GBP'),
+        )
+
+        with self.assertRaises(ValidationError):
+            evidence.save()

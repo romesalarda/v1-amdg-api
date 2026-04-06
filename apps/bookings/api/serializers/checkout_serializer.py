@@ -661,6 +661,56 @@ class CheckoutSerializer(serializers.Serializer):
         many=True,
         help_text="List of attendee selections with packages and products"
     )
+
+    def _extract_bank_transfer_evidence_payload(self) -> dict | None:
+        """Extract optional nested multipart evidence payload from request/initial_data."""
+        request = self.context.get('request')
+        raw_data = self.initial_data or {}
+
+        transfer_id = raw_data.get('bank_transfer_evidence.transfer_id') or raw_data.get('bank_transfer_evidence[transfer_id]')
+        payer_name = raw_data.get('bank_transfer_evidence.payer_name') or raw_data.get('bank_transfer_evidence[payer_name]')
+        payer_account_last4 = raw_data.get('bank_transfer_evidence.payer_account_last4') or raw_data.get('bank_transfer_evidence[payer_account_last4]')
+        amount_on_evidence = raw_data.get('bank_transfer_evidence.amount_on_evidence') or raw_data.get('bank_transfer_evidence[amount_on_evidence]')
+
+        evidence_file = None
+        if request and hasattr(request, 'FILES'):
+            evidence_file = (
+                request.FILES.get('bank_transfer_evidence.evidence_file')
+                or request.FILES.get('bank_transfer_evidence[evidence_file]')
+            )
+
+        any_payload_present = any([
+            transfer_id,
+            payer_name,
+            payer_account_last4,
+            amount_on_evidence,
+            evidence_file,
+        ])
+
+        if not any_payload_present:
+            return None
+
+        if not transfer_id:
+            raise serializers.ValidationError({
+                'bank_transfer_evidence.transfer_id': 'transfer_id is required when bank transfer evidence is provided.'
+            })
+        if not evidence_file:
+            raise serializers.ValidationError({
+                'bank_transfer_evidence.evidence_file': 'evidence_file is required when bank transfer evidence is provided.'
+            })
+
+        payload = {
+            'transfer_id': str(transfer_id).strip(),
+            'evidence_file': evidence_file,
+        }
+        if payer_name:
+            payload['payer_name'] = str(payer_name).strip()
+        if payer_account_last4:
+            payload['payer_account_last4'] = str(payer_account_last4).strip()
+        if amount_on_evidence:
+            payload['amount_on_evidence'] = str(amount_on_evidence).strip()
+
+        return payload
     
     def validate_booking_intent_id(self, value):
         """Validate booking intent exists and is active."""
@@ -717,7 +767,7 @@ class CheckoutSerializer(serializers.Serializer):
         - Questions, consents, personal info
         """
         from apps.bookings.services.checkout_validation import CheckoutValidationService
-        from apps.payments.models import PaymentMethod
+        from apps.payments.models import PaymentMethodTypeChoices
         
         intent_id = attrs.get('booking_intent_id')
         method_id = attrs.get('payment_method_id')
@@ -738,6 +788,28 @@ class CheckoutSerializer(serializers.Serializer):
         # Store validated objects for processing
         attrs['_intent'] = intent
         attrs['_payment_method'] = method
+
+        bank_transfer_evidence_payload = self._extract_bank_transfer_evidence_payload()
+
+        if method and method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:
+            raise serializers.ValidationError({
+                'bank_transfer_evidence': 'Evidence payload is only valid when payment method is BANK_TRANSFER.'
+            })
+
+        if (
+            method
+            and method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
+            and method.bank_transfer_required_immediately
+            and not bank_transfer_evidence_payload
+        ):
+            raise serializers.ValidationError({
+                'bank_transfer_evidence': (
+                    'Bank transfer evidence is required immediately for this payment method. '
+                    'Provide bank_transfer_evidence.transfer_id and bank_transfer_evidence.evidence_file.'
+                )
+            })
+
+        attrs['_bank_transfer_evidence_payload'] = bank_transfer_evidence_payload
 
         if stripe_payment_intent_id:
             attrs['_stripe_payment_intent_id'] = stripe_payment_intent_id

@@ -19,6 +19,8 @@ from apps.payments.api.viewsets import (
     RefundPolicyViewSet,
     DonationViewSet,
     PaymentHistoryActionViewSet,
+    CreditExpenseViewSet,
+    BankTransferEvidenceViewSet,
 )
 from apps.payments.api.statistics_viewsets import PaymentStatisticsViewSet
 from apps.payments.api.stripe_views import (
@@ -43,6 +45,8 @@ router.register(r'refund-associations', RefundAssociationViewSet, basename='refu
 router.register(r'refund-policies', RefundPolicyViewSet, basename='refundpolicy')
 router.register(r'donations', DonationViewSet, basename='donation')
 router.register(r'history', PaymentHistoryActionViewSet, basename='paymenthistory')
+router.register(r'credits', CreditExpenseViewSet, basename='creditexpense')
+router.register(r'bank-transfer-evidence', BankTransferEvidenceViewSet, basename='banktransferevidence')
 
 # Register statistics viewset
 router.register(r'statistics', PaymentStatisticsViewSet, basename='payment-statistics')

@@ -19,6 +19,7 @@ from typing import Any
 from uuid import UUID
 
 from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+from apps.payments.models import CreditExpense, BankTransferEvidence
 
 User = get_user_model()
 
@@ -243,6 +244,87 @@ class IsPaymentOwnerOrAdministrative(permissions.BasePermission):
             return True
                     
         return False
+
+
+def _user_has_finance_role(user, event) -> bool:
+    """Check whether a user has a finance-style role for the given event."""
+    if not user or not getattr(user, 'is_authenticated', False) or not event:
+        return False
+
+    return EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__name__icontains='finance'
+    ).exists() or EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__code__iexact='FIN'
+    ).exists()
+
+
+class IsCreditAccessible(permissions.BasePermission):
+    """Allow creators and event administrators to view credit records."""
+
+    message = "You do not have permission to access this credit record."
+
+    def has_permission(self, request, view) -> bool:
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        if isinstance(obj, CreditExpense) and obj.created_by == request.user:
+            return True
+
+        event = getattr(obj, 'event', None)
+        if not event:
+            return False
+
+        if EventRoleAssignment.objects.filter(
+            user=request.user,
+            event=event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).exists():
+            return True
+
+        return _user_has_finance_role(request.user, event)
+
+
+class IsBankTransferEvidenceAccessible(permissions.BasePermission):
+    """Allow payment owners and event administrators to view bank evidence."""
+
+    message = "You do not have permission to access this bank transfer evidence record."
+
+    def has_permission(self, request, view) -> bool:
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        payment = getattr(obj, 'payment', None)
+        if payment and payment.user == request.user:
+            return True
+
+        event = getattr(payment, 'event', None)
+        if not event:
+            return False
+
+        if EventRoleAssignment.objects.filter(
+            user=request.user,
+            event=event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).exists():
+            return True
+
+        return _user_has_finance_role(request.user, event)
 
 
 class IsRefundRequestOwnerOrAdministrative(permissions.BasePermission):
