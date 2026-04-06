@@ -12,6 +12,7 @@ Tests the complete donation flow via API endpoints with all payment methods:
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
 from datetime import date, timedelta
@@ -21,7 +22,7 @@ from unittest.mock import patch, MagicMock
 
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentMethodTypeChoices,
-    PaymentStatusChoices, Donation
+    PaymentStatusChoices, Donation, BankTransferEvidence
 )
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventStatusChoices
@@ -396,6 +397,20 @@ class DonationCheckoutAPITestCase(TestCase):
         donation_id = response.data['donation']['id']
         donation = Donation.objects.get(id=donation_id)
         payment = donation.payment
+
+        evidence = BankTransferEvidence.objects.create(
+            transfer_id=payment.bank_transfer_reference,
+            evidence_file=SimpleUploadedFile(
+                'proof.pdf',
+                b'%PDF-1.4 donation bank transfer evidence',
+                content_type='application/pdf',
+            ),
+            payment=payment,
+            payer_name='Donation Payer',
+            payer_account_last4='1234',
+            amount_on_evidence=payment.base_amount,
+        )
+        evidence.mark_verified(self.admin_user)
         
         # Admin verifies bank transfer
         self.client.force_authenticate(user=self.admin_user)
@@ -406,7 +421,7 @@ class DonationCheckoutAPITestCase(TestCase):
         }
         
         response = self.client.post(verify_url, verify_data, format='json')
-        
+        print(f"Bank transfer verification response data: {response.data}")
         # Verify response
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         

@@ -915,9 +915,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         except BookingIntent.DoesNotExist:
             raise ValidationError({'booking_intent_id': 'Booking intent not found for this user.'})
 
-        if not intent.is_active:
-            raise ValidationError({'booking_intent_id': 'Booking intent is no longer active.'})
-
         try:
             payment_method = PaymentMethod.objects.get(id=payment_method_id, event=intent.event)
         except PaymentMethod.DoesNotExist:
@@ -925,6 +922,28 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         if payment_method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER:
             raise ValidationError({'payment_method_id': 'Only bank transfer payments can be reserved.'})
+
+        existing_checkout_payment = Payment.objects.filter(
+            user=user,
+            event=intent.event,
+            method=payment_method,
+            metadata__checkout_intent_id=str(intent.booking_intent_id),
+            metadata__payment_type='booking_checkout_pending_finalization',
+        ).exclude(
+            status__in=[PaymentStatusChoices.CANCELLED, PaymentStatusChoices.FAILED]
+        ).order_by('-created_at').first()
+
+        if existing_checkout_payment:
+            return Response({
+                'payment_id': str(existing_checkout_payment.payment_id),
+                'payment_reference': existing_checkout_payment.payment_reference,
+                'bank_transfer_reference': existing_checkout_payment.bank_transfer_reference,
+                'status': existing_checkout_payment.status,
+                'message': 'Checkout payment already exists for this booking intent.',
+            }, status=status.HTTP_200_OK)
+
+        if not intent.is_active:
+            raise ValidationError({'booking_intent_id': 'Booking intent is no longer active.'})
 
         existing_payment = Payment.objects.filter(
             user=user,

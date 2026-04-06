@@ -449,6 +449,104 @@ class CheckoutAPITestCase(TestCase):
         tickets = Ticket.objects.filter(payment=payment)
         self.assertEqual(tickets.count(), 0)
 
+    def test_reserve_bank_transfer_reuses_existing_checkout_payment(self):
+        """Reserve endpoint must return existing checkout payment instead of creating a new draft reservation."""
+        intent = self.create_booking_intent(ticket_count=1)
+
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-BANK-REUSE-001',
+            made_by=self.user
+        )
+        attendee = self.create_attendee(booking)
+
+        checkout_response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.bank_method.id,
+            'attendees': [
+                {
+                    'attendee_id': str(attendee.attendee_id),
+                    'package_id': self.package.id
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(checkout_response.status_code, status.HTTP_201_CREATED)
+
+        checkout_payment = Payment.objects.get(payment_reference=checkout_response.data['payment_reference'])
+        self.assertEqual(checkout_payment.metadata.get('payment_type'), 'booking_checkout_pending_finalization')
+
+        reserve_response = self.client.post('/api/bookings/list/reserve-bank-transfer-payment/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.bank_method.id,
+        }, format='json')
+
+        self.assertEqual(reserve_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(checkout_payment.payment_id), reserve_response.data['payment_id'])
+
+        reservation_count = Payment.objects.filter(
+            user=self.user,
+            event=self.event,
+            method=self.bank_method,
+            metadata__checkout_intent_id=str(intent.booking_intent_id),
+            metadata__payment_type='booking_checkout_reservation',
+        ).count()
+        self.assertEqual(reservation_count, 0)
+
+    def test_reserve_then_checkout_then_reserve_does_not_create_extra_draft(self):
+        """After a reserved payment is consumed by checkout, reserve endpoint must not create a new draft payment."""
+        intent = self.create_booking_intent(ticket_count=1)
+
+        reserve_one = self.client.post('/api/bookings/list/reserve-bank-transfer-payment/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.bank_method.id,
+        }, format='json')
+
+        self.assertEqual(reserve_one.status_code, status.HTTP_201_CREATED)
+        reserved_payment_id = reserve_one.data['payment_id']
+
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-BANK-REUSE-002',
+            made_by=self.user
+        )
+        attendee = self.create_attendee(booking)
+
+        checkout_response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.bank_method.id,
+            'payment_id': reserved_payment_id,
+            'attendees': [
+                {
+                    'attendee_id': str(attendee.attendee_id),
+                    'package_id': self.package.id
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(checkout_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(checkout_response.data['payment_id']), reserved_payment_id)
+
+        consumed_payment = Payment.objects.get(payment_id=reserved_payment_id)
+        self.assertEqual(consumed_payment.status, PaymentStatusChoices.PENDING)
+        self.assertEqual(consumed_payment.metadata.get('payment_type'), 'booking_checkout_pending_finalization')
+
+        reserve_two = self.client.post('/api/bookings/list/reserve-bank-transfer-payment/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.bank_method.id,
+        }, format='json')
+
+        self.assertEqual(reserve_two.status_code, status.HTTP_200_OK)
+        self.assertEqual(reserve_two.data['payment_id'], reserved_payment_id)
+
+        total_payments_for_intent = Payment.objects.filter(
+            user=self.user,
+            event=self.event,
+            method=self.bank_method,
+            metadata__checkout_intent_id=str(intent.booking_intent_id),
+        ).count()
+        self.assertEqual(total_payments_for_intent, 1)
+
     def test_checkout_bank_transfer_requires_evidence_when_method_is_immediate(self):
         """Checkout must fail when immediate-evidence bank transfer method is used without evidence payload."""
         self.bank_method.bank_transfer_required_immediately = True
