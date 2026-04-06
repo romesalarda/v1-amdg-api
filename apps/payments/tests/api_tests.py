@@ -12,6 +12,7 @@ from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from djmoney.money import Money
 from decimal import Decimal
@@ -20,7 +21,8 @@ from apps.payments.models import (
     Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
     Discount, DiscountRule, DiscountType, DiscountRuleTypeChoices,
     RefundRequest, RefundPolicy, RefundPolicyTypeChoices,
-    Donation, PaymentHistoryAction
+    Donation, PaymentHistoryAction,
+    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
 )
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
@@ -418,6 +420,83 @@ class PaymentAPITestCase(APITestCase):
         self.assertEqual(sponsor_payment.status, PaymentStatusChoices.COMPLETED)
         self.assertTrue(sponsor.is_verified)
         self.assertTrue(sponsor.is_processed)
+
+    def test_create_credit_expense(self):
+        """Event administrative users can create credits."""
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:creditexpense-list')
+        response = self.client.post(
+            url,
+            {
+                'event': self.event.id,
+                'amount': '15.00',
+                'description': 'Venue deposit for test event',
+                'expense_type': CreditExpenseTypeChoices.VENUE_COST,
+                'paid_date': timezone.now().date().isoformat(),
+                'is_settled': True,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(CreditExpense.objects.count(), 1)
+        credit = CreditExpense.objects.get()
+        self.assertEqual(credit.created_by, self.regular_user)
+
+    def test_credit_expense_rejects_target_fields_from_api(self):
+        """Generic target fields should not be writable from the API."""
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:creditexpense-list')
+        response = self.client.post(
+            url,
+            {
+                'event': self.event.id,
+                'amount': '15.00',
+                'description': 'Venue deposit for test event',
+                'expense_type': CreditExpenseTypeChoices.VENUE_COST,
+                'target_type': 1,
+                'target_id': '1',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(CreditExpense.objects.count(), 0)
+
+    def test_create_and_confirm_bank_transfer_evidence(self):
+        """Evidence upload should allow confirmation and verification by an event admin."""
+        evidence_file = SimpleUploadedFile(
+            'bank-proof.pdf',
+            b'%PDF-1.4 test bank transfer evidence',
+            content_type='application/pdf',
+        )
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_url = reverse('payments:banktransferevidence-list')
+        response = self.client.post(
+            create_url,
+            {
+                'transfer_id': 'TRX-ABC-123',
+                'evidence_file': evidence_file,
+                'payment': self.payment.id,
+                'payer_name': 'Test Payer',
+                'payer_account_last4': '1234',
+                'amount_on_evidence': '100.00',
+            },
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        evidence = BankTransferEvidence.objects.get()
+        self.assertEqual(evidence.payment, self.payment)
+
+        self.client.force_authenticate(user=self.admin_user)
+        confirm_url = reverse('payments:banktransferevidence-confirm-payment-match', kwargs={'bank_transfer_id': evidence.bank_transfer_id})
+        confirm_response = self.client.post(confirm_url)
+
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        evidence.refresh_from_db()
+        self.assertEqual(evidence.verification_status, 'verified')
 
 
 class PaymentMethodAPITestCase(APITestCase):

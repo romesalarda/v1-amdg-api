@@ -3,6 +3,8 @@ from .payments import Payment, PaymentStatusChoices, PaymentHistoryAction
 from .methods import PaymentMethod, PaymentMethodTypeChoices
 from .refunds import RefundRequest, RefundAssociation, RefundPolicy, RefundPolicyTypeChoices
 from .donations import Donation
+from .bank import BankTransferEvidence
+from .credit import CreditExpense, CreditExpenseTypeChoices
 
 __all__ = [
     'DiscountType',
@@ -20,4 +22,7 @@ __all__ = [
     'RefundPolicy',
     'RefundPolicyTypeChoices',
     'PaymentHistoryAction',
+    'BankTransferEvidence',
+    'CreditExpense',
+    'CreditExpenseTypeChoices',
 ]

@@ -482,6 +482,8 @@ class PaymentOverviewStatsSerializer(BasePaymentStatisticsSerializer):
     """Serializer for combined overview statistics."""
     payments = serializers.DictField()
     revenue = serializers.DictField()
+    credits = serializers.DictField(required=False)
+    net_flow = serializers.DictField(required=False)
     discounts = serializers.DictField()
     refunds = serializers.DictField()
     donations = serializers.DictField()

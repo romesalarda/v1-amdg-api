@@ -26,6 +26,7 @@ from apps.payments.models.methods import PaymentMethod
 from apps.payments.models.discounts import Discount, DiscountRule
 from apps.payments.models.refunds import RefundRequest
 from apps.payments.models.donations import Donation
+from apps.payments.models.credit import CreditExpense, CreditExpenseTypeChoices
 from apps.products.models.orders import Order
 from apps.organisations.models import EventSponsorPackage
 
@@ -815,25 +816,25 @@ def calculate_revenue_overview(
         Dictionary with revenue overview data
     """
     queryset = _get_base_queryset(event_id, include_deleted)
-    
+
     # Only count COMPLETED payments for revenue
     completed_payments = queryset.filter(status=PaymentStatusChoices.COMPLETED)
-    
+
     total_completed = completed_payments.count()
     total_revenue = completed_payments.aggregate(total=Sum('base_amount'))['total']
     average_payment = completed_payments.aggregate(avg=Avg('base_amount'))['avg']
-    
+
     # Calculate refunded amount (from REFUNDED status payments)
     refunded_payments = queryset.filter(status=PaymentStatusChoices.REFUNDED)
     total_refunded = refunded_payments.aggregate(total=Sum('base_amount'))['total']
-    
+
     # Net revenue = completed - refunded
     net_revenue = (
         _format_money_value(total_revenue) or 0
     ) - (
         _format_money_value(total_refunded) or 0
     )
-    
+
     return {
         'total_revenue': _format_money_value(total_revenue),
         'total_completed_payments': total_completed,
@@ -841,6 +842,68 @@ def calculate_revenue_overview(
         'total_refunded': _format_money_value(total_refunded),
         'refunded_payment_count': refunded_payments.count(),
         'net_revenue': net_revenue
+    }
+
+
+def calculate_credit_stats(
+    event_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Calculate credit expense statistics.
+
+    Credits represent outgoing event value. For net flow, only settled credits
+    are treated as realised outflow.
+    """
+    queryset = CreditExpense.objects.all()
+
+    if event_id:
+        queryset = queryset.filter(event__event_id=event_id)
+
+    settled_queryset = queryset.filter(is_settled=True)
+
+    total_credits = queryset.count()
+    settled_count = settled_queryset.count()
+    pending_count = queryset.filter(is_settled=False).count()
+
+    total_amount = settled_queryset.aggregate(total=Sum('amount'))['total']
+    average_amount = settled_queryset.aggregate(avg=Avg('amount'))['avg']
+
+    type_distribution = []
+    for expense_type, label in CreditExpenseTypeChoices.choices:
+        typed_qs = settled_queryset.filter(expense_type=expense_type)
+        count = typed_qs.count()
+        if count == 0:
+            continue
+
+        total_by_type = typed_qs.aggregate(total=Sum('amount'))['total']
+        type_distribution.append({
+            'type': expense_type,
+            'label': label,
+            'count': count,
+            'total_amount': _format_money_value(total_by_type),
+            'percentage': _calculate_percentage(count, settled_count),
+        })
+
+    top_credits = settled_queryset.order_by('-amount').values(
+        'credit_id', 'description', 'amount', 'expense_type'
+    )[:5]
+
+    return {
+        'total_credits': total_credits,
+        'settled_count': settled_count,
+        'pending_count': pending_count,
+        'total_amount': _format_money_value(total_amount),
+        'average_amount': _format_money_value(average_amount),
+        'by_expense_type': type_distribution,
+        'top_credits': [
+            {
+                'credit_id': str(item['credit_id']),
+                'description': item['description'],
+                'amount': _format_money_value(item['amount']),
+                'expense_type': item['expense_type'],
+            }
+            for item in top_credits
+        ],
     }
 
 
@@ -1119,7 +1182,13 @@ def calculate_overview_stats(
     # Donation summary
     donation_stats = calculate_donation_stats(event_id)
 
+    # Credit summary
+    credit_stats = calculate_credit_stats(event_id)
+
     sponsor_package_stats = calculate_sponsor_package_payment_status(event_id)
+
+    gross_revenue = revenue_overview['total_revenue'] or 0
+    settled_credit_outflow = credit_stats['total_amount'] or 0
     
     return {
         'payments': {
@@ -1133,6 +1202,19 @@ def calculate_overview_stats(
             'net': revenue_overview['net_revenue'],
             'refunded': revenue_overview['total_refunded'],
             'completed_count': revenue_overview['total_completed_payments']
+        },
+        'credits': {
+            'total_credits': credit_stats['total_credits'],
+            'settled_count': credit_stats['settled_count'],
+            'pending_count': credit_stats['pending_count'],
+            'total_amount': credit_stats['total_amount'],
+            'average_amount': credit_stats['average_amount'],
+            'by_expense_type': credit_stats['by_expense_type'],
+        },
+        'net_flow': {
+            'gross_revenue': gross_revenue,
+            'total_outgoing': settled_credit_outflow,
+            'net_after_credits': gross_revenue - settled_credit_outflow,
         },
         'discounts': {
             'total_active': discount_usage['total_discounts'],

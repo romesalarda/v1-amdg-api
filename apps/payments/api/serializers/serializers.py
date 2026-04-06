@@ -36,7 +36,8 @@ from apps.payments.models import (
     Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
     Discount, DiscountRule, DiscountType, DiscountApplicationChoices, DiscountRuleTypeChoices,
     RefundRequest, RefundAssociation, RefundPolicy, RefundPolicyTypeChoices,
-    Donation, PaymentHistoryAction
+    Donation, PaymentHistoryAction,
+    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
 )
 from apps.common.models import VerificationStatus
 from apps.payments.services.attendee_refunds import AttendeeRefundService
@@ -1589,6 +1590,294 @@ class DonationCheckoutSerializer(serializers.Serializer):
         attrs['donor_user'] = donor_user
         
         return attrs
+
+
+# ============================================================================
+# CREDIT SERIALIZERS
+# ============================================================================
+
+class CreditExpenseListSerializer(serializers.ModelSerializer):
+    """List serializer for CreditExpense with read-only generic target details."""
+
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.name', read_only=True, allow_null=True)
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    target = serializers.SerializerMethodField()
+    target_type = serializers.CharField(source='target_type.model', read_only=True, allow_null=True)
+    target_type_name = serializers.CharField(source='target_type.name', read_only=True, allow_null=True)
+
+    class Meta:
+        model = CreditExpense
+        fields = (
+            'credit_id', 'amount', 'amount_currency', 'description', 'expense_type',
+            'event', 'event_name', 'created_by', 'created_by_name',
+            'paid_date', 'is_settled', 'verification_status',
+            'target', 'target_type', 'target_type_name', 'target_id',
+            'created_at', 'updated_at', '_links'
+        )
+        read_only_fields = ('credit_id', 'created_at', 'updated_at', 'target', 'target_type', 'target_type_name', 'target_id')
+
+    def get_target(self, obj):
+        return str(obj.target) if obj.target else None
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+
+        links = {
+            'self': request.build_absolute_uri(f"/api/payments/credits/{obj.credit_id}/"),
+        }
+        if obj.event:
+            links['event'] = request.build_absolute_uri(f"/api/events/{obj.event.event_id}/")
+        return links
+
+
+class CreditExpenseDetailSerializer(CreditExpenseListSerializer):
+    """Detailed serializer for CreditExpense."""
+
+    verified_by_name = serializers.CharField(source='verified_by.username', read_only=True, allow_null=True)
+    processed_by_name = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+
+    class Meta(CreditExpenseListSerializer.Meta):
+        fields = CreditExpenseListSerializer.Meta.fields + (
+            'verified_updated_at', 'verified_by', 'verified_by_name',
+            'processed_at', 'processed_by', 'processed_by_name', 'auto_processed'
+        )
+
+
+class CreditExpenseCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for CreditExpense."""
+
+    amount = MoneyField(max_digits=14, decimal_places=2)
+
+    class Meta:
+        model = CreditExpense
+        fields = ('event', 'amount', 'description', 'expense_type', 'paid_date', 'is_settled')
+
+    def validate_amount(self, value):
+        if value.amount <= 0:
+            raise serializers.ValidationError('Credit amount must be greater than zero.')
+        return value
+
+    def validate(self, attrs):
+        forbidden_fields = {'target_type', 'target_id'}
+        provided_forbidden = forbidden_fields.intersection(getattr(self, 'initial_data', {}).keys())
+        if provided_forbidden:
+            raise serializers.ValidationError({
+                field: 'This field is read-only and controlled by the backend.'
+                for field in sorted(provided_forbidden)
+            })
+
+        return attrs
+
+    def validate_paid_date(self, value):
+        if value and value > timezone.now().date():
+            raise serializers.ValidationError('Paid date cannot be in the future.')
+        return value
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        validated_data['created_by'] = request.user if request else None
+        return super().create(validated_data)
+
+
+class CreditExpenseUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for CreditExpense."""
+
+    class Meta:
+        model = CreditExpense
+        fields = ('description', 'paid_date', 'is_settled', 'verification_status')
+
+    def validate_paid_date(self, value):
+        if value and value > timezone.now().date():
+            raise serializers.ValidationError('Paid date cannot be in the future.')
+        return value
+
+    def validate(self, attrs):
+        forbidden_fields = {'target_type', 'target_id'}
+        provided_forbidden = forbidden_fields.intersection(getattr(self, 'initial_data', {}).keys())
+        if provided_forbidden:
+            raise serializers.ValidationError({
+                field: 'This field is read-only and controlled by the backend.'
+                for field in sorted(provided_forbidden)
+            })
+
+        return attrs
+
+    def validate_verification_status(self, value):
+        if self.instance:
+            current = self.instance.verification_status
+            allowed_transitions = {
+                VerificationStatus.PENDING: [VerificationStatus.VERIFIED, VerificationStatus.REJECTED],
+                VerificationStatus.VERIFIED: [VerificationStatus.PROCESSED],
+            }
+
+            if current != value and value not in allowed_transitions.get(current, []):
+                raise serializers.ValidationError(f'Cannot transition from {current} to {value}.')
+
+        return value
+
+    def update(self, instance, validated_data):
+        new_status = validated_data.get('verification_status', instance.verification_status)
+        user = self.context.get('request').user if self.context.get('request') else None
+
+        if new_status == VerificationStatus.VERIFIED and instance.verification_status != new_status:
+            instance.mark_verified(user)
+        elif new_status == VerificationStatus.PROCESSED and instance.verification_status != new_status:
+            instance.mark_processed(user)
+        elif new_status == VerificationStatus.REJECTED and instance.verification_status != new_status:
+            instance.mark_rejected(user)
+        else:
+            instance = super().update(instance, validated_data)
+
+        return instance
+
+
+# ============================================================================
+# BANK TRANSFER EVIDENCE SERIALIZERS
+# ============================================================================
+
+class BankTransferEvidenceListSerializer(serializers.ModelSerializer):
+    """List serializer for bank transfer evidence."""
+
+    _links = serializers.SerializerMethodField()
+    payment_reference = serializers.CharField(source='payment.payment_reference', read_only=True, allow_null=True)
+    payer_name = serializers.CharField(read_only=True, allow_null=True)
+    payer_account_last4 = serializers.CharField(read_only=True, allow_null=True)
+
+    class Meta:
+        model = BankTransferEvidence
+        fields = (
+            'bank_transfer_id', 'transfer_id', 'evidence_file',
+            'payment', 'payment_reference', 'payer_name', 'payer_account_last4',
+            'amount_on_evidence', 'verification_status', 'uploaded_at', 'auto_expiry_date', '_links'
+        )
+        read_only_fields = ('bank_transfer_id', 'uploaded_at', 'auto_expiry_date')
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'payment': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+
+        links = {
+            'self': request.build_absolute_uri(f"/api/payments/bank-transfer-evidence/{obj.bank_transfer_id}/"),
+        }
+        if obj.payment:
+            links['payment'] = request.build_absolute_uri(f"/api/payments/list/{obj.payment.payment_id}/")
+        return links
+
+
+class BankTransferEvidenceDetailSerializer(BankTransferEvidenceListSerializer):
+    """Detailed serializer for bank transfer evidence."""
+
+    verified_by_name = serializers.CharField(source='verified_by.username', read_only=True, allow_null=True)
+    processed_by_name = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+
+    class Meta(BankTransferEvidenceListSerializer.Meta):
+        fields = BankTransferEvidenceListSerializer.Meta.fields + (
+            'metadata', 'verified_updated_at', 'verified_by', 'verified_by_name',
+            'processed_at', 'processed_by', 'processed_by_name', 'auto_processed'
+        )
+
+
+class BankTransferEvidenceCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for bank transfer evidence."""
+
+    amount_on_evidence = MoneyField(max_digits=14, decimal_places=2, required=False, allow_null=True)
+
+    class Meta:
+        model = BankTransferEvidence
+        fields = (
+            'transfer_id', 'evidence_file', 'payer_name', 'payer_account_last4',
+            'amount_on_evidence', 'metadata', 'payment'
+        )
+
+    def validate_transfer_id(self, value):
+        if not value or not str(value).strip():
+            raise serializers.ValidationError('Transfer ID is required.')
+        return value.strip()
+
+    def validate(self, attrs):
+        payment = attrs.get('payment')
+        transfer_id = attrs.get('transfer_id', '')
+        metadata = attrs.get('metadata') or {}
+        attrs['metadata'] = metadata
+
+        if not payment:
+            matched_payment = self._find_matching_payment(transfer_id)
+            if matched_payment:
+                attrs['payment'] = matched_payment
+                attrs['metadata']['auto_matched_payment_id'] = str(matched_payment.payment_id)
+
+        if payment and payment.bank_transfer_reference:
+            if transfer_id.lower() not in payment.bank_transfer_reference.lower() and payment.bank_transfer_reference.lower() not in transfer_id.lower():
+                attrs['metadata']['match_suggestion'] = payment.bank_transfer_reference
+
+        return attrs
+
+    def _find_matching_payment(self, transfer_id):
+        if not transfer_id:
+            return None
+
+        payment_qs = Payment.objects.filter(bank_transfer_reference__icontains=transfer_id)
+        if payment_qs.count() == 1:
+            return payment_qs.first()
+        return None
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        return instance
+
+
+class BankTransferEvidenceUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for bank transfer evidence."""
+
+    class Meta:
+        model = BankTransferEvidence
+        fields = ('payer_name', 'payer_account_last4', 'metadata', 'payment', 'verification_status')
+
+    def validate_verification_status(self, value):
+        if self.instance:
+            current = self.instance.verification_status
+            allowed_transitions = {
+                VerificationStatus.PENDING: [VerificationStatus.VERIFIED, VerificationStatus.REJECTED],
+                VerificationStatus.VERIFIED: [VerificationStatus.PROCESSED],
+            }
+
+            if current != value and value not in allowed_transitions.get(current, []):
+                raise serializers.ValidationError(f'Cannot transition from {current} to {value}.')
+
+        return value
+
+    def update(self, instance, validated_data):
+        new_status = validated_data.get('verification_status', instance.verification_status)
+        user = self.context.get('request').user if self.context.get('request') else None
+
+        if new_status == VerificationStatus.VERIFIED and instance.verification_status != new_status:
+            instance.mark_verified(user)
+        elif new_status == VerificationStatus.PROCESSED and instance.verification_status != new_status:
+            instance.mark_processed(user)
+        elif new_status == VerificationStatus.REJECTED and instance.verification_status != new_status:
+            instance.mark_rejected(user)
+        else:
+            instance = super().update(instance, validated_data)
+
+        return instance
 
 
 # ============================================================================

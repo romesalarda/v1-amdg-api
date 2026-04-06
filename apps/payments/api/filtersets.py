@@ -22,12 +22,14 @@ from django_filters import rest_framework as filters
 from django.db.models import Q, F
 from django.utils import timezone
 from datetime import timedelta
+from uuid import UUID
 
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
     Discount, DiscountRule, DiscountType, DiscountApplicationChoices, DiscountRuleTypeChoices,
     RefundRequest, RefundPolicy, RefundPolicyTypeChoices,
-    Donation, PaymentHistoryAction
+    Donation, PaymentHistoryAction,
+    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
 )
 from apps.common.models import VerificationStatus
 
@@ -848,6 +850,182 @@ class DonationFilterSet(filters.FilterSet):
         if value:
             return queryset.filter(verification_status=VerificationStatus.PENDING)
         return queryset
+
+
+class CreditExpenseFilterSet(filters.FilterSet):
+    """
+    Filterset for CreditExpense model.
+
+    Supports filtering by:
+    - Verification status
+    - Event
+    - Expense type
+    - Settlement state
+    - Creator
+    - Amount ranges
+    - Search by description and credit reference
+    """
+
+    verification_status = filters.MultipleChoiceFilter(
+        field_name='verification_status',
+        choices=VerificationStatus.choices,
+        help_text="Filter by verification status",
+    )
+
+    expense_type = filters.MultipleChoiceFilter(
+        field_name='expense_type',
+        choices=CreditExpenseTypeChoices.choices,
+        help_text="Filter by expense type",
+    )
+
+    event = filters.NumberFilter(
+        field_name='event__id',
+        help_text="Filter by event ID",
+    )
+    event__event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text="Filter by event UUID",
+    )
+
+    created_by = filters.NumberFilter(
+        field_name='created_by__id',
+        help_text="Filter by creator user ID",
+    )
+    created_by__username = filters.CharFilter(
+        field_name='created_by__username',
+        lookup_expr='icontains',
+        help_text="Filter by creator username",
+    )
+
+    is_settled = filters.BooleanFilter(
+        field_name='is_settled',
+        help_text="Filter by settlement state",
+    )
+
+    created_after = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='gte',
+        help_text="Filter credits created after this timestamp",
+    )
+    created_before = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='lte',
+        help_text="Filter credits created before this timestamp",
+    )
+
+    paid_after = filters.DateFilter(
+        field_name='paid_date',
+        lookup_expr='gte',
+        help_text="Filter by paid date on or after this value",
+    )
+    paid_before = filters.DateFilter(
+        field_name='paid_date',
+        lookup_expr='lte',
+        help_text="Filter by paid date on or before this value",
+    )
+
+    min_amount = filters.NumberFilter(
+        field_name='amount',
+        lookup_expr='gte',
+        help_text="Minimum credit amount",
+    )
+    max_amount = filters.NumberFilter(
+        field_name='amount',
+        lookup_expr='lte',
+        help_text="Maximum credit amount",
+    )
+
+    search = filters.CharFilter(
+        method='filter_search',
+        help_text="Search description or credit ID",
+    )
+
+    class Meta:
+        model = CreditExpense
+        fields = []
+
+    def filter_search(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        query = Q(description__icontains=value)
+
+        try:
+            query |= Q(credit_id=UUID(value))
+        except (ValueError, TypeError):
+            pass
+
+        return queryset.filter(query)
+
+
+class BankTransferEvidenceFilterSet(filters.FilterSet):
+    """
+    Filterset for BankTransferEvidence model.
+
+    Supports filtering by:
+    - Verification status
+    - Payment linkage
+    - Transfer reference
+    - Upload date ranges
+    - Expiry date ranges
+    - Search by payer or transfer id
+    """
+
+    verification_status = filters.MultipleChoiceFilter(
+        field_name='verification_status',
+        choices=VerificationStatus.choices,
+        help_text="Filter by verification status",
+    )
+
+    payment = filters.NumberFilter(
+        field_name='payment__id',
+        help_text="Filter by linked payment ID",
+    )
+    payment__payment_id = filters.UUIDFilter(
+        field_name='payment__payment_id',
+        help_text="Filter by linked payment UUID",
+    )
+
+    uploaded_after = filters.DateTimeFilter(
+        field_name='uploaded_at',
+        lookup_expr='gte',
+        help_text="Filter evidence uploaded after this timestamp",
+    )
+    uploaded_before = filters.DateTimeFilter(
+        field_name='uploaded_at',
+        lookup_expr='lte',
+        help_text="Filter evidence uploaded before this timestamp",
+    )
+
+    expiry_after = filters.DateFilter(
+        field_name='auto_expiry_date',
+        lookup_expr='gte',
+        help_text="Filter evidence expiring on or after this date",
+    )
+    expiry_before = filters.DateFilter(
+        field_name='auto_expiry_date',
+        lookup_expr='lte',
+        help_text="Filter evidence expiring on or before this date",
+    )
+
+    search = filters.CharFilter(
+        method='filter_search',
+        help_text="Search transfer ID, payer name, or payment reference",
+    )
+
+    class Meta:
+        model = BankTransferEvidence
+        fields = []
+
+    def filter_search(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        return queryset.filter(
+            Q(transfer_id__icontains=value) |
+            Q(payer_name__icontains=value) |
+            Q(payment__payment_reference__icontains=value)
+        )
 
 
 class PaymentHistoryActionFilterSet(filters.FilterSet):
