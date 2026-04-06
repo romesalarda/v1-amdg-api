@@ -23,6 +23,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Prefetch
 from django.utils import timezone
@@ -252,8 +253,10 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        payment.status = PaymentStatusChoices.COMPLETED
-        payment.save()
+        try:
+            payment.transition_to(PaymentStatusChoices.COMPLETED)
+        except DjangoValidationError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         
         # Log action
         PaymentHistoryAction.objects.create(
@@ -421,6 +424,16 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if not payment.bank_transfer_evidence.filter(verification_status=VerificationStatus.VERIFIED).exists():
+            return Response(
+                {
+                    'error': (
+                        'Cannot verify/complete bank transfer payment without a VERIFIED bank transfer evidence record.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         target = payment.target
         target_type = type(target).__name__
@@ -431,7 +444,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
         try:
             # Transition payment to completed
             payment.transition_to(PaymentStatusChoices.COMPLETED)
-            payment.save()
             
             # Log verification action
             PaymentHistoryAction.objects.create(
@@ -525,6 +537,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
             
             return Response(response_data, status=status.HTTP_200_OK)
             
+        except DjangoValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(
                 f"Error verifying bank transfer for payment {payment.payment_reference}: {str(e)}",

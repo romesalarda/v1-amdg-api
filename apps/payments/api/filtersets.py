@@ -21,6 +21,7 @@ Version: 1.0.0
 from django_filters import rest_framework as filters
 from django.db.models import Q, F
 from django.utils import timezone
+from django.conf import settings
 from datetime import timedelta
 from uuid import UUID
 
@@ -176,6 +177,19 @@ class PaymentFilterSet(filters.FilterSet):
         method='filter_descriptor',
         help_text="Filter by payment descriptor (e.g., booking, order, ticket, donation, sponsorship)"
     )
+
+    has_bank_transfer_evidence = filters.BooleanFilter(
+        method='filter_has_bank_transfer_evidence',
+        help_text='Filter bank transfer payments with/without any evidence records',
+    )
+    has_verified_bank_transfer_evidence = filters.BooleanFilter(
+        method='filter_has_verified_bank_transfer_evidence',
+        help_text='Filter bank transfer payments with/without verified evidence',
+    )
+    is_overdue_bank_transfer_evidence = filters.BooleanFilter(
+        method='filter_is_overdue_bank_transfer_evidence',
+        help_text='Filter bank transfer payments pending evidence beyond overdue_hours (default 72)',
+    )
     
     class Meta:
         model = Payment
@@ -234,6 +248,35 @@ class PaymentFilterSet(filters.FilterSet):
             return queryset.filter(created_at__gte=cutoff)
         return queryset
 
+    def filter_has_bank_transfer_evidence(self, queryset, name, value):
+        bank_transfer_qs = queryset.filter(method__method_type=PaymentMethodTypeChoices.BANK_TRANSFER)
+        if value:
+            return bank_transfer_qs.filter(bank_transfer_evidence__isnull=False).distinct()
+        return bank_transfer_qs.filter(bank_transfer_evidence__isnull=True)
+
+    def filter_has_verified_bank_transfer_evidence(self, queryset, name, value):
+        bank_transfer_qs = queryset.filter(method__method_type=PaymentMethodTypeChoices.BANK_TRANSFER)
+        if value:
+            return bank_transfer_qs.filter(bank_transfer_evidence__verification_status=VerificationStatus.VERIFIED).distinct()
+        return bank_transfer_qs.exclude(bank_transfer_evidence__verification_status=VerificationStatus.VERIFIED)
+
+    def filter_is_overdue_bank_transfer_evidence(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        default_overdue_hours = getattr(settings, 'BANK_TRANSFER_EVIDENCE_OVERDUE_HOURS', 72)
+        try:
+            overdue_hours = int(self.request.query_params.get('overdue_hours', default_overdue_hours))
+        except (TypeError, ValueError):
+            overdue_hours = default_overdue_hours
+
+        cutoff = timezone.now() - timedelta(hours=overdue_hours)
+        return queryset.filter(
+            method__method_type=PaymentMethodTypeChoices.BANK_TRANSFER,
+            status=PaymentStatusChoices.PENDING,
+            created_at__lt=cutoff,
+        ).exclude(bank_transfer_evidence__verification_status=VerificationStatus.VERIFIED)
+
 
 class PaymentMethodFilterSet(filters.FilterSet):
     """
@@ -256,6 +299,11 @@ class PaymentMethodFilterSet(filters.FilterSet):
     is_active = filters.BooleanFilter(
         field_name='is_active',
         help_text="Filter active/inactive payment methods"
+    )
+
+    bank_transfer_required_immediately = filters.BooleanFilter(
+        field_name='bank_transfer_required_immediately',
+        help_text='Filter payment methods that require evidence immediately at checkout',
     )
     
     event = filters.CharFilter(

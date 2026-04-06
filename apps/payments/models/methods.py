@@ -25,6 +25,10 @@ class PaymentMethod(models.Model):
         max_length=20,
         choices=PaymentMethodTypeChoices.choices
     )
+    bank_transfer_required_immediately = models.BooleanField(
+        default=False,
+        help_text='If true, checkout must include bank transfer evidence immediately for this method.'
+    )
     
     provided_details = models.JSONField(blank=True, null=True)
     

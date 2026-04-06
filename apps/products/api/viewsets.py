@@ -3266,7 +3266,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         - FREE: Skips payment if order total is £0
         """
         from apps.products.api.serializers import OrderCheckoutSerializer
-        from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
+        from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices
         from apps.payments.services.stripe.payment_intents import PaymentIntentService
         from django.db import transaction
         import logging
@@ -3288,6 +3288,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
 
             payment_method = serializer.validated_data['payment_method']
+            bank_transfer_evidence_payload = serializer.validated_data.get('_bank_transfer_evidence_payload')
 
             # Check if order is free (£0 total)
             if locked_order.total_amount.amount == 0:
@@ -3339,6 +3340,25 @@ class OrderViewSet(viewsets.ModelViewSet):
                 description=payment_description,
                 metadata=locked_order.get_metadata()
             )
+
+            bank_transfer_evidence = None
+            if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:
+                evidence_kwargs = {
+                    'payment': payment,
+                    'transfer_id': bank_transfer_evidence_payload['transfer_id'],
+                    'evidence_file': bank_transfer_evidence_payload['evidence_file'],
+                }
+                if bank_transfer_evidence_payload.get('payer_name'):
+                    evidence_kwargs['payer_name'] = bank_transfer_evidence_payload['payer_name']
+                if bank_transfer_evidence_payload.get('payer_account_last4'):
+                    evidence_kwargs['payer_account_last4'] = bank_transfer_evidence_payload['payer_account_last4']
+                if bank_transfer_evidence_payload.get('amount_on_evidence'):
+                    evidence_kwargs['amount_on_evidence'] = bank_transfer_evidence_payload['amount_on_evidence']
+
+                try:
+                    bank_transfer_evidence = BankTransferEvidence.objects.create(**evidence_kwargs)
+                except Exception as exc:
+                    raise ValidationError({'bank_transfer_evidence': str(exc)})
             
             # Link payment to order
             locked_order.payment = payment
@@ -3358,6 +3378,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 'payment_description': payment.description,
                 'total_amount': str(locked_order.total_amount.amount),
                 'currency': str(locked_order.total_amount.currency.code),
+                'bank_transfer_evidence_id': str(bank_transfer_evidence.bank_transfer_id) if bank_transfer_evidence else None,
                 '_links': {
                     'self': request.build_absolute_uri(),
                     'order': request.build_absolute_uri(f'/api/products/orders/list/{locked_order.order_id}/'),

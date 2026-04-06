@@ -165,9 +165,9 @@ class PaymentMethodAdmin(admin.ModelAdmin):
     
     list_display = (
         'title', 'code', 'method_type', 'is_active', 'event',
-        'created_at', 'get_payment_count'
+        'bank_transfer_required_immediately', 'created_at', 'get_payment_count'
     )
-    list_filter = ('method_type', 'is_active', 'event', 'created_at')
+    list_filter = ('method_type', 'is_active', 'bank_transfer_required_immediately', 'event', 'created_at')
     search_fields = ('title', 'code', 'description', 'event__name')
     readonly_fields = ('method_id', 'code', 'created_at', 'updated_at')
     date_hierarchy = 'created_at'
@@ -175,6 +175,10 @@ class PaymentMethodAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Basic Information', {
             'fields': ('method_id', 'title', 'code', 'description', 'method_type', 'is_active', 'event')
+        }),
+        ('Bank Transfer Policy', {
+            'fields': ('bank_transfer_required_immediately',),
+            'description': 'When enabled, checkout must include bank transfer evidence for this method.'
         }),
         ('Configuration', {
             'fields': ('provided_details',),
@@ -220,9 +224,16 @@ class PaymentAdmin(admin.ModelAdmin):
     
     list_display = (
         'payment_reference', 'get_target', 'get_payment_amount',
-        'status', 'method', 'user', 'event', 'created_at'
+        'status', 'method', 'get_bank_transfer_evidence_status', 'user', 'event', 'created_at'
     )
-    list_filter = ('status', 'method__method_type', 'event', 'created_at', 'updated_at')
+    list_filter = (
+        'status',
+        'method__method_type',
+        'bank_transfer_required_immediately',
+        'event',
+        'created_at',
+        'updated_at',
+    )
     search_fields = (
         'payment_reference', 'bank_transfer_reference', 
         'user__username', 'user__email', 'user__first_name', 'user__last_name'
@@ -230,7 +241,7 @@ class PaymentAdmin(admin.ModelAdmin):
     readonly_fields = (
         'payment_id', 'payment_reference',
         'created_at', 'updated_at', 'modified_amount',
-        'target', 'get_refund_summary', 'get_donation_summary'
+        'target', 'get_refund_summary', 'get_donation_summary', 'get_bank_transfer_evidence_status'
     )
     date_hierarchy = 'created_at'
     inlines = [PaymentHistoryActionInline]
@@ -247,7 +258,14 @@ class PaymentAdmin(admin.ModelAdmin):
             'description': 'Base amount with any applied modifiers'
         }),
         ('Payment Method', {
-            'fields': ('method', 'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference')
+            'fields': (
+                'method',
+                'bank_transfer_required_immediately',
+                'stripe_payment_intent',
+                'stripe_charge_id',
+                'bank_transfer_reference',
+                'get_bank_transfer_evidence_status',
+            )
         }),
         ('Target', {
             'fields': ('target_type', 'target_id', 'target'),
@@ -318,6 +336,29 @@ class PaymentAdmin(admin.ModelAdmin):
         html += f'<small>{donations.count()} donation(s)</small>'
         return format_html(html)
     get_donation_summary.short_description = 'Donations'
+
+    def get_bank_transfer_evidence_status(self, obj):
+        if not obj.method or obj.method.method_type != 'BANK_TRANSFER':
+            return '-'
+
+        latest = obj.bank_transfer_evidence.order_by('-uploaded_at').first()
+        if not latest:
+            return format_html('<span style="color: red;">Missing</span>')
+
+        status_color = {
+            'pending': 'orange',
+            'verified': 'green',
+            'processed': 'blue',
+            'rejected': 'red',
+        }.get(latest.verification_status, 'gray')
+
+        return format_html(
+            '<span style="color: {};">{}</span> <small>({})</small>',
+            status_color,
+            latest.verification_status,
+            latest.transfer_id,
+        )
+    get_bank_transfer_evidence_status.short_description = 'Bank Evidence'
     
     def mark_as_completed(self, request, queryset):
         """Bulk action to mark payments as completed."""

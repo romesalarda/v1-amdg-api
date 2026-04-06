@@ -80,6 +80,10 @@ class Payment(PayableModel):
     stripe_charge_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     stripe_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True, help_text='Stripe customer ID for recurring payments')
     bank_transfer_reference = models.CharField(max_length=255, blank=True, null=True)
+    bank_transfer_required_immediately = models.BooleanField(
+        default=False,
+        help_text='Snapshot of payment method policy at payment creation time.'
+    )
     metadata = models.JSONField(blank=True, null=True) # data of info when the payment was made (ABSOLUTE)
     
     status = models.CharField(
@@ -147,6 +151,12 @@ class Payment(PayableModel):
         return self.status == PaymentStatusChoices.REFUNDED
     
     def save(self, *args, **kwargs):
+
+        if not self.pk and self.method:
+            self.bank_transfer_required_immediately = bool(
+                self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
+                and self.method.bank_transfer_required_immediately
+            )
         
         for _ in range(MAX_PAYMENT_GENERATION_ATTEMPTS): # extra safety loop as payments are critical
             if not self.payment_reference:
@@ -213,6 +223,17 @@ class Payment(PayableModel):
         """
         if self.status == new_status:
             return  # Already in target status (idempotent)
+
+        # Bank transfer payments must have verified evidence before completion.
+        if (
+            new_status == PaymentStatusChoices.COMPLETED
+            and self.method
+            and self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
+            and not self.bank_transfer_evidence.filter(verification_status='verified').exists()
+        ):
+            raise ValidationError(
+                "Cannot complete bank transfer payment without verified bank transfer evidence."
+            )
         
         allowed_transitions = ALLOWED_STATUS_TRANSITIONS.get(self.status, [])
         if new_status not in allowed_transitions:

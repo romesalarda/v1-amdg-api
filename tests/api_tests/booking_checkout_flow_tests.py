@@ -27,7 +27,8 @@ from apps.bookings.models import (
 )
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentMethodTypeChoices,
-    PaymentStatusChoices, Discount, DiscountType, DiscountRule, DiscountRuleTypeChoices
+    PaymentStatusChoices, Discount, DiscountType, DiscountRule, DiscountRuleTypeChoices,
+    BankTransferEvidence
 )
 from apps.events.models import (
     Event, EventType, EventStatusChoices, EventAuthorization, EventAuthorizationStatusChoices,
@@ -448,6 +449,34 @@ class CheckoutAPITestCase(TestCase):
         tickets = Ticket.objects.filter(payment=payment)
         self.assertEqual(tickets.count(), 0)
 
+    def test_checkout_bank_transfer_requires_evidence_when_method_is_immediate(self):
+        """Checkout must fail when immediate-evidence bank transfer method is used without evidence payload."""
+        self.bank_method.bank_transfer_required_immediately = True
+        self.bank_method.save(update_fields=['bank_transfer_required_immediately'])
+
+        intent = self.create_booking_intent(ticket_count=1)
+
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-BANK-IMM-001',
+            made_by=self.user
+        )
+        attendee = self.create_attendee(booking)
+
+        response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.bank_method.id,
+            'attendees': [
+                {
+                    'attendee_id': str(attendee.attendee_id),
+                    'package_id': self.package.id
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('bank_transfer_evidence', response.data)
+
     def test_checkout_bank_transfer_creates_booking_and_attendee_from_draft(self):
         """Bank transfer checkout must create booking and attendee immediately for draft selections."""
         intent = self.create_booking_intent(ticket_count=1)
@@ -550,6 +579,20 @@ class CheckoutAPITestCase(TestCase):
         
         payment_reference = checkout_response.data['payment_reference']
         payment = Payment.objects.get(payment_reference=payment_reference)
+
+        evidence = BankTransferEvidence.objects.create(
+            transfer_id='BT-BOOKING-VERIFY-001',
+            evidence_file=SimpleUploadedFile(
+                'proof.pdf',
+                b'%PDF-1.4 booking bank transfer evidence',
+                content_type='application/pdf',
+            ),
+            payment=payment,
+            payer_name='Booking Payer',
+            payer_account_last4='1234',
+            amount_on_evidence=payment.base_amount,
+        )
+        evidence.mark_verified(self.admin_user)
         
         # Now verify as admin
         admin_client = APIClient()

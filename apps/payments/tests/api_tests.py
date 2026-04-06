@@ -110,6 +110,13 @@ class PaymentAPITestCase(APITestCase):
                 'account_number': '12345678'
             }
         )
+
+        self.cash_payment_method = PaymentMethod.objects.create(
+            title='Cash',
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.CASH,
+            is_active=True,
+        )
         
         # Create test payment
         self.payment = Payment.objects.create(
@@ -357,7 +364,7 @@ class PaymentAPITestCase(APITestCase):
         pending_payment = Payment.objects.create(
             user=self.regular_user,
             event=self.event,
-            method=self.payment_method,
+            method=self.cash_payment_method,
             base_amount=Money(75, 'GBP'),
             status=PaymentStatusChoices.PENDING
         )
@@ -409,6 +416,19 @@ class PaymentAPITestCase(APITestCase):
             status=PaymentStatusChoices.PENDING,
             target=sponsor,
         )
+
+        evidence = BankTransferEvidence.objects.create(
+            transfer_id='SPONSOR-VERIFY-001',
+            evidence_file=SimpleUploadedFile(
+                'proof.pdf',
+                b'%PDF-1.4 sponsor transfer evidence',
+                content_type='application/pdf',
+            ),
+            payment=sponsor_payment,
+            payer_name='Sponsor Payer',
+            payer_account_last4='1234',
+        )
+        evidence.mark_verified(self.admin_user)
 
         self.client.force_authenticate(user=self.admin_user)
         url = reverse('payments:payment-verify-bank-transfer', kwargs={'payment_id': sponsor_payment.payment_id})

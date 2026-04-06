@@ -62,6 +62,7 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
         model = PaymentMethod
         fields = (
             'id', 'method_id', 'code', 'title', 'method_type', 'is_active',
+            'bank_transfer_required_immediately',
             'event', 'event_name', 'created_by', 'created_by_name',
             'created_at', 'updated_at', 'provided_details', '_links'
         )
@@ -109,7 +110,7 @@ class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
         model = PaymentMethod
         fields = (
             'title', 'description', 'event', 'method_type',
-            'provided_details', 'is_active'
+            'provided_details', 'is_active', 'bank_transfer_required_immediately'
         )
     
     def validate_event(self, value):
@@ -126,8 +127,12 @@ class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
     
     def validate(self, attrs):
         """Cross-field validation for payment method configuration."""
-        method_type = attrs.get('method_type')
+        method_type = attrs.get('method_type', self.instance.method_type if self.instance else None)
         provided_details = attrs.get('provided_details', {})
+        require_immediate = attrs.get(
+            'bank_transfer_required_immediately',
+            self.instance.bank_transfer_required_immediately if self.instance else False,
+        )
         
         # Validate bank transfer details
         if method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
@@ -144,6 +149,11 @@ class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'provided_details': "Stripe method requires 'stripe_account_id' or 'use_platform_account'"
                 })
+
+        if method_type != PaymentMethodTypeChoices.BANK_TRANSFER and require_immediate:
+            raise serializers.ValidationError({
+                'bank_transfer_required_immediately': 'Immediate evidence is only valid for BANK_TRANSFER methods.'
+            })
         
         return attrs
 
@@ -172,7 +182,8 @@ class PaymentListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'payment_id', 'payment_reference', 'user', 'user_name',
             'event', 'event_name', 'method', 'method_title', 'status',
-            'amount', 'amount_currency', 'created_at', '_links', 'descriptor', 'base_amount', 'amount_value'
+            'amount', 'amount_currency', 'created_at', '_links', 'descriptor', 'base_amount', 'amount_value',
+            'bank_transfer_required_immediately'
         )
         read_only_fields = ('id', 'payment_id', 'payment_reference', 'created_at')
         extra_kwargs = {
@@ -234,6 +245,7 @@ class PaymentDetailSerializer(PaymentListSerializer):
     refund_requests = serializers.SerializerMethodField(help_text="Associated refund requests")
     donations = serializers.SerializerMethodField(help_text="Associated donations")
     history_actions = serializers.SerializerMethodField(help_text="Recent payment history")
+    bank_transfer_evidence = serializers.SerializerMethodField(help_text="Latest bank transfer evidence summary")
     base_amount = serializers.SerializerMethodField()
     modified_amount = serializers.SerializerMethodField()
     updated_at = serializers.DateTimeField(read_only=True)
@@ -242,7 +254,7 @@ class PaymentDetailSerializer(PaymentListSerializer):
         fields = PaymentListSerializer.Meta.fields + (
             'description', 'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount',
             'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference',
-            'metadata', 'refund_requests', 'donations', 'history_actions', 'updated_at'
+            'metadata', 'refund_requests', 'donations', 'history_actions', 'bank_transfer_evidence', 'updated_at'
         )
     
     def get_base_amount(self, obj) -> str:
@@ -283,6 +295,23 @@ class PaymentDetailSerializer(PaymentListSerializer):
             'performed_by': act.performed_by.username if act.performed_by else None,
             'timestamp': act.timestamp.isoformat(),
         } for act in actions]
+
+    @extend_schema_field({'type': 'object', 'nullable': True})
+    def get_bank_transfer_evidence(self, obj):
+        if not obj.method or obj.method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER:
+            return None
+
+        evidence = obj.bank_transfer_evidence.order_by('-uploaded_at').first()
+        if not evidence:
+            return None
+
+        return {
+            'bank_transfer_id': str(evidence.bank_transfer_id),
+            'transfer_id': evidence.transfer_id,
+            'verification_status': evidence.verification_status,
+            'uploaded_at': evidence.uploaded_at.isoformat() if evidence.uploaded_at else None,
+            'auto_expiry_date': evidence.auto_expiry_date.isoformat() if evidence.auto_expiry_date else None,
+        }
 
 
 class PaymentCreateSerializer(serializers.ModelSerializer):
@@ -510,6 +539,16 @@ class PaymentUpdateSerializer(serializers.ModelSerializer):
                         f"Cannot transition from {current_status} to {value}. "
                         f"Allowed transitions: {', '.join(allowed)}"
                     )
+
+            if (
+                value == PaymentStatusChoices.COMPLETED
+                and self.instance.method
+                and self.instance.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
+                and not self.instance.bank_transfer_evidence.filter(verification_status=VerificationStatus.VERIFIED).exists()
+            ):
+                raise serializers.ValidationError(
+                    'Cannot complete bank transfer payment without verified bank transfer evidence.'
+                )
         return value
     
     def update(self, instance, validated_data):

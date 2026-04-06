@@ -11,6 +11,7 @@ Tests the complete order checkout flow via API endpoints with all payment method
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
 from datetime import date, timedelta
@@ -24,7 +25,7 @@ from apps.products.models import (
 )
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentMethodTypeChoices,
-    PaymentStatusChoices
+    PaymentStatusChoices, BankTransferEvidence
 )
 from apps.events.models import Event, EventType, EventStatusChoices, EventSettings
 from apps.attendee.models import Attendee, AttendeeRelationship
@@ -247,6 +248,55 @@ class OrderCheckoutAPITestCase(TestCase):
             response.data['bank_transfer_reference'],
             order.payment.bank_transfer_reference
         )
+
+    def test_bank_transfer_checkout_immediate_requirement_rejects_missing_evidence(self):
+        """Immediate evidence policy should reject checkout without bank_transfer_evidence payload."""
+        self.bank_method.bank_transfer_required_immediately = True
+        self.bank_method.save(update_fields=['bank_transfer_required_immediately'])
+
+        order = self.create_order_with_items([(self.variant, 1)])
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        response = self.client.post(url, {'payment_method_id': self.bank_method.id}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('bank_transfer_evidence', response.data)
+
+    def test_bank_transfer_checkout_immediate_with_evidence_creates_record(self):
+        """Immediate evidence policy accepts multipart payload and persists evidence atomically."""
+        self.bank_method.bank_transfer_required_immediately = True
+        self.bank_method.save(update_fields=['bank_transfer_required_immediately'])
+
+        order = self.create_order_with_items([(self.variant, 1)])
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        evidence_file = SimpleUploadedFile(
+            'evidence.png',
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR',
+            content_type='image/png'
+        )
+
+        response = self.client.post(
+            url,
+            {
+                'payment_method_id': str(self.bank_method.id),
+                'bank_transfer_evidence.transfer_id': 'BT-ORDER-IMM-001',
+                'bank_transfer_evidence.evidence_file': evidence_file,
+                'bank_transfer_evidence.payer_name': 'Order Payer',
+                'bank_transfer_evidence.payer_account_last4': '1234',
+            },
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], 'pending_verification')
+        self.assertIn('bank_transfer_evidence_id', response.data)
+        self.assertIsNotNone(response.data['bank_transfer_evidence_id'])
+
+        order.refresh_from_db()
+        self.assertIsNotNone(order.payment)
+        evidence = BankTransferEvidence.objects.get(payment=order.payment)
+        self.assertEqual(evidence.transfer_id, 'BT-ORDER-IMM-001')
+        self.assertEqual(evidence.payer_name, 'Order Payer')
+        self.assertEqual(evidence.payer_account_last4, '1234')
     
     def test_cash_checkout_success(self):
         """Test successful CASH checkout flow."""
@@ -465,6 +515,20 @@ class OrderCheckoutAPITestCase(TestCase):
         
         order.refresh_from_db()
         payment = order.payment
+
+        evidence = BankTransferEvidence.objects.create(
+            transfer_id='BT-ORDER-VERIFY-001',
+            evidence_file=SimpleUploadedFile(
+                'proof.pdf',
+                b'%PDF-1.4 order bank transfer evidence',
+                content_type='application/pdf',
+            ),
+            payment=payment,
+            payer_name='Order Payer',
+            payer_account_last4='1234',
+            amount_on_evidence=payment.base_amount,
+        )
+        evidence.mark_verified(self.admin_user)
         
         # Admin verifies bank transfer
         self.client.force_authenticate(user=self.admin_user)
