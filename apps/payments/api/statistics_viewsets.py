@@ -189,7 +189,17 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
             try:
                 filters['event_id'] = uuid.UUID(raw_event_id)
             except ValueError:
-                raise exceptions.ValidationError({'event_id': 'Invalid UUID format.'})
+                try:
+                    from apps.events.models import Event
+                    from django.db.models import Q
+                    
+                    event = Event.objects.filter(Q(url_safe_title=raw_event_id)).first()
+                    if event:
+                        filters['event_id'] = event.event_id
+                    else:
+                        raise exceptions.ValidationError("Event with given UUID or URL-safe title not found.")
+                except exceptions.ValidationError as e:
+                    raise e
         else:
             filters['event_id'] = None
         
