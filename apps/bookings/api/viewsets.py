@@ -649,6 +649,22 @@ class BookingViewSet(viewsets.ModelViewSet):
                 }
 
                 reserved_payment = serializer.validated_data.get('_payment_obj')
+                if (
+                    not reserved_payment
+                    and payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
+                ):
+                    # Fallback for clients that reserved a bank transfer reference but did not
+                    # send payment_id during checkout; reuse the latest draft reservation.
+                    reserved_payment = Payment.objects.select_for_update().filter(
+                        user=user,
+                        event=intent.event,
+                        method=payment_method,
+                        status=PaymentStatusChoices.DRAFTING,
+                        metadata__contains={
+                            'checkout_intent_id': str(intent.booking_intent_id),
+                            'payment_type': 'booking_checkout_reservation',
+                        },
+                    ).order_by('-created_at').first()
 
                 if total_amount.amount == 0:
                     payment = Payment.objects.create(

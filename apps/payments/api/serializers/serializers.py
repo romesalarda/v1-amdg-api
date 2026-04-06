@@ -305,9 +305,17 @@ class PaymentDetailSerializer(PaymentListSerializer):
         if not evidence:
             return None
 
+        evidence_file_url = None
+        if evidence.evidence_file:
+            request = self.context.get('request')
+            evidence_file_url = evidence.evidence_file.url
+            if request:
+                evidence_file_url = request.build_absolute_uri(evidence_file_url)
+
         return {
             'bank_transfer_id': str(evidence.bank_transfer_id),
             'transfer_id': evidence.transfer_id,
+            'evidence_file': evidence_file_url,
             'verification_status': evidence.verification_status,
             'uploaded_at': evidence.uploaded_at.isoformat() if evidence.uploaded_at else None,
             'auto_expiry_date': evidence.auto_expiry_date.isoformat() if evidence.auto_expiry_date else None,
