@@ -1,13 +1,16 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
 from datetime import timedelta
+from decimal import Decimal
 import uuid
 from io import BytesIO
 from PIL import Image
+from djmoney.money import Money
 
 from apps.events.models import (
     Event, EventType, EventSettings, EventStatusChoices,
@@ -22,7 +25,11 @@ from apps.events.models import (
 from apps.common.models import AvailabilityWindow, Resource, AvailabilityTypeChoices, ResourceTypeChoices
 from apps.organisations.models import Organisation
 from apps.attendee.models import Attendee
+from apps.attendee.models import AttendeeRelationship
 from apps.locations.models import POI, Venue, POITypeChoice
+from apps.bookings.models import Booking
+from apps.products.models.orders import Order, OrderStatusChoices
+from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
 
 User = get_user_model()
 
@@ -248,6 +255,118 @@ class EventAPITest(BaseEventAPITestCase):
         response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/settings/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['payment_enabled'])
+
+
+class EventPaymentSummaryAPITest(BaseEventAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(user=self.user)
+
+        self.payment_method = PaymentMethod.objects.create(
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.BANK_TRANSFER,
+            title='Bank Transfer',
+            is_active=True,
+            created_by=self.user,
+        )
+
+        self.booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-SUMMARY-001',
+            made_by=self.user,
+        )
+
+        self.primary_attendee = Attendee.objects.create(
+            user=self.user,
+            first_name='Primary',
+            last_name='Attendee',
+            email='primary@example.com',
+            date_of_birth=timezone.now().date().replace(year=1995),
+            event=self.event,
+            booking=self.booking,
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.user,
+        )
+
+        self.secondary_attendee = Attendee.objects.create(
+            first_name='Secondary',
+            last_name='Attendee',
+            email='secondary@example.com',
+            date_of_birth=timezone.now().date().replace(year=1996),
+            event=self.event,
+            booking=self.booking,
+            relationship_to_user=AttendeeRelationship.OTHER,
+            defined_by=self.user,
+        )
+
+        self.shared_booking_payment = Payment.objects.create(
+            user=self.user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(55, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+        )
+        self.booking.add_payment(self.shared_booking_payment)
+
+        self.shared_order = Order.objects.create(
+            customer=self.user,
+            attendee=self.primary_attendee,
+            status=OrderStatusChoices.PENDING,
+            total_amount=Money(55, 'GBP'),
+            created_by=self.user,
+            payment=self.shared_booking_payment,
+        )
+
+        self.shop_order = Order.objects.create(
+            customer=self.user,
+            attendee=self.secondary_attendee,
+            status=OrderStatusChoices.PENDING,
+            total_amount=Money(0, 'GBP'),
+            created_by=self.user,
+        )
+        self.shop_payment = Payment.objects.create(
+            user=self.user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(25, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+        )
+        self.shop_payment.target_type = ContentType.objects.get_for_model(Order)
+        self.shop_payment.target_id = str(self.shop_order.id)
+        self.shop_payment.save(update_fields=['target_type', 'target_id'])
+        self.shop_order.payment = self.shop_payment
+        self.shop_order.save(update_fields=['payment'])
+
+    def test_my_payment_summary_dedupes_shared_payment(self):
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/my-payment-summary/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['totals']['total_payments'], 2)
+        self.assertEqual(response.data['totals']['booking_payments_count'], 1)
+        self.assertEqual(response.data['totals']['shop_payments_count'], 1)
+        self.assertEqual(response.data['totals']['attendee_payments_count'], 0)
+        self.assertEqual(response.data['totals']['outstanding_payments'], 1)
+        self.assertEqual(response.data['totals']['total_outstanding_amount'], '55.00')
+
+        booking_payment = response.data['booking_payments'][0]
+        self.assertEqual(str(booking_payment['payment_id']), str(self.shared_booking_payment.payment_id))
+        self.assertEqual(booking_payment['booking_reference'], self.booking.booking_reference)
+        self.assertEqual(len(booking_payment['related_orders']), 1)
+        self.assertEqual(booking_payment['related_orders'][0]['order_reference'], self.shared_order.order_reference_id)
+        self.assertEqual(booking_payment['summary_context']['primary_source'], 'booking')
+
+        shop_payment = response.data['shop_payments'][0]
+        self.assertEqual(str(shop_payment['payment_id']), str(self.shop_payment.payment_id))
+        self.assertEqual(shop_payment['summary_context']['primary_source'], 'shop_order')
+        self.assertEqual(shop_payment['attendee_name'], self.secondary_attendee.full_name)
+
+        outstanding_payment_ids = {str(item['payment_id']) for item in response.data['outstanding_payments']}
+        self.assertEqual(len(outstanding_payment_ids), len(response.data['outstanding_payments']))
+        self.assertEqual(outstanding_payment_ids, {str(self.shared_booking_payment.payment_id)})
+        self.assertEqual(
+            [str(item['payment_id']) for item in response.data['outstanding_payments']],
+            [str(self.shared_booking_payment.payment_id)],
+        )
 
 
 class EventAuthorizationAPITest(BaseEventAPITestCase):

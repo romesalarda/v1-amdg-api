@@ -779,6 +779,7 @@ class EventMyPaymentSummaryItemSerializer(serializers.Serializer):
     payment_reference = serializers.CharField(read_only=True)
     status = serializers.CharField(read_only=True)
     amount = serializers.CharField(read_only=True)
+    amount_value = serializers.CharField(read_only=True, allow_null=True)
     currency = serializers.CharField(read_only=True, allow_null=True)
     created_at = serializers.DateTimeField(read_only=True, allow_null=True)
     method_type = serializers.CharField(read_only=True, allow_null=True)
@@ -788,6 +789,10 @@ class EventMyPaymentSummaryItemSerializer(serializers.Serializer):
     source = serializers.ChoiceField(choices=['BOOKING', 'SHOP_ORDER'], read_only=True)
     is_outstanding = serializers.BooleanField(read_only=True)
     descriptor = serializers.CharField(read_only=True, allow_null=True)
+    target_type = serializers.CharField(read_only=True, allow_null=True)
+    target_id = serializers.CharField(read_only=True, allow_null=True)
+    booking_id = serializers.UUIDField(read_only=True, allow_null=True)
+    booking_reference = serializers.CharField(read_only=True, allow_null=True)
 
     order_id = serializers.UUIDField(read_only=True, allow_null=True)
     order_reference = serializers.CharField(read_only=True, allow_null=True)
@@ -796,6 +801,8 @@ class EventMyPaymentSummaryItemSerializer(serializers.Serializer):
     attendee_id = serializers.UUIDField(read_only=True, allow_null=True)
     attendee_display_id = serializers.CharField(read_only=True, allow_null=True)
     attendee_name = serializers.CharField(read_only=True, allow_null=True)
+    related_orders = serializers.JSONField(read_only=True, allow_null=True)
+    summary_context = serializers.JSONField(read_only=True, allow_null=True)
 
 
 class EventMyPaymentSummaryTotalsSerializer(serializers.Serializer):
@@ -803,6 +810,9 @@ class EventMyPaymentSummaryTotalsSerializer(serializers.Serializer):
     outstanding_payments = serializers.IntegerField(read_only=True)
     booking_outstanding_payments = serializers.IntegerField(read_only=True)
     shop_outstanding_payments = serializers.IntegerField(read_only=True)
+    booking_payments_count = serializers.IntegerField(read_only=True)
+    shop_payments_count = serializers.IntegerField(read_only=True)
+    attendee_payments_count = serializers.IntegerField(read_only=True)
     total_outstanding_amount = serializers.CharField(read_only=True)
 
 

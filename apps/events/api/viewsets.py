@@ -589,21 +589,40 @@ class EventViewSet(viewsets.ModelViewSet):
         # Return paginated response
         return paginator.get_paginated_response(serializer.data)
 
-    def _serialize_payment_summary_item(self, payment, source, order=None, attendee=None):
+    def _serialize_payment_summary_item(
+        self,
+        payment,
+        source,
+        order=None,
+        attendee=None,
+        related_orders=None,
+        summary_context=None,
+    ):
         amount = None
+        amount_value = None
         currency = None
         if getattr(payment, 'base_amount', None):
             amount = str(payment.base_amount)
+            amount_value = str(payment.base_amount.amount)
             currency = str(payment.base_amount.currency)
 
         method = getattr(payment, 'method', None)
         descriptor = payment.target_type.model if getattr(payment, 'target_type', None) else None
+        booking = None
+        if getattr(payment, 'target_type', None) and payment.target_type.model == 'booking':
+            booking = payment.target
+        elif order is not None and getattr(order, 'attendee', None) and getattr(order.attendee, 'booking', None):
+            booking = order.attendee.booking
+
+        related_orders = related_orders or []
+        summary_context = summary_context or {}
 
         return {
             'payment_id': payment.payment_id,
             'payment_reference': payment.payment_reference,
             'status': payment.status,
             'amount': amount,
+            'amount_value': amount_value,
             'currency': currency,
             'created_at': payment.created_at,
             'method_type': getattr(method, 'method_type', None),
@@ -616,21 +635,34 @@ class EventViewSet(viewsets.ModelViewSet):
                 PaymentStatusChoices.PENDING,
             ],
             'descriptor': descriptor,
+            'target_type': getattr(payment.target_type, 'model', None) if getattr(payment, 'target_type', None) else None,
+            'target_id': str(payment.target_id) if payment.target_id is not None else None,
+            'booking_id': str(booking.id) if booking else None,
+            'booking_reference': booking.booking_reference if booking else None,
             'order_id': getattr(order, 'order_id', None),
             'order_reference': getattr(order, 'order_reference_id', None),
             'order_status': getattr(order, 'status', None),
             'attendee_id': getattr(attendee, 'attendee_id', None),
             'attendee_display_id': getattr(attendee, 'attendee_display_id', None),
             'attendee_name': getattr(attendee, 'full_name', None),
+            'related_orders': related_orders,
+            'summary_context': {
+                **summary_context,
+                'source': source,
+                'target_type': getattr(payment.target_type, 'model', None) if getattr(payment, 'target_type', None) else None,
+                'target_id': str(payment.target_id) if payment.target_id is not None else None,
+            },
         }
 
     @extend_schema(
         summary='Get Unified Payment Summary For Current User Booking',
         description=(
-            'Retrieve a unified booking payment summary for the current authenticated user, '
-            'including booking-level payments and shop/order payments for attendees in the booking. '
-            'Supports optional attendee filtering to focus attendee-specific payments while still '
-            'returning booking-wide payment context.'
+            'Retrieve a booking payment summary for the current authenticated user. '
+            'The response keeps separate sections for booking, shop, attendee, and outstanding payments, '
+            'but each payment_id is canonical and appears in only one section. '
+            'Use the returned relationship metadata to understand whether a payment is tied to a booking, '
+            'one or more orders, and the related attendee identities. '
+            'Outstanding payments are unpaid only and are deduplicated before serialization.'
         ),
         tags=['Events'],
         parameters=[
@@ -715,15 +747,53 @@ class EventViewSet(viewsets.ModelViewSet):
             attendee__booking=booking,
             attendee__event=event,
             payment__isnull=False,
-        ).select_related('payment__method', 'payment__target_type', 'attendee').order_by('-created_at')
+        ).select_related('payment__method', 'payment__target_type', 'attendee', 'attendee__booking').order_by('-created_at')
 
         if attendee_filter:
             order_qs = order_qs.filter(attendee__attendee_id=attendee_filter)
 
+        def serialize_order_context(order):
+            attendee = order.attendee
+            attendee_booking = getattr(attendee, 'booking', None) if attendee else None
+            return {
+                'order_id': str(order.order_id),
+                'order_reference': order.order_reference_id,
+                'order_status': order.status,
+                'booking_id': str(attendee_booking.id) if attendee_booking else None,
+                'booking_reference': attendee_booking.booking_reference if attendee_booking else None,
+                'attendee_id': str(attendee.attendee_id) if attendee else None,
+                'attendee_display_id': getattr(attendee, 'attendee_display_id', None),
+                'attendee_name': getattr(attendee, 'full_name', None),
+            }
+
+        related_orders_by_payment_id = {}
+        for order in order_qs:
+            payment = order.payment
+            if payment is None:
+                continue
+            related_orders_by_payment_id.setdefault(str(payment.payment_id), []).append(order)
+
         booking_payment_items = [
-            self._serialize_payment_summary_item(payment=payment, source='BOOKING')
+            self._serialize_payment_summary_item(
+                payment=payment,
+                source='BOOKING',
+                related_orders=[serialize_order_context(order) for order in related_orders_by_payment_id.get(str(payment.payment_id), [])],
+                summary_context={
+                    'section': 'booking_payments',
+                    'primary_source': 'booking',
+                },
+            )
             for payment in booking_payments_qs
         ]
+
+        canonical_payment_ids = {str(item['payment_id']) for item in booking_payment_items}
+        shop_payment_items = []
+
+        def append_unique_related_order(item, order_context):
+            related_orders = item.setdefault('related_orders', [])
+            if any(existing.get('order_id') == order_context['order_id'] for existing in related_orders):
+                return
+            related_orders.append(order_context)
 
         shop_payment_items = [
             self._serialize_payment_summary_item(
@@ -731,27 +801,52 @@ class EventViewSet(viewsets.ModelViewSet):
                 source='SHOP_ORDER',
                 order=order,
                 attendee=order.attendee,
+                related_orders=[serialize_order_context(order)],
+                summary_context={
+                    'section': 'shop_payments',
+                    'primary_source': 'shop_order',
+                },
             )
             for order in order_qs
-            if order.payment is not None
+            if order.payment is not None and str(order.payment.payment_id) not in canonical_payment_ids
         ]
 
-        attendee_payment_items = shop_payment_items
-        if not attendee_filter:
-            attendee_ids = set(booking_attendees.values_list('attendee_id', flat=True))
+        for order in order_qs:
+            payment = order.payment
+            if payment is None:
+                continue
+            payment_id = str(payment.payment_id)
+            if payment_id in canonical_payment_ids:
+                booking_item = next(
+                    (item for item in booking_payment_items if str(item['payment_id']) == payment_id),
+                    None,
+                )
+                if booking_item is not None:
+                    append_unique_related_order(booking_item, serialize_order_context(order))
+
+        attendee_payment_items = []
+        if attendee_filter:
             attendee_payment_items = [
                 item for item in shop_payment_items
-                if item.get('attendee_id') in attendee_ids
+                if item.get('attendee_id') == attendee_filter
             ]
 
-        all_items = booking_payment_items + shop_payment_items
-        outstanding_items = [item for item in all_items if item.get('is_outstanding')]
+        canonical_items = []
+        seen_payment_ids = set()
+        for item in booking_payment_items + shop_payment_items:
+            payment_id = str(item['payment_id'])
+            if payment_id in seen_payment_ids:
+                continue
+            seen_payment_ids.add(payment_id)
+            canonical_items.append(item)
+
+        outstanding_items = [item for item in canonical_items if item.get('is_outstanding')]
 
         outstanding_total = Decimal('0.00')
         for item in outstanding_items:
-            amount = str(item.get('amount') or '')
+            amount = str(item.get('amount_value') or '')
             try:
-                outstanding_total += Decimal(amount.split(' ')[0])
+                outstanding_total += Decimal(amount)
             except Exception:
                 continue
 
@@ -766,10 +861,13 @@ class EventViewSet(viewsets.ModelViewSet):
             'booking_reference': booking.booking_reference,
             'attendee_filter': attendee_filter,
             'totals': {
-                'total_payments': len(all_items),
+                'total_payments': len(canonical_items),
                 'outstanding_payments': len(outstanding_items),
                 'booking_outstanding_payments': booking_outstanding,
                 'shop_outstanding_payments': shop_outstanding,
+                'booking_payments_count': len(booking_payment_items),
+                'shop_payments_count': len(shop_payment_items),
+                'attendee_payments_count': len(attendee_payment_items),
                 'total_outstanding_amount': f'{outstanding_total:.2f}',
             },
             'booking_payments': booking_payment_items,
@@ -818,11 +916,13 @@ class EventViewSet(viewsets.ModelViewSet):
             )
 
         page = self.paginate_queryset(queryset)
+        serializer = SponsorableEventListSerializer(
+            page if page is not None else queryset,
+            many=True,
+            context={'request': request},
+        )
         if page is not None:
-            serializer = SponsorableEventListSerializer(page, many=True, context={'request': request})
             return self.get_paginated_response(serializer.data)
-
-        serializer = SponsorableEventListSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
     
     @extend_schema(
