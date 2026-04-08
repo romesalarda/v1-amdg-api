@@ -3175,6 +3175,137 @@ class OrderViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
     
     @extend_schema(
+        summary="Reserve bank transfer reference for order",
+        description=(
+            "Create or reuse a draft bank transfer payment for a draft order so the customer can see the reference before checkout."
+        ),
+        request=inline_serializer(
+            name='OrderReserveBankTransferRequest',
+            fields={
+                'payment_method_id': serializers.IntegerField(help_text='Bank transfer payment method ID for this order event.'),
+            },
+        ),
+        responses={
+            201: OpenApiResponse(description='Bank transfer reference reserved.'),
+            200: OpenApiResponse(description='Existing bank transfer reference reused.'),
+            400: OpenApiResponse(description='Validation error.'),
+            404: OpenApiResponse(description='Order not found.'),
+        },
+        tags=["Orders"],
+        operation_id="products_orders_reserve_bank_transfer_payment",
+    )
+    @action(detail=True, methods=['post'], url_path='reserve-bank-transfer-payment')
+    def reserve_bank_transfer_payment(self, request, order_id=None):
+        from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
+        from django.db import transaction
+        from djmoney.money import Money
+
+        payment_method_id = request.data.get('payment_method_id')
+        if not payment_method_id:
+            raise ValidationError({'payment_method_id': 'payment_method_id is required.'})
+
+        with transaction.atomic():
+            locked_order = get_object_or_404(
+                Order.objects.select_for_update(),
+                order_id=order_id,
+            )
+            self.check_object_permissions(request, locked_order)
+
+            if locked_order.status != OrderStatusChoices.DRAFT:
+                raise ValidationError({'order': 'Only draft orders can reserve a bank transfer reference.'})
+
+            if locked_order.payment_id:
+                raise ValidationError({'order': 'Order already has a payment linked.'})
+
+            if locked_order.total_amount.amount <= 0:
+                raise ValidationError({'order': 'Bank transfer reservation is only available for payable orders.'})
+
+            if not locked_order.attendee or not locked_order.attendee.event:
+                raise ValidationError({'order': 'Order attendee/event context is required.'})
+
+            try:
+                payment_method = PaymentMethod.objects.get(
+                    id=payment_method_id,
+                    event=locked_order.attendee.event,
+                    is_active=True,
+                )
+            except PaymentMethod.DoesNotExist:
+                raise ValidationError({'payment_method_id': 'Payment method not found for this event.'})
+
+            if payment_method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER:
+                raise ValidationError({'payment_method_id': 'Only BANK_TRANSFER methods can be reserved.'})
+
+            existing_checkout_payment = Payment.objects.filter(
+                user=request.user,
+                event=locked_order.attendee.event,
+                method=payment_method,
+                metadata__order_id=str(locked_order.order_id),
+                metadata__payment_type='order_checkout_pending_finalization',
+            ).exclude(
+                status__in=[PaymentStatusChoices.CANCELLED, PaymentStatusChoices.FAILED]
+            ).order_by('-created_at').first()
+
+            if existing_checkout_payment:
+                return Response({
+                    'order_id': str(locked_order.order_id),
+                    'order_reference': locked_order.order_reference_id,
+                    'payment_id': str(existing_checkout_payment.payment_id),
+                    'payment_reference': existing_checkout_payment.payment_reference,
+                    'bank_transfer_reference': existing_checkout_payment.bank_transfer_reference,
+                    'status': existing_checkout_payment.status,
+                    'message': 'Checkout payment already exists for this order.',
+                }, status=status.HTTP_200_OK)
+
+            existing_reservation = Payment.objects.filter(
+                user=request.user,
+                event=locked_order.attendee.event,
+                method=payment_method,
+                status=PaymentStatusChoices.DRAFTING,
+                metadata__contains={
+                    'order_id': str(locked_order.order_id),
+                    'payment_type': 'order_checkout_reservation',
+                },
+            ).order_by('-created_at').first()
+
+            if existing_reservation:
+                return Response({
+                    'order_id': str(locked_order.order_id),
+                    'order_reference': locked_order.order_reference_id,
+                    'payment_id': str(existing_reservation.payment_id),
+                    'payment_reference': existing_reservation.payment_reference,
+                    'bank_transfer_reference': existing_reservation.bank_transfer_reference,
+                    'status': existing_reservation.status,
+                    'message': 'Bank transfer reference already reserved for this order.',
+                }, status=status.HTTP_200_OK)
+
+            payment = Payment.objects.create(
+                user=request.user,
+                event=locked_order.attendee.event,
+                method=payment_method,
+                base_amount=Money(locked_order.total_amount.amount, locked_order.total_amount.currency.code),
+                percentage_modifier=decimal.Decimal('0.00'),
+                description=f"Bank transfer reservation for order {locked_order.order_reference_id}",
+                status=PaymentStatusChoices.DRAFTING,
+                target=locked_order,
+                metadata={
+                    'order_id': str(locked_order.order_id),
+                    'order_reference': locked_order.order_reference_id,
+                    'payment_type': 'order_checkout_reservation',
+                    'order_checkout_finalized': False,
+                },
+            )
+
+            return Response({
+                'order_id': str(locked_order.order_id),
+                'order_reference': locked_order.order_reference_id,
+                'payment_id': str(payment.payment_id),
+                'payment_reference': payment.payment_reference,
+                'bank_transfer_reference': payment.bank_transfer_reference,
+                'status': payment.status,
+                'message': 'Bank transfer reference reserved.',
+            }, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
         summary="Checkout order with payment",
         description="Complete order checkout by creating payment. Handles STRIPE (returns client_secret), BANK_TRANSFER (returns reference), and CASH (pending approval at venue). Free orders (£0) skip payment creation. Order must be in PENDING status.",
         request=inline_serializer(
@@ -3184,6 +3315,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                     required=False,
                     allow_null=True,
                     help_text="Optional payment method ID. Required when order total is greater than 0."
+                ),
+                'payment_id': serializers.UUIDField(
+                    required=False,
+                    allow_null=True,
+                    help_text="Optional reserved bank transfer payment UUID to reuse during checkout."
                 )
             }
         ),
@@ -3288,6 +3424,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
 
             payment_method = serializer.validated_data['payment_method']
+            reserved_payment = serializer.validated_data.get('reserved_payment')
             bank_transfer_evidence_payload = serializer.validated_data.get('_bank_transfer_evidence_payload')
 
             # Check if order is free (£0 total)
@@ -3328,18 +3465,38 @@ class OrderViewSet(viewsets.ModelViewSet):
                 f"for {locked_order.attendee.event.title} with price of {locked_order.total_amount}"
             )
 
-            # Create payment for non-free orders
-            # Create payment with order as target
-            payment = Payment.objects.create(
-                user=request.user,
-                event=locked_order.attendee.event,
-                method=payment_method,
-                base_amount=locked_order.total_amount,
-                status=PaymentStatusChoices.PENDING,
-                target=locked_order,
-                description=payment_description,
-                metadata=locked_order.get_metadata()
-            )
+            if reserved_payment:
+                payment = reserved_payment
+                payment.base_amount = locked_order.total_amount
+                payment.description = payment_description
+                payment.target = locked_order
+
+                merged_metadata = payment.metadata if isinstance(payment.metadata, dict) else {}
+                merged_metadata.update(locked_order.get_metadata() or {})
+                merged_metadata['order_id'] = str(locked_order.order_id)
+                merged_metadata['order_reference'] = locked_order.order_reference_id
+                merged_metadata['payment_type'] = 'order_checkout_pending_finalization'
+                payment.metadata = merged_metadata
+
+                payment.status = PaymentStatusChoices.PENDING
+                payment.save()
+            else:
+                # Create payment for non-free orders
+                payment = Payment.objects.create(
+                    user=request.user,
+                    event=locked_order.attendee.event,
+                    method=payment_method,
+                    base_amount=locked_order.total_amount,
+                    status=PaymentStatusChoices.PENDING,
+                    target=locked_order,
+                    description=payment_description,
+                    metadata={
+                        **(locked_order.get_metadata() or {}),
+                        'order_id': str(locked_order.order_id),
+                        'order_reference': locked_order.order_reference_id,
+                        'payment_type': 'order_checkout_pending_finalization',
+                    },
+                )
 
             bank_transfer_evidence = None
             if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:

@@ -1535,6 +1535,11 @@ class OrderCheckoutSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Optional payment method ID. Required only when order total is greater than 0."
     )
+    payment_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Optional reserved payment UUID. When provided, checkout reuses this draft payment."
+    )
 
     def _extract_bank_transfer_evidence_payload(self) -> dict | None:
         request = self.context.get('request')
@@ -1605,7 +1610,7 @@ class OrderCheckoutSerializer(serializers.Serializer):
     def validate(self, attrs):
         """Cross-field validation for order checkout."""
         order = self.context.get('order')
-        from apps.payments.models import PaymentMethodTypeChoices
+        from apps.payments.models import Payment, PaymentMethodTypeChoices, PaymentStatusChoices
         
         if not order:
             raise serializers.ValidationError('Order context is required.')
@@ -1650,6 +1655,52 @@ class OrderCheckoutSerializer(serializers.Serializer):
         
         # Store payment method for use in viewset
         attrs['payment_method'] = payment_method
+
+        reserved_payment = None
+        reserved_payment_id = attrs.get('payment_id')
+        if reserved_payment_id:
+            try:
+                reserved_payment = Payment.objects.get(payment_id=reserved_payment_id)
+            except Payment.DoesNotExist:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment was not found.'
+                })
+
+            request = self.context.get('request')
+            request_user = getattr(request, 'user', None)
+            if not request_user or not request_user.is_authenticated:
+                raise serializers.ValidationError({'payment_id': 'Authenticated user is required.'})
+
+            if reserved_payment.user_id != request_user.id:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment does not belong to the current user.'
+                })
+
+            if reserved_payment.event_id != order.attendee.event_id:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment does not match the order event.'
+                })
+
+            if reserved_payment.method_id != payment_method.id:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment method does not match selected payment method.'
+                })
+
+            if reserved_payment.status != PaymentStatusChoices.DRAFTING:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment is no longer reusable.'
+                })
+
+            target_order_id = str(order.order_id)
+            reserved_target_id = str(reserved_payment.target_id) if reserved_payment.target_id is not None else ''
+            metadata_order_id = str((reserved_payment.metadata or {}).get('order_id') or '')
+
+            if reserved_target_id != target_order_id and metadata_order_id != target_order_id:
+                raise serializers.ValidationError({
+                    'payment_id': 'Reserved payment does not belong to this order.'
+                })
+
+        attrs['reserved_payment'] = reserved_payment
 
         bank_transfer_evidence_payload = self._extract_bank_transfer_evidence_payload()
         if payment_method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER and bank_transfer_evidence_payload:

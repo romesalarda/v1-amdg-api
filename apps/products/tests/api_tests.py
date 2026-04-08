@@ -26,6 +26,7 @@ from apps.events.models import Event, EventType, EventStatusChoices, EventRole, 
 from apps.organisations.models import Organisation
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.common.models import Resource
+from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
 
 User = get_user_model()
 
@@ -884,6 +885,14 @@ class OrderAPITestCase(APITestCase):
             total_amount=Money(0, 'GBP'),
             created_by=self.customer_user
         )
+
+        self.bank_transfer_method = PaymentMethod.objects.create(
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.BANK_TRANSFER,
+            title='Bank Transfer',
+            is_active=True,
+            created_by=self.admin_user,
+        )
         
         self.client = APIClient()
     
@@ -1063,6 +1072,71 @@ class OrderAPITestCase(APITestCase):
         response = self.client.get('/api/products/orders/?search=john')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_reserve_bank_transfer_reference_create_and_reuse(self):
+        """Reserve endpoint should create first and then reuse same bank transfer reference for draft order."""
+        self.order.add_order_item(self.variant, 2)
+
+        self.client.force_authenticate(user=self.customer_user)
+        payload = {'payment_method_id': self.bank_transfer_method.id}
+
+        first_response = self.client.post(
+            f'/api/products/orders/{self.order.order_id}/reserve-bank-transfer-payment/',
+            payload,
+            format='json',
+        )
+        self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(first_response.data.get('bank_transfer_reference'))
+        self.assertTrue(first_response.data.get('payment_id'))
+
+        second_response = self.client.post(
+            f'/api/products/orders/{self.order.order_id}/reserve-bank-transfer-payment/',
+            payload,
+            format='json',
+        )
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.data.get('payment_id'), first_response.data.get('payment_id'))
+        self.assertEqual(
+            second_response.data.get('bank_transfer_reference'),
+            first_response.data.get('bank_transfer_reference'),
+        )
+
+    def test_checkout_reuses_reserved_bank_transfer_payment(self):
+        """Checkout should reuse provided reserved bank transfer payment instead of creating a new payment."""
+        self.order.add_order_item(self.variant, 1)
+
+        self.client.force_authenticate(user=self.customer_user)
+        reserve_payload = {'payment_method_id': self.bank_transfer_method.id}
+        reserve_response = self.client.post(
+            f'/api/products/orders/{self.order.order_id}/reserve-bank-transfer-payment/',
+            reserve_payload,
+            format='json',
+        )
+        self.assertEqual(reserve_response.status_code, status.HTTP_201_CREATED)
+
+        reserved_payment_id = reserve_response.data.get('payment_id')
+        reserved_reference = reserve_response.data.get('bank_transfer_reference')
+
+        checkout_response = self.client.post(
+            f'/api/products/orders/{self.order.order_id}/checkout/',
+            {
+                'payment_method_id': self.bank_transfer_method.id,
+                'payment_id': reserved_payment_id,
+            },
+            format='json',
+        )
+
+        self.assertEqual(checkout_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(checkout_response.data.get('payment_id'), reserved_payment_id)
+        self.assertEqual(checkout_response.data.get('bank_transfer_reference'), reserved_reference)
+        self.assertEqual(checkout_response.data.get('status'), 'pending_verification')
+
+        self.order.refresh_from_db()
+        self.assertEqual(str(self.order.payment.payment_id), str(reserved_payment_id))
+
+        payment = Payment.objects.get(payment_id=reserved_payment_id)
+        self.assertEqual(payment.status, PaymentStatusChoices.PENDING)
+        self.assertEqual((payment.metadata or {}).get('payment_type'), 'order_checkout_pending_finalization')
 
 
 class PermissionsTestCase(APITestCase):
