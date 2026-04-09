@@ -3196,6 +3196,14 @@ class OrderViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'], url_path='reserve-bank-transfer-payment')
     def reserve_bank_transfer_payment(self, request, order_id=None):
+        # procedure
+        # 1. Validate input and permissions
+        # 2. Lock order row for update to prevent concurrent modifications
+        # 3. Check if order is in draft status and does not already have a payment linked
+        # 4. Validate payment method exists, is active, belongs to the same event, and is of type BANK_TRANSFER
+        # 5. Check for existing draft payment with matching method and order metadata to
+        #   reuse if already reserved, otherwise create new draft payment with bank transfer reference
+        # 6. Return payment details including bank transfer reference for customer to use during checkout
         from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
         from django.db import transaction
         from djmoney.money import Money
