@@ -219,7 +219,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         # Users see their own payments or payments for events they admin
         return queryset.filter(
             Q(user=user) | Q(event_id__in=admin_event_ids)
-        ).distinct()
+        ).exclude(metadata__contains={"payment_type":"booking_checkout_reservation"}).distinct()
     
     def perform_create(self, serializer):
         """Create payment and ensure user has permission."""
