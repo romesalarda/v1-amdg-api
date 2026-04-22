@@ -78,6 +78,11 @@ class EventSponsorPackage(PayableModel):
     def __str__(self):
         return f"{self.package_name} - {self.event.title}"
     
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            self.original_amount = self.base_amount
+        super().save(*args, **kwargs)
+    
 class EventSponsorInvite(models.Model):
     '''
     Represents an invitation sent to a potential sponsor for an event, allowing them to accept or decline the sponsorship opportunity.

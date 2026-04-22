@@ -82,6 +82,8 @@ class BookingPackage(PayableModel, HasAvailabilityMixin):
     
     def save(self, *args, **kwargs):
         self.clean()
+        if not self.pk:
+            self.original_amount = self.base_amount
         super().save(*args, **kwargs)
     
     def can_use_package(self, user, attendee) -> bool:

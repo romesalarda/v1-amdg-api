@@ -72,6 +72,8 @@ class PackageProduct(PayableModel): # discounts can be applied to package produc
         # base_amount is the product's base price, not multiplied by quantity
         # quantity_per_attendee defines the max purchasable, not a price multiplier
         self.base_amount = self.product.base_amount
+        if not self.pk:
+            self.original_amount = self.base_amount
         super().save(*args, **kwargs)
 
     def clean(self):

@@ -123,6 +123,15 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         help_text="Percentage adjustment applied to the base amount (1.1 for +1%, -2.5 for -2.5%)"
     ) # products for a specific object variant (e.g., size/color) may have different prices.
 
+    original_amount = MoneyField(
+        max_digits=14,
+        decimal_places=2,
+        default_currency='GBP',
+        null=True,
+        blank=True,
+        help_text="Original base amount before any modifications. This is set when the instance is first created and should not be changed afterwards."
+    )
+
     class Meta:
         abstract = True
 
@@ -149,12 +158,11 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         :param self: Instance of PayableModel
         :return: Money representing the modified amount
         '''
-        if not self.base_amount or self.percentage_modifier == 0:
-            return self.base_amount
+        from apps.common.models.verification import VerificationStatus
+
         return self.base_amount * (
             Decimal('1.00') + self.percentage_modifier / Decimal('100')
         )
-
 
     def total_amount_for_context(self, context) -> Money:
         '''

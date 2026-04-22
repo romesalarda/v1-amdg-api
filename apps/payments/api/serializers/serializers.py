@@ -170,12 +170,16 @@ class PaymentListSerializer(serializers.ModelSerializer):
     event_name = serializers.CharField(source='event.name', read_only=True)
     method_title = serializers.CharField(source='method.title', read_only=True, allow_null=True)
     method = serializers.SlugRelatedField(slug_field='method_id', read_only=True)
+
     amount = serializers.SerializerMethodField(help_text="Final modified payment amount")
     amount_value = serializers.FloatField(source='base_amount.amount', read_only=True, help_text="Base amount as float for easier frontend handling")
     amount_currency = serializers.CharField(source='base_amount_currency', read_only=True)
 
     created_at = serializers.DateTimeField(read_only=True)
     descriptor = serializers.SerializerMethodField(help_text="Type of the payment target (e.g., booking, order, ticket, donation, sponsorship)")
+
+    original_amount = serializers.SerializerMethodField(help_text="Original base amount before modifications")
+    final_amount = serializers.SerializerMethodField(help_text="Final amount after percentage modifier")
     
     class Meta:
         model = Payment
@@ -183,12 +187,23 @@ class PaymentListSerializer(serializers.ModelSerializer):
             'id', 'payment_id', 'payment_reference', 'user', 'user_name',
             'event', 'event_name', 'method', 'method_title', 'status',
             'amount', 'amount_currency', 'created_at', '_links', 'descriptor', 'base_amount', 'amount_value',
-            'bank_transfer_required_immediately', 'outstanding_bank_transfer_evidence'
+            'bank_transfer_required_immediately', 'outstanding_bank_transfer_evidence', 'total_refunded_amount',
+            'original_amount', 'final_amount',
         )
         read_only_fields = ('id', 'payment_id', 'payment_reference', 'created_at')
         extra_kwargs = {
             'created_at': {'default': None},
         }
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_original_amount(self, obj) -> str:
+        """Return the original base amount as string."""
+        return str(obj.original_amount)
+    
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_final_amount(self, obj) -> str:
+        """Return the final modified amount as string."""
+        return str(obj.final_amount)
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_amount(self, obj) -> str:
@@ -254,7 +269,7 @@ class PaymentDetailSerializer(PaymentListSerializer):
         fields = PaymentListSerializer.Meta.fields + (
             'description', 'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount',
             'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference',
-            'metadata', 'refund_requests', 'donations', 'history_actions', 'bank_transfer_evidence', 'updated_at'
+            'metadata', 'refund_requests', 'donations', 'history_actions', 'bank_transfer_evidence', 'updated_at', 
         )
     
     def get_base_amount(self, obj) -> str:

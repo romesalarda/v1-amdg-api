@@ -143,6 +143,24 @@ class Payment(PayableModel):
         return f"<Payment id={self.payment_id} reference={self.payment_reference} user={self.user}>"
 
     @property
+    def final_amount(self) -> Money:
+        '''
+        Returns the final amount of the payment after applying percentage modifiers, but before refunds.
+        '''
+        amount = self.modified_amount or Money(0, 'GBP')
+        if self.total_refunded_amount:
+            amount -= Money(self.total_refunded_amount, self.modified_amount.currency)
+
+        return amount
+
+    @property
+    def total_refunded_amount(self) -> float:
+        '''
+        Calculate the total refunded amount for this payment by summing all related refunds.
+        '''
+        return self.refund_requests.aggregate(total=models.Sum('amount'))['total']
+
+    @property
     def outstanding_bank_transfer_evidence(self) -> bool:
         '''
         Check if there is outstanding bank transfer evidence that has not been verified for this payment. Only applicable for bank transfer payments.
@@ -161,11 +179,16 @@ class Payment(PayableModel):
     
     def save(self, *args, **kwargs):
 
-        if not self.pk and self.method:
-            self.bank_transfer_required_immediately = bool(
-                self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
-                and self.method.bank_transfer_required_immediately
-            )
+        if not self.pk:
+            # Set original amount only on creation
+            if self.base_amount is not None:
+                self.original_amount = self.base_amount
+
+            if self.method:
+                self.bank_transfer_required_immediately = bool(
+                    self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
+                    and self.method.bank_transfer_required_immediately
+                )
         
         for _ in range(MAX_PAYMENT_GENERATION_ATTEMPTS): # extra safety loop as payments are critical
             if not self.payment_reference:

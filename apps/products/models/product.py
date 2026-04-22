@@ -113,6 +113,7 @@ class Product(ProductMetaClass): # discounts, resources and availability all app
     def save(self, *args, **kwargs):
         self.clean()
         if not self.pk: # only generate on creation
+            self.original_amount = self.base_amount
             try:
                 self.display_code = try_generate_unique_display_code(
                     model_class=Product,
@@ -218,6 +219,9 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
     
     def save(self, *args, **kwargs):
         self._set_base_amount_from_product()
+        if not self.pk:
+            self.original_amount = self.base_amount
+            
         self.size = self.size.strip().upper()
         self.color = self.color.upper()
 

@@ -11,7 +11,7 @@ from djmoney.money import Money
 
 from django.conf import settings
 
-from apps.common.models.verification import RequiresVerificationModel
+from apps.common.models.verification import RequiresVerificationModel, VerificationStatus
 from apps.common.mixins import HasAvailabilityMixin
 
 from core.utils.display import try_generate_unique_code
