@@ -615,6 +615,7 @@ class EventRoleAssignmentFilterSet(filters.FilterSet):
 
 
 class EventVenueFilterSet(filters.FilterSet):
+    event_id = filters.CharFilter(field_name='event__url_safe_title')
     event = filters.CharFilter(field_name='event__url_safe_title')
 
     class Meta:

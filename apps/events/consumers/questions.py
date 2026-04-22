@@ -59,19 +59,31 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
     
     # Resource identifier for base class
     resource_name = "questions"
-    
+
     async def connect(self):
         """
         Initialize event-specific context before base connection handling.
         
-        Extracts event_id from URL route for room naming and permission checks.
+        Extracts event_identifier from URL route, resolves it to an event object,
+        and sets up context for room naming and permission checks.
         """
-        # Extract event_id from URL route
-        self.event_id = self.scope['url_route']['kwargs']['event_id']
+        # Extract event_identifier from URL route
+        self.event_identifier = self.scope['url_route']['kwargs']['event_identifier']
+        
+        # Resolve event and store it on the consumer instance
+        self.event = await self.get_event()
+        
+        if not self.event:
+            logger.warning(f"[questions] Event not found for identifier: {self.event_identifier}")
+            await self.close()
+            return
+            
+        # Use the event's UUID for all internal operations
+        self.event_id = self.event.event_id
         
         # Call base class connection handling
         await super().connect()
-    
+
     # Implement abstract methods from BaseRealtimeConsumer
     
     async def get_room_name(self) -> str:
@@ -113,8 +125,10 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
         Returns:
             bool: True if authorized, False otherwise
         """
+        if not self.event:
+            return False
         return await self.check_event_permission()
-    
+
     async def get_user_context(self) -> Dict[str, Any]:
         """
         Generate user context for client messages.
@@ -282,18 +296,46 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
     # Database Operations
     
     @database_sync_to_async
+    def get_event(self):
+        """
+        Fetches the event from the database using either a UUID or a URL-safe title.
+
+        This method attempts to retrieve an event based on the `event_identifier` 
+        provided in the URL. It first tries to match it as a UUID. If that fails, 
+        it assumes the identifier is a `url_safe_title` and queries the database accordingly.
+
+        Returns:
+            The event object if found, otherwise None.
+        """
+        from uuid import UUID
+        from apps.events.models import Event
+        from django.db.models import Q
+
+        try:
+            # First, try to interpret the identifier as a UUID
+            event_uuid = UUID(self.event_identifier)
+            return Event.objects.get(event_id=event_uuid)
+        except (ValueError, Event.DoesNotExist):
+            # If it's not a valid UUID or no event is found,
+            # try finding it by the url_safe_title
+            try:
+                return Event.objects.get(url_safe_title=self.event_identifier)
+            except Event.DoesNotExist:
+                # If no event is found by either method, return None
+                return None
+
+    @database_sync_to_async
     def create_question_db(self, question_data: dict) -> dict:
         """Create question in database with validation."""
         from apps.events.api.serializers import EventQuestionSerializer
         from apps.events.models import Event
-        
         try:
             try:
-                event = Event.objects.get(event_id=self.event_id)
+                event = Event.objects.get(id=question_data['event'])
             except Event.DoesNotExist:
                 return {'success': False, 'error': 'Event not found', 'code': 'NOT_FOUND'}
-            
-            serializer_data = {'event': event.id, **question_data}
+            print("Event found:", event.event_id)
+            serializer_data = {**question_data, 'event': event.event_id}
             serializer_data.pop('event_id', None)
             
             # Clean data based on question type
@@ -307,7 +349,6 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
             # Remove options for non-choice questions
             if question_type not in ['multiple_choice', 'single_choice']:
                 serializer_data.pop('options', None)
-            
             serializer = EventQuestionSerializer(data=serializer_data, context={'request': None})
             
             if not serializer.is_valid():
@@ -487,48 +528,26 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
     @database_sync_to_async
     def check_event_permission(self) -> bool:
         """
-        Check if user has permission to access this event's questions.
-        
-        Grants access if user is:
-        - Event creator
-        - Event staff member
-        - Site staff/superuser
-        
-        Returns:
-            bool: True if user has permission, False otherwise
+        Check if the authenticated user has permission to manage the event.
+        Permissions are granted to the event creator, staff members with
+        the 'manage_events' permission, and superusers.
         """
-        from apps.events.models import Event
-        
-        try:
-            event = Event.objects.select_related('created_by').prefetch_related(
-                'staff_members'
-            ).get(event_id=self.event_id)
-            
-            # Check if user is event creator
-            if event.created_by == self.user:
-                return True
-            
-            # Check if user is staff member
-            if event.staff_members.filter(user=self.user).exists():
-                return True
-            
-            # Check if user is admin/superuser
-            if self.user.is_staff or self.user.is_superuser:
-                return True
-            
+        if not self.user or not self.user.is_authenticated:
             return False
-        
-        except Event.DoesNotExist:
-            logger.warning(
-                f"[questions] Event {self.event_id} not found "
-                f"during permission check"
-            )
-            return False
-        
-        except Exception as e:
-            logger.error(
-                f"[questions] Error checking event permission: {str(e)}",
-                exc_info=True
-            )
-            return False
+
+        if self.user.is_superuser or self.user.is_staff:
+            return True
+
+        # Check if the user is the event creator
+        if self.event.created_by == self.user:
+            return True
+
+        # Check if the user is a staff member of the event's organisation
+        # with the necessary permission.
+        is_staff_member = self.event.organisation.staff.filter(
+            user=self.user,
+            permissions__codename='manage_events'
+        ).exists()
+
+        return is_staff_member
 

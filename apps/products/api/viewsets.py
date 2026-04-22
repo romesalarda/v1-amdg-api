@@ -414,7 +414,7 @@ class ProductViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
         # Regular users see only active products (unless they're event admins)
         # Event admins can see their event's products regardless of active status
         # For now, show all active products to authenticated users
-        return queryset.filter(is_active=True)
+        return queryset
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -1435,7 +1435,7 @@ class ProductVariantViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
             return queryset
         
         # Regular users see only active variants of active products
-        return queryset.filter(is_active=True, product__is_active=True)
+        return queryset
 
     def get_serializer_context(self):
         context = super().get_serializer_context()

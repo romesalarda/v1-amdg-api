@@ -92,7 +92,7 @@ class ProductSelectionSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'variant_id': f'Variant does not belong to product {package_product.product.title}'
             })
-
+        print(variant.is_purchasable)
         if not variant.is_purchasable:
             raise serializers.ValidationError({
                 'variant_id': f'Variant {variant_id} is not currently purchasable.'

@@ -1103,10 +1103,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         from apps.payments.evaluator import discount_applies
 
         logger = logging.getLogger(__name__)
-
+        print("hit endpoint")
         serializer = CheckoutPreviewSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-
+        print("reached")
         user = request.user
         intent = serializer.validated_data['_intent']
         attendee_selections = serializer.validated_data['attendees']

@@ -184,6 +184,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
     
     @property
     def is_purchasable(self) -> bool:
+        print(f"Checking if variant {self.id} is purchasable: Product active={self.product.is_active}, Variant active={self.is_active}, Product purchasable={super().is_purchasable}, Product availability={self.product.is_purchasable}")
         return super().is_purchasable and self.product.is_purchasable
 
     def clean(self):
