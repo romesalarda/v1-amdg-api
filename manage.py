@@ -7,6 +7,12 @@ import sys
 def main():
     """Run administrative tasks."""
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+
+    # Compatibility shim: this project uses drf-spectacular for schema generation.
+    # DRF's `generateschema` command is not compatible with drf-spectacular AutoSchema.
+    if len(sys.argv) > 1 and sys.argv[1] == 'generateschema':
+        sys.argv[1] = 'spectacular'
+
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

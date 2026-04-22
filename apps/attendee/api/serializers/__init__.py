@@ -52,6 +52,14 @@ from .statistics import (
     DemographicsSerializer,
 )
 
+from .pre_removal import (
+    AttendeePreRemovalBlockerItemSerializer,
+    AttendeePreRemovalBlockerPaginationSerializer,
+    AttendeePreRemovalBlockerSerializer,
+    AttendeePreRemovalRefundSummarySerializer,
+    AttendeePreRemovalSummarySerializer,
+)
+
 __all__ = [
     # Base serializers
     'AttendeeListSerializer',
@@ -95,4 +103,10 @@ __all__ = [
     'PersonalInfoCombinedSerializer',
     'AttendeeOverviewStatsSerializer',
     'DemographicsSerializer',
+    # Pre-removal serializers
+    'AttendeePreRemovalBlockerItemSerializer',
+    'AttendeePreRemovalBlockerPaginationSerializer',
+    'AttendeePreRemovalBlockerSerializer',
+    'AttendeePreRemovalRefundSummarySerializer',
+    'AttendeePreRemovalSummarySerializer',
 ]

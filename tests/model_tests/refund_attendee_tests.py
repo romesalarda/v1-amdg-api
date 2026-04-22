@@ -30,6 +30,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from djmoney.money import Money
 from unittest.mock import patch, MagicMock
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.bookings.models import (
     Booking, BookingPackage, TicketType, Ticket, 
@@ -51,6 +52,7 @@ from apps.attendee.models import (
     Attendee, AttendeeRelationship, FamilyGroup, 
     FamilyAttendee, HumanRelationshipChoices
 )
+from apps.attendee.api.viewsets import AttendeeViewSet
 from apps.organisations.models import Organisation
 
 User = get_user_model()
@@ -1296,6 +1298,88 @@ class AttendeeRefundComplexScenariosTest(TestCase):
             is_active=True,
             created_by=self.organizer
         )
+
+    def _create_attendee_with_full_booking(self, username, email, first_name, last_name, dob):
+        """Create an attendee with completed ticket and product purchase."""
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password='testpass123'
+        )
+
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference=f'BKG-{username.upper()}-001',
+            made_by=user
+        )
+
+        attendee = Attendee.objects.create(
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            user=user,
+            event=self.event,
+            date_of_birth=dob,
+            relationship_to_user=AttendeeRelationship.SELF,
+            booking=booking,
+            defined_by=user
+        )
+
+        ticket_payment = Payment.objects.create(
+            user=user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(100, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            target=booking,
+            stripe_payment_intent=f'pi_{username}_ticket',
+            metadata={
+                'payment_type': 'booking_ticket',
+                'attendee_id': str(attendee.attendee_id),
+                'attendee_name': attendee.full_name,
+            }
+        )
+
+        ticket = Ticket.objects.create(
+            ticket_type=self.ticket_type,
+            attendee=attendee,
+            package=self.package,
+            payment=ticket_payment,
+            status=TicketStatusChoices.ACTIVE
+        )
+
+        order = Order.objects.create(
+            customer=user,
+            attendee=attendee,
+            status=OrderStatusChoices.DRAFT,
+            total_amount=Money(0, 'GBP'),
+            created_by=user
+        )
+
+        order.transition_to(OrderStatusChoices.PENDING)
+        order.save()
+
+        product_payment = Payment.objects.create(
+            user=user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(25, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            target=order,
+            stripe_payment_intent=f'pi_{username}_product',
+            metadata={
+                'payment_type': 'product_purchase',
+                'attendee_id': str(attendee.attendee_id),
+                'order_reference': order.order_reference_id,
+            }
+        )
+
+        order.payment = product_payment
+        order.transition_to(OrderStatusChoices.PROCESSING)
+        order.transition_to(OrderStatusChoices.COMPLETED)
+        order.save()
+
+        return user, attendee, ticket_payment, product_payment, ticket, order
     
     @patch('stripe.Refund.create')
     def test_refund_attendee_with_multiple_payments(self, mock_stripe_refund):
@@ -1538,3 +1622,91 @@ class AttendeeRefundComplexScenariosTest(TestCase):
         payment.save()
         
         self.assertEqual(payment.status, PaymentStatusChoices.REFUNDED)
+
+    def test_pre_removal_summary_includes_verbose_blocker_context_and_pagination(self):
+        user, attendee, ticket_payment, product_payment, ticket, order = self._create_attendee_with_full_booking(
+            'sarah', 'sarah@example.com', 'Sarah', 'Jones', date(1991, 6, 14)
+        )
+
+        admin = User.objects.create_superuser(
+            username='summary-admin',
+            email='summary-admin@example.com',
+            password='admin123'
+        )
+
+        RefundRequest.objects.create(
+            payment=ticket_payment,
+            amount=ticket_payment.base_amount,
+            reason='Active refund request for summary coverage',
+            requested_by=admin,
+        )
+
+        factory = APIRequestFactory()
+        request = factory.get('/api/attendees/summary/?page_size=1')
+        force_authenticate(request, user=admin)
+
+        view = AttendeeViewSet()
+        view.request = request
+
+        summary = view._build_pre_removal_summary(attendee)
+        blockers_by_code = {blocker['code']: blocker for blocker in summary['blockers']}
+
+        self.assertIn('linked_payments', blockers_by_code)
+        linked_blocker = blockers_by_code['linked_payments']
+        self.assertEqual(linked_blocker['count'], 2)
+        self.assertEqual(linked_blocker['pagination']['page_size'], 1)
+        self.assertTrue(linked_blocker['pagination']['has_next'])
+        self.assertEqual(len(linked_blocker['items']), 1)
+
+        linked_item = linked_blocker['items'][0]
+        self.assertIn('payment_type', linked_item)
+        self.assertIn('payment_descriptor', linked_item)
+        self.assertIn('payment_status_bucket', linked_item)
+        self.assertIn('can_request_refund', linked_item)
+        self.assertIn('_links', linked_item)
+        self.assertIn(linked_item['payment_type'], {'booking', 'order'})
+
+        self.assertIn('outstanding_payments', blockers_by_code)
+        outstanding_blocker = blockers_by_code['outstanding_payments']
+        self.assertEqual(outstanding_blocker['pagination']['page_size'], 1)
+        self.assertEqual(len(outstanding_blocker['items']), 1)
+        self.assertIn('refund_block_reason', outstanding_blocker['items'][0])
+
+        self.assertIn('active_tickets', blockers_by_code)
+        active_ticket_item = blockers_by_code['active_tickets']['items'][0]
+        self.assertEqual(active_ticket_item['ticket_code'], ticket.ticket_code)
+        self.assertIn('payment_id', active_ticket_item)
+        self.assertIn('payment_descriptor', active_ticket_item)
+
+        self.assertIn('unresolved_orders', blockers_by_code)
+        order_item = blockers_by_code['unresolved_orders']['items'][0]
+        self.assertEqual(order_item['order_reference'], order.order_reference_id)
+        self.assertIn('order_amount', order_item)
+        self.assertIn('payment_type', order_item)
+
+        self.assertIn('active_refunds', blockers_by_code)
+        active_refunds_blocker = blockers_by_code['active_refunds']
+        self.assertEqual(active_refunds_blocker['count'], 1)
+        self.assertEqual(active_refunds_blocker['items'][0]['active_refund_count'], 1)
+        self.assertEqual(active_refunds_blocker['items'][0]['active_refunds'][0]['requested_by_name'], admin.username)
+        self.assertIn('tracking_reference', active_refunds_blocker['items'][0]['active_refunds'][0])
+
+    def test_pre_removal_summary_marks_refund_eligibility_with_reason(self):
+        _, attendee, ticket_payment, _, _, _ = self._create_attendee_with_full_booking(
+            'tom', 'tom@example.com', 'Tom', 'White', date(1994, 3, 2)
+        )
+
+        factory = APIRequestFactory()
+        request = factory.get('/api/attendees/summary/')
+        force_authenticate(request, user=self.organizer)
+
+        view = AttendeeViewSet()
+        view.request = request
+
+        summary = view._build_pre_removal_summary(attendee)
+        linked_blocker = next(blocker for blocker in summary['blockers'] if blocker['code'] == 'linked_payments')
+        payment_item = next(item for item in linked_blocker['items'] if item['payment_id'] == str(ticket_payment.payment_id))
+
+        self.assertIn('can_request_refund', payment_item)
+        self.assertIn('refund_block_reason', payment_item)
+        self.assertFalse(payment_item['can_request_refund'])

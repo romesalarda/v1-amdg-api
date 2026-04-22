@@ -183,7 +183,7 @@ class PaymentListSerializer(serializers.ModelSerializer):
             'id', 'payment_id', 'payment_reference', 'user', 'user_name',
             'event', 'event_name', 'method', 'method_title', 'status',
             'amount', 'amount_currency', 'created_at', '_links', 'descriptor', 'base_amount', 'amount_value',
-            'bank_transfer_required_immediately'
+            'bank_transfer_required_immediately', 'outstanding_bank_transfer_evidence'
         )
         read_only_fields = ('id', 'payment_id', 'payment_reference', 'created_at')
         extra_kwargs = {

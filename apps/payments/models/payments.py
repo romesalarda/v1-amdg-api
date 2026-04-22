@@ -143,11 +143,20 @@ class Payment(PayableModel):
         return f"<Payment id={self.payment_id} reference={self.payment_reference} user={self.user}>"
 
     @property
-    def is_partially_refunded(self):
+    def outstanding_bank_transfer_evidence(self) -> bool:
+        '''
+        Check if there is outstanding bank transfer evidence that has not been verified for this payment. Only applicable for bank transfer payments.
+        '''
+        if self.method and self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+            return not self.bank_transfer_evidence.filter(verification_status='verified').exists()
+        return False
+
+    @property
+    def is_partially_refunded(self) -> bool:
         return self.status == PaymentStatusChoices.PARTIALLY_REFUNDED
     
     @property
-    def is_refunded(self):
+    def is_refunded(self) -> bool:
         return self.status == PaymentStatusChoices.REFUNDED
     
     def save(self, *args, **kwargs):
