@@ -156,7 +156,9 @@ class IsAdministrativeStaffOnly(permissions.BasePermission):
             role__category=EventRoleCategoryChoices.ADMINISTRATIVE
         ).exists()
 
+import logging
 
+logger = logging.getLogger(__name__)
 class IsOrderOwner(permissions.BasePermission):
     """
     Permission to check if user owns the order.
@@ -178,8 +180,11 @@ class IsOrderOwner(permissions.BasePermission):
             return True
         
         # Check if user is associated with the attendee
-        if obj.attendee and hasattr(obj.attendee, 'user') and obj.attendee.user.id == request.user.id:
+        if obj.attendee and hasattr(obj.attendee, 'user') and getattr(obj.attendee, 'user') and getattr(obj.attendee.user, 'id') == request.user.id:
             return True
+        
+        if not getattr(obj, 'attendee', None):
+            logger.warning(f"Order {obj.id} does not have an attendee associated.")
         
         return False
 

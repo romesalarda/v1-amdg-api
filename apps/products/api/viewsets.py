@@ -2554,11 +2554,29 @@ class ProductVariantViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
     list=extend_schema(
         summary="List orders",
         description="Retrieve a paginated list of orders. Users see their own orders, administrators see all orders for their events.",
+        parameters=[
+            OpenApiParameter(
+                name='event',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional event url_safe_title. If provided, event staff can view all orders for that event in addition to their own orders.',
+                required=False,
+            ),
+        ],
         tags=["Orders"],
     ),
     retrieve=extend_schema(
         summary="Retrieve order details",
         description="Get detailed information about a specific order including all items and payment details.",
+        parameters=[
+            OpenApiParameter(
+                name='event',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Optional event url_safe_title used for queryset scoping and event staff access checks.',
+                required=False,
+            ),
+        ],
         tags=["Orders"],
     ),
     create=extend_schema(

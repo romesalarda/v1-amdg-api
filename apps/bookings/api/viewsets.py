@@ -1103,10 +1103,8 @@ class BookingViewSet(viewsets.ModelViewSet):
         from apps.payments.evaluator import discount_applies
 
         logger = logging.getLogger(__name__)
-        print("hit endpoint")
         serializer = CheckoutPreviewSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        print("reached")
         user = request.user
         intent = serializer.validated_data['_intent']
         attendee_selections = serializer.validated_data['attendees']
@@ -1826,7 +1824,7 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         """Set permissions based on action."""
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'rules', 'package_products']:
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsAdministrativeStaff()]
     
