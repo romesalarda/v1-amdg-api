@@ -2638,37 +2638,45 @@ class OrderViewSet(viewsets.ModelViewSet):
             return OrderUpdateSerializer
         return OrderDetailSerializer
     
-    def get_queryset(self):
-        """Filter queryset based on user permissions."""
+    # def get_queryset(self):
+    #     """Filter queryset based on user permissions."""
 
-        from apps.events.models import Event
-        user = self.request.user
-        queryset = super().get_queryset()
+    #     from apps.events.models import Event
+    #     user = self.request.user
+    #     queryset = super().get_queryset()
         
-        # Admins see all orders
-        if user.is_superuser or user.is_staff:
-            return queryset
+    #     # Admins see all orders
+    #     if user.is_superuser or user.is_staff:
+    #         return queryset
 
-        # check query params for event, if so check if they are an event staff 
-        # event staff can see all orders for their events, even if they are not the customer or attendee
-        event_id = self.request.query_params.get('event')
-        if event_id:
-            try:
-                event = Event.objects.get(Q(url_safe_title=event_id))
-                if event.staff_members.filter(user_id=user.id).exists():
-                    return queryset.filter(
-                        Q(attendee__event__url_safe_title=event_id) |
-                        Q(customer=user)
-                    )
-            except Event.DoesNotExist:
-                pass
+    #     # check query params for event, if so check if they are an event staff 
+    #     # event staff can see all orders for their events, even if they are not the customer or attendee
+    #     event_id = self.request.query_params.get('event')
+
+    #     # if request is a list then require parameter event, if not infer event from order for retrieve, update, delete actions
+
+    #     if event_id:
+    #         try:
+    #             event = Event.objects.get(Q(url_safe_title=event_id))
+    #             if event.staff_members.filter(user_id=user.id).exists():
+    #                 return queryset.filter(
+    #                     Q(attendee__event__url_safe_title=event_id) |
+    #                     Q(customer=user)
+    #                 )
+    #         except Event.DoesNotExist:
+    #             pass
         
         
-        # Regular users see only their own orders
-        return queryset.filter(
-            Q(customer=user) |
-            Q(attendee__user=user)
-        )
+    #     # Regular users see only their own orders
+    #     if self.action in ['retrieve', 'list']:
+    #         return queryset.filter(
+    #             Q(customer=user) |
+    #             Q(attendee__user=user)
+    #         )
+    #     return queryset
+
+    def get_object(self):
+        return super().get_object()
     
     def perform_create(self, serializer):
         serializer.context['request'] = self.request  # Pass request to serializer for validation

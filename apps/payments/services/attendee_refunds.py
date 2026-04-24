@@ -243,10 +243,117 @@ class AttendeeRefundService:
         }
 
     @classmethod
+    def calculate_targeted_order_item_breakdown(cls, payment, refund_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Calculate and validate targeted order-item refund selections for non-booking payments."""
+        if cls.is_booking_payment(payment):
+            raise ValidationError("Use booking-targeted breakdown for booking-linked payments.")
+
+        if not refund_items:
+            raise ValidationError("refund_items is required for targeted order refunds.")
+
+        currency = payment.base_amount.currency
+        total = Decimal("0.00")
+        per_item_details: List[Dict[str, Any]] = []
+
+        for raw_item in refund_items:
+            if not isinstance(raw_item, dict):
+                raise ValidationError("Each refund_items entry must be an object.")
+
+            order_item_id = raw_item.get("order_item_id")
+            requested_quantity = int(raw_item.get("quantity") or 0)
+            if not order_item_id:
+                raise ValidationError("Each refund_items entry must include order_item_id.")
+            if requested_quantity <= 0:
+                raise ValidationError("Each refund_items entry must include quantity >= 1.")
+
+            order_item = (
+                OrderItem.objects
+                .select_related("order")
+                .filter(order__payment=payment, id=order_item_id)
+                .first()
+            )
+            if order_item is None:
+                raise ValidationError(f"Order item {order_item_id} is not part of this payment.")
+
+            if requested_quantity > order_item.quantity:
+                raise ValidationError(
+                    f"Requested quantity ({requested_quantity}) exceeds purchased quantity "
+                    f"({order_item.quantity}) for order item {order_item.id}."
+                )
+
+            line_total = (order_item.unit_price.amount * Decimal(requested_quantity)).quantize(Decimal("0.01"))
+            total += line_total
+
+            per_item_details.append(
+                {
+                    "order_id": str(order_item.order.order_id),
+                    "order_item_id": order_item.id,
+                    "quantity": requested_quantity,
+                    "unit_price": str(order_item.unit_price.amount),
+                    "amount": str(line_total),
+                    "currency": currency.code,
+                }
+            )
+
+        return {
+            "scope": "targeted_order_items",
+            "total": float(total.quantize(Decimal("0.01"))),
+            "total_currency": currency.code,
+            "items": per_item_details,
+            "entity_counts": {
+                "tickets": 0,
+                "orders": 0,
+                "items": len(per_item_details),
+            },
+        }
+
+    @classmethod
     @transaction.atomic
     def attach_associations(cls, refund_request: RefundRequest) -> None:
         metadata = refund_request.metadata or {}
         refund_scope = metadata.get("refund_scope")
+        if refund_scope == "targeted_order_items":
+            selected_items = (metadata.get("frozen_breakdown") or {}).get("items") or []
+            if not selected_items:
+                return
+
+            existing_keys = set(
+                RefundAssociation.objects.filter(refund_request=refund_request).values_list("target_type_id", "target_id")
+            )
+            currency = refund_request.amount.currency
+
+            for item_data in selected_items:
+                order_item = (
+                    OrderItem.objects
+                    .select_related("order")
+                    .filter(order__payment=refund_request.payment, id=item_data.get("order_item_id"))
+                    .first()
+                )
+                if order_item is None:
+                    continue
+
+                ct_id = ContentType.objects.get_for_model(order_item).id
+                key = (ct_id, str(order_item.pk))
+                if key in existing_keys:
+                    continue
+
+                amount = Decimal(str(item_data.get("amount") or "0")).quantize(Decimal("0.01"))
+                if amount <= 0:
+                    continue
+
+                refund_request.associate_with(
+                    order_item,
+                    amount=Money(amount, currency),
+                    metadata={
+                        "entity": "order_item",
+                        "scope": "targeted_order_items",
+                        "order_id": item_data.get("order_id"),
+                        "quantity": item_data.get("quantity"),
+                        "unit_price": item_data.get("unit_price"),
+                    },
+                )
+            return
+
         if refund_scope == "targeted_booking_products":
             order_summaries = (metadata.get("frozen_breakdown") or {}).get("orders") or []
             if not order_summaries:
@@ -335,7 +442,7 @@ class AttendeeRefundService:
         cls.attach_associations(refund_request)
         metadata = refund_request.metadata or {}
         refund_scope = metadata.get("refund_scope")
-        is_targeted_scope = refund_scope == "targeted_booking_products"
+        is_targeted_scope = refund_scope in {"targeted_booking_products", "targeted_order_items"}
 
         blocked_orders = 0
         for association in refund_request.associations.select_related("target_type"):
@@ -371,7 +478,8 @@ class AttendeeRefundService:
         finalized_orders = 0
         metadata = refund_request.metadata or {}
         refund_scope = metadata.get("refund_scope")
-        is_targeted_scope = refund_scope == "targeted_booking_products"
+        is_targeted_scope = refund_scope in {"targeted_booking_products", "targeted_order_items"}
+        order_item_refund_quantities: Dict[int, int] = {}
 
         for association in refund_request.associations.select_related("target_type"):
             target = association.target_object
@@ -390,6 +498,41 @@ class AttendeeRefundService:
                 if target.status != OrderStatusChoices.REFUNDED:
                     target.transition_to(OrderStatusChoices.REFUNDED)
                     finalized_orders += 1
+                continue
+
+            if isinstance(target, OrderItem):
+                quantity = association.metadata.get("quantity") if isinstance(association.metadata, dict) else None
+                try:
+                    refunded_qty = int(quantity)
+                except (TypeError, ValueError):
+                    refunded_qty = 0
+                if refunded_qty <= 0:
+                    refunded_qty = target.quantity
+                order_item_refund_quantities[target.id] = order_item_refund_quantities.get(target.id, 0) + refunded_qty
+
+        if refund_scope == "targeted_order_items" and order_item_refund_quantities:
+            order_ids = list(
+                OrderItem.objects
+                .filter(id__in=order_item_refund_quantities.keys())
+                .values_list("order_id", flat=True)
+                .distinct()
+            )
+            for order in Order.objects.filter(id__in=order_ids).prefetch_related("order_items"):
+                order_items = list(order.order_items.all())
+                if not order_items:
+                    continue
+
+                is_fully_refunded = all(
+                    order_item_refund_quantities.get(item.id, 0) >= item.quantity
+                    for item in order_items
+                )
+                if not is_fully_refunded:
+                    continue
+
+                if order.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
+                    continue
+                order.transition_to(OrderStatusChoices.REFUNDED)
+                finalized_orders += 1
 
         attendee_ids = metadata.get("selected_attendee_ids") or []
         if attendee_ids and not is_targeted_scope:

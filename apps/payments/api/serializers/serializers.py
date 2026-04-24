@@ -1132,7 +1132,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         child=serializers.DictField(),
         write_only=True,
         required=False,
-        allow_empty=False,
+        allow_empty=True,
         help_text=(
             "Optional granular refund targets. For booking-linked partial refunds, use items with: "
             "attendee_id (required), quantity (required), and one of order_item_id or unique variant/package selector."
@@ -1211,6 +1211,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
             })
 
         is_targeted_booking_refund = refund_context['is_booking_payment'] and bool(refund_items)
+        is_targeted_order_refund = (not refund_context['is_booking_payment']) and bool(refund_items)
 
         # Partial booking refunds must explicitly select attendees when not using granular targets.
         if refund_context['is_booking_payment'] and amount < payment.base_amount and not attendee_ids and not is_targeted_booking_refund:
@@ -1228,9 +1229,9 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 'attendee_ids': "attendee_ids is only valid for booking-linked payments."
             })
 
-        if not refund_context['is_booking_payment'] and refund_items:
+        if not refund_context['is_booking_payment'] and amount < payment.base_amount and not is_targeted_order_refund:
             raise serializers.ValidationError({
-                'refund_items': "refund_items is currently only supported for booking-linked payments."
+                'refund_items': "refund_items is required for partial refunds on order-linked payments."
             })
 
         if override_used_ticket_block and not override_reason:
@@ -1268,6 +1269,23 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'amount': (
                         f"Targeted booking refund amount must match selected item total ({breakdown_total_amount})."
+                    )
+                })
+
+        elif is_targeted_order_refund:
+            breakdown = AttendeeRefundService.calculate_targeted_order_item_breakdown(payment, refund_items)
+            refund_context['selected_refund_items'] = breakdown.get('items', [])
+            refund_context['breakdown'] = breakdown
+            refund_context['refund_scope'] = 'targeted_order_items'
+
+            breakdown_total = breakdown['total']
+            breakdown_total_amount = Decimal(str(getattr(breakdown_total, 'amount', breakdown_total))).quantize(Decimal('0.01'))
+            requested_amount = Decimal(str(amount.amount)).quantize(Decimal('0.01'))
+
+            if requested_amount != breakdown_total_amount:
+                raise serializers.ValidationError({
+                    'amount': (
+                        f"Targeted order refund amount must match selected item total ({breakdown_total_amount})."
                     )
                 })
 
