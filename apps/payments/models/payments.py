@@ -53,6 +53,7 @@ ALLOWED_STATUS_TRANSITIONS = {
     ],
     PaymentStatusChoices.PARTIALLY_REFUNDED: [
         PaymentStatusChoices.REFUNDED, # full refund completed
+        PaymentStatusChoices.PARTIALLY_REFUNDED, # additional partial refund
     ],
 }
 

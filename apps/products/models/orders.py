@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 ORDER_STATUS_TRANSITIONS = {
     'draft': ['pending', 'cancelled'],
     'pending': ['processing', 'cancelled'],
-    'processing': ['completed', 'pending_refund', 'refunded'],
-    'completed': ['pending_refund', 'refunded'],
+    'processing': ['completed', 'pending_refund', 'refunded', 'cancelled'],
+    'completed': ['pending_refund', 'refunded', 'cancelled'],
     'cancelled': [],
     'pending_refund': ['refunded', 'cancelled'],
     'refunded': [],

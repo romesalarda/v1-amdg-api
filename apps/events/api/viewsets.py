@@ -327,7 +327,10 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def upcoming(self, request):
         from django.utils import timezone
+        print("upcoming: " + str(self.get_queryset()))
         queryset = self.get_queryset().filter(start_datetime__gte=timezone.now())
+
+
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = EventListSerializer(page, many=True, context={'request': request})

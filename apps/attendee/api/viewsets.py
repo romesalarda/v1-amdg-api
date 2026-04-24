@@ -683,6 +683,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
                 'override_used_ticket_block': drf_serializers.BooleanField(required=False, default=False),
                 'override_reason': drf_serializers.CharField(required=False),
                 'attendee_ids': drf_serializers.ListField(child=drf_serializers.UUIDField(), required=False),
+                'refund_items': drf_serializers.ListField(child=drf_serializers.DictField(), required=False),
             },
         ),
         responses={
@@ -713,6 +714,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
         from apps.payments.models import Payment, PaymentHistoryAction, PaymentStatusChoices
         from apps.payments.api.serializers import RefundRequestCreateSerializer
+        from apps.payments.services.attendee_refunds import AttendeeRefundService
 
         payment = get_object_or_404(Payment, payment_id=payment_id)
         if not self._is_payment_linked_to_attendee(attendee, payment):
@@ -730,8 +732,8 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         payload = request.data.copy()
         payload['payment'] = str(payment.payment_id)
 
-        # Always default to this attendee's ID if not provided
-        if not payload.get('attendee_ids'):
+        # For booking-linked payments, default attendee_ids to the current attendee when omitted.
+        if AttendeeRefundService.is_booking_payment(payment) and not payload.get('attendee_ids'):
             payload['attendee_ids'] = [str(attendee.attendee_id)]
 
         refund_serializer = RefundRequestCreateSerializer(data=payload, context={'request': request})

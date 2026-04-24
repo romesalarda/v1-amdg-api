@@ -27,7 +27,7 @@ from apps.payments.models import (
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
 from apps.bookings.models import Booking, BookingPackage, TicketType, Ticket, TicketScopeChoices, TicketStatusChoices
-from apps.products.models import Order, OrderStatusChoices
+from apps.products.models import Order, OrderItem, OrderStatusChoices
 from apps.organisations.models import EventSponsor, EventSponsorPackage
 from apps.attendee.models import Attendee, AttendeeRelationship
 
@@ -785,6 +785,39 @@ class RefundRequestAPITestCase(APITestCase):
         order.transition_to(OrderStatusChoices.COMPLETED)
         order.refresh_from_db()
         return order
+
+    def _create_order_payment_fixture(self):
+        payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money('85.00', 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+        )
+        order = Order.objects.create(
+            customer=self.regular_user,
+            created_by=self.regular_user,
+            total_amount=Money('85.00', 'GBP'),
+            status=OrderStatusChoices.COMPLETED,
+            payment=payment,
+        )
+        item_one = OrderItem.objects.create(
+            order=order,
+            product_variant=None,
+            quantity=1,
+            unit_price=Money('25.00', 'GBP'),
+            total_price=Money('25.00', 'GBP'),
+        )
+        item_two = OrderItem.objects.create(
+            order=order,
+            product_variant=None,
+            quantity=2,
+            unit_price=Money('30.00', 'GBP'),
+            total_price=Money('60.00', 'GBP'),
+        )
+        order.recalculate_total_amount()
+        order.refresh_from_db()
+        return payment, order, item_one, item_two
     
     def test_create_refund_request(self):
         """User can request refund for their payment."""
@@ -924,6 +957,101 @@ class RefundRequestAPITestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('attendee_ids', response.data)
+
+    def test_full_order_refund_without_refund_items(self):
+        """Order full refunds should succeed without refund_items."""
+        payment, _, _, _ = self._create_order_payment_fixture()
+
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '85.00',
+                'amount_currency': 'GBP',
+                'reason': 'Customer requested full refund for this order payment.',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        refund = RefundRequest.objects.get(payment=payment)
+        self.assertEqual(refund.amount, Money('85.00', 'GBP'))
+        self.assertEqual((refund.metadata or {}).get('refund_scope'), 'legacy')
+
+    def test_partial_order_refund_requires_refund_items(self):
+        """Order partial refunds must provide refund_items for granular targeting."""
+        payment, _, _, _ = self._create_order_payment_fixture()
+
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '25.00',
+                'amount_currency': 'GBP',
+                'reason': 'Partial refund requested without item selection.',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('refund_items', response.data)
+
+    def test_partial_order_refund_single_item(self):
+        """Order partial refunds support single item targeting with exact amount matching."""
+        payment, _, item_one, _ = self._create_order_payment_fixture()
+
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '25.00',
+                'amount_currency': 'GBP',
+                'reason': 'Refunding one item from the larger order.',
+                'refund_items': [
+                    {
+                        'order_item_id': item_one.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        refund = RefundRequest.objects.get(payment=payment)
+        self.assertEqual((refund.metadata or {}).get('refund_scope'), 'targeted_order_items')
+        self.assertEqual(len((refund.metadata or {}).get('selected_refund_items', [])), 1)
+        self.assertEqual(refund.associations.count(), 1)
+        association = refund.associations.first()
+        self.assertEqual(getattr(association.target_object, 'id', None), item_one.id)
+
+    def test_partial_order_refund_amount_mismatch_rejected(self):
+        """Order targeted refunds must match amount to selected item total."""
+        payment, _, item_one, _ = self._create_order_payment_fixture()
+
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '30.00',
+                'amount_currency': 'GBP',
+                'reason': 'Refunding one item with incorrect amount provided.',
+                'refund_items': [
+                    {
+                        'order_item_id': item_one.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('amount', response.data)
 
     def test_scenario_single_attendee_full_refund_invalidates_ticket_and_order(self):
         """Scenario 1: one attendee full refund invalidates linked ticket and order."""

@@ -49,6 +49,8 @@ class IsAdministrativeStaff(permissions.BasePermission):
             return True
         
         # For actions without objects (like create), check if user has ANY administrative role
+        # TODO: warning does not pass event object 
+        
         has_any_admin_role = EventRoleAssignment.objects.filter(
             user=request.user,
             role__category=EventRoleCategoryChoices.ADMINISTRATIVE
