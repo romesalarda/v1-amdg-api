@@ -38,7 +38,7 @@ from apps.events.models import Event
 from apps.common.models import Resource
 from apps.common.api.serializers import AvailabilityWindowSerializer
 from apps.payments.evaluator import discount_applies
-from apps.payments.models.discounts import DiscountType
+from apps.payments.models import DiscountType, RefundAssociation
 
 User = get_user_model()
 
@@ -1282,15 +1282,16 @@ class OrderListSerializer(serializers.ModelSerializer):
     item_count = serializers.IntegerField(source='order_items.count', read_only=True)
     created_at = EventTimezoneField(read_only=True)
     order_items = OrderItemSerializer(many=True, read_only=True)
+    is_refunded = serializers.SerializerMethodField(help_text="Whether this order has been refunded")
     
     class Meta:
         model = Order
         fields = (
             'id', 'order_id', 'order_reference_id', 'customer', 'customer_name',
             'attendee', 'attendee_name', 'status', 'status_display',
-            'total_amount', 'item_count', 'created_at', '_links', 'order_items'
+            'total_amount', 'item_count', 'created_at', '_links', 'order_items', 'is_refunded'  
         )
-        read_only_fields = ('id', 'order_id', 'order_reference_id', 'created_at')
+        read_only_fields = ('id', 'order_id', 'order_reference_id', 'created_at','is_refunded')
     
     def get_total_amount(self, obj) -> str:
         return str(obj.total_amount)
@@ -1304,6 +1305,15 @@ class OrderListSerializer(serializers.ModelSerializer):
         if obj.attendee:
             return f"{obj.attendee.first_name} {obj.attendee.last_name}".strip()
         return None
+
+    def get_is_refunded(self, obj) -> bool:
+        """Check if the order has been refunded."""
+        return RefundAssociation.objects.filter(
+            target_id = obj.pk,
+            target_type = ContentType.objects.get_for_model(Order)
+        ).exists()
+
+    
     
     @extend_schema_field({
         'type': 'object',
@@ -1350,11 +1360,18 @@ class OrderDetailSerializer(OrderListSerializer):
     @extend_schema_field({'type': 'object'})
     def get_payment_details(self, obj) -> Optional[dict]:
         """Return payment information if available."""
+        # is_refunded = RefundAssociation.objects.filter(
+        #     target_id = obj.pk,
+        #     target_type = ContentType.objects.get_for_model(Order)
+
+        # ).exists()
+
         if obj.payment:
             return {
                 'payment_id': str(obj.payment.payment_id),
                 'payment_reference': obj.payment.payment_reference,
                 'status': obj.payment.status,
+                # 'is_refunded': is_refunded
             }
         return None
 

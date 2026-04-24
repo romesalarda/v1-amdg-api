@@ -1272,7 +1272,6 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             if not is_event_admin:
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You can only create refund requests for your own payments.")
-        print(serializer.validated_data)
         refund_request = serializer.save()
         payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
 
