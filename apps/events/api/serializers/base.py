@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.db.models import Q
 from django.contrib.contenttypes.models import ContentType
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
@@ -1875,13 +1876,15 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
         required=False,
         help_text="List of option IDs to select for choice questions"
     )
+    resource_info = serializers.SerializerMethodField()
+
     _links = serializers.SerializerMethodField()
     
     class Meta:
         model = EventQuestionAnswer
         fields = (
             'id', 'question', 'question_title', 'attendee', 'attendee_name',
-            'answer_text', 'selected_options', 'selected_option_ids',
+            'answer_text', 'selected_options', 'selected_option_ids', 'resource_info',
             'submitted_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'submitted_at', 'updated_at')
@@ -1889,6 +1892,42 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
             'submitted_at': {'default': None},
             'updated_at': {'default': None},
         }
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'resource_url': {'type': 'string', 'format': 'uri', 'description': 'URL of the resource'},
+            'resource_type': {'type': 'string', 'description': 'Type of the resource (file, link, image)'},
+            'resource_id': {'type': 'integer', 'description': 'ID of the resource'}
+        },
+    })
+    def get_resource_info(self, obj):
+        request = self.context.get('request')
+        try:
+            int(obj.answer_text)
+        except (ValueError, TypeError):
+            resource = Resource.objects.filter(
+                Q(file__contains=obj.answer_text) | Q(link__contains=obj.answer_text) |
+                Q(image__contains=obj.answer_text)
+            ).first()
+
+            if resource:
+                if request:
+                    return {
+                        "resource_url": resource.resource_url,
+                        "resource_type": resource.resource_type,
+                        "resource_id": resource.id
+                    }
+            else:
+                return None
+            
+        resource = Resource.objects.filter(pk=int(obj.answer_text)).first()
+        if resource:
+            if request:
+                return {
+                        "resource_url": resource.resource_url,
+                        "resource_type": resource.resource_type,
+                        "resource_id": resource.id
+                    }
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_attendee_name(self, obj):

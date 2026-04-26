@@ -1702,7 +1702,7 @@ class CheckoutSerializer(serializers.Serializer):
                             'attendees': 'Upload resource must belong to the same event.'
                         })
 
-                    answer_text = resource.resource_url
+                    answer_text = resource.pk
                 elif upload_url:
                     answer_text = upload_url
 

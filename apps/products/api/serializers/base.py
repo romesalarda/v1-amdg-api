@@ -1069,7 +1069,8 @@ class ProductVariantDetailSerializer(ProductVariantListSerializer):
         """Return all variant images."""
         main_images = obj.resources.filter(tag='VARIANT_PHOTO_MAIN')
         additional_images = obj.resources.filter(tag='VARIANT_PHOTO_SECONDARY')
-        
+        request = self.context.get('request')
+
         result = {
             'main': None,
             'additional': []
@@ -1079,14 +1080,14 @@ class ProductVariantDetailSerializer(ProductVariantListSerializer):
             img = main_images.first()
             result['main'] = {
                 'id': img.id,
-                'url': img.file.url if img.file else None,
+                'url': request.build_absolute_uri(img.image.url) if img.image else None,
                 'alt_text': img.name or '',
             }
         
         for img in additional_images:
             result['additional'].append({
                 'id': img.id,
-                'url': img.file.url if img.file else None,
+                'url': request.build_absolute_uri(img.image.url) if img.image else None,
                 'alt_text': img.name or '',
             })
         
