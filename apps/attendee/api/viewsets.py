@@ -1762,7 +1762,7 @@ class ConsentViewSet(viewsets.ModelViewSet):
     
     queryset = Consent.objects.select_related('event').all()
     serializer_class = ConsentSerializer
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = []
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ConsentFilterSet

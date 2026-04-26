@@ -586,7 +586,8 @@ def calculate_payment_status_distribution(
     
     # Get payment status from Payment model (linked to events)
     payment_stats = Payment.objects.filter(
-        event_id__in=event_ids
+        event_id__in=event_ids,
+        target_id__isnull=False
     ).values('status').annotate(
         count=Count('id'),
         amount=Coalesce(Sum('base_amount'), Decimal('0.00'))

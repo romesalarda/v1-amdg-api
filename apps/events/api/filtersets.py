@@ -605,13 +605,18 @@ class EventPermissionAssignmentFilterSet(filters.FilterSet):
         model = EventPermissionAssignment
         fields = ['event', 'user', 'permission']
 
+from apps.utils.querying import get_event_or_url_safe_title
 
 class EventRoleAssignmentFilterSet(filters.FilterSet):
-    event = filters.CharFilter(field_name='event__url_safe_title')
+    event = filters.CharFilter(method='filter_event')
 
     class Meta:
         model = EventRoleAssignment
         fields = ['event', 'user', 'role']
+
+    def filter_event(self, queryset, name, value):
+        """Filter role assignments by event URL-safe title."""
+        return queryset.filter(Q(event=get_event_or_url_safe_title(value)))
 
 
 class EventVenueFilterSet(filters.FilterSet):
