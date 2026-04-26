@@ -24,6 +24,8 @@ from apps.common.api.serializers import (
 from apps.bookings.api.serializers.serializers import BookingDetailSerializer
 from core.utils.currency import format_price
 
+from urllib.parse import urlparse
+import posixpath
 import pytz
 import uuid
 User = get_user_model()
@@ -1876,6 +1878,17 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
         required=False,
         help_text="List of option IDs to select for choice questions"
     )
+    upload_resource_id = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        help_text="ID of uploaded Resource for upload-type questions"
+    )
+    upload_url = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        help_text="Direct URL/path to uploaded file (alternative to upload_resource_id)"
+    )
     resource_info = serializers.SerializerMethodField()
 
     _links = serializers.SerializerMethodField()
@@ -1884,7 +1897,8 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
         model = EventQuestionAnswer
         fields = (
             'id', 'question', 'question_title', 'attendee', 'attendee_name',
-            'answer_text', 'selected_options', 'selected_option_ids', 'resource_info',
+            'answer_text', 'selected_options', 'selected_option_ids',
+            'upload_resource_id', 'upload_url', 'resource_info',
             'submitted_at', 'updated_at', '_links'
         )
         read_only_fields = ('id', 'submitted_at', 'updated_at')
@@ -1902,32 +1916,59 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
     })
     def get_resource_info(self, obj):
         request = self.context.get('request')
-        try:
-            int(obj.answer_text)
-        except (ValueError, TypeError):
-            resource = Resource.objects.filter(
-                Q(file__contains=obj.answer_text) | Q(link__contains=obj.answer_text) |
-                Q(image__contains=obj.answer_text)
-            ).first()
+        resource = self._resolve_resource_from_answer_text(obj.answer_text)
+        if not resource:
+            return None
 
-            if resource:
-                if request:
-                    return {
-                        "resource_url": resource.resource_url,
-                        "resource_type": resource.resource_type,
-                        "resource_id": resource.id
-                    }
-            else:
-                return None
-            
-        resource = Resource.objects.filter(pk=int(obj.answer_text)).first()
-        if resource:
-            if request:
-                return {
-                        "resource_url": resource.resource_url,
-                        "resource_type": resource.resource_type,
-                        "resource_id": resource.id
-                    }
+        resource_url = resource.resource_url
+        if request and resource_url and not str(resource_url).startswith(('http://', 'https://')):
+            resource_url = request.build_absolute_uri(resource_url)
+
+        return {
+            "resource_url": resource_url,
+            "resource_type": resource.resource_type,
+            "resource_id": resource.id
+        }
+
+    def _resolve_resource_from_answer_text(self, answer_text):
+        if answer_text is None:
+            return None
+
+        raw_answer = str(answer_text).strip()
+        if not raw_answer:
+            return None
+
+        if raw_answer.isdigit():
+            return Resource.objects.filter(pk=int(raw_answer)).first()
+
+        parsed = urlparse(raw_answer)
+        parsed_path = parsed.path or raw_answer
+        normalized_path = parsed_path.strip().lstrip('/')
+
+        if normalized_path.startswith('media/'):
+            normalized_path = normalized_path[len('media/'):]
+
+        file_name = posixpath.basename(normalized_path)
+
+        exact_match = Resource.objects.filter(
+            Q(file=normalized_path) |
+            Q(image=normalized_path) |
+            Q(link=raw_answer) |
+            Q(link=parsed_path)
+        ).first()
+        if exact_match:
+            return exact_match
+
+        lookup = Q()
+        lookup |= Q(file__icontains=raw_answer) | Q(image__icontains=raw_answer) | Q(link__icontains=raw_answer)
+
+        if normalized_path:
+            lookup |= Q(file__iendswith=normalized_path) | Q(image__iendswith=normalized_path) | Q(link__icontains=normalized_path)
+
+        if file_name:
+            lookup |= Q(file__iendswith=file_name) | Q(image__iendswith=file_name) | Q(link__icontains=file_name)
+
+        return Resource.objects.filter(lookup).first()
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_attendee_name(self, obj):
@@ -1970,9 +2011,35 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
         """
         question = data.get('question', self.instance.question if self.instance else None)
         selected_option_ids = data.get('selected_option_ids', [])
+        upload_resource_id = data.get('upload_resource_id')
+        upload_url = (data.get('upload_url') or '').strip()
         
         if not question:
             raise serializers.ValidationError("Question is required")
+
+        if upload_resource_id is not None:
+            upload_resource = Resource.objects.filter(pk=upload_resource_id).first()
+            if not upload_resource:
+                raise serializers.ValidationError({
+                    "upload_resource_id": "Upload resource not found"
+                })
+
+            event_content_type = ContentType.objects.get_for_model(Event)
+            if upload_resource.target_type_id != event_content_type.id or str(upload_resource.target_id) != str(question.event_id):
+                raise serializers.ValidationError({
+                    "upload_resource_id": "Upload resource does not belong to this question's event"
+                })
+
+            if not upload_resource.resource_url:
+                raise serializers.ValidationError({
+                    "upload_resource_id": "Upload resource does not have a valid URL"
+                })
+
+            data['_resolved_upload_resource'] = upload_resource
+            data['answer_text'] = upload_resource.resource_url
+
+        elif upload_url:
+            data['answer_text'] = upload_url
         
         # Validate option selections for choice questions
         if question.question_type in [EventQuestionTypeChoices.SINGLE_CHOICE, EventQuestionTypeChoices.MULTIPLE_CHOICE]:
@@ -1997,6 +2064,14 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
                         raise serializers.ValidationError({
                             "selected_option_ids": "Single choice questions can only have one selected option"
                         })
+
+        if question.question_type == EventQuestionTypeChoices.UPLOAD:
+            has_text = bool((data.get('answer_text') or '').strip())
+            has_upload = upload_resource_id is not None or bool(upload_url)
+            if not has_text and not has_upload:
+                raise serializers.ValidationError({
+                    "answer_text": "Upload questions require upload_resource_id, upload_url, or answer_text"
+                })
         
         return data
     
@@ -2013,6 +2088,9 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
         from django.db import transaction
         
         selected_option_ids = validated_data.pop('selected_option_ids', [])
+        validated_data.pop('upload_resource_id', None)
+        validated_data.pop('upload_url', None)
+        validated_data.pop('_resolved_upload_resource', None)
         
         with transaction.atomic():
             # Create the answer
@@ -2045,12 +2123,24 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
         from django.db import transaction
         
         selected_option_ids = validated_data.pop('selected_option_ids', None)
+        new_upload_resource = validated_data.pop('_resolved_upload_resource', None)
+        validated_data.pop('upload_resource_id', None)
+        validated_data.pop('upload_url', None)
+        old_upload_resource = self._resolve_resource_from_answer_text(instance.answer_text)
         
         with transaction.atomic():
             # Update answer fields
             for attr, value in validated_data.items():
                 setattr(instance, attr, value)
             instance.save()
+
+            if (
+                new_upload_resource
+                and old_upload_resource
+                and old_upload_resource.id != new_upload_resource.id
+                and not old_upload_resource.protected
+            ):
+                old_upload_resource.delete()
             
             # Replace all selected options if provided
             if selected_option_ids is not None:
