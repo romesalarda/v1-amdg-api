@@ -604,10 +604,12 @@ class EventViewSet(viewsets.ModelViewSet):
         amount = None
         amount_value = None
         currency = None
+        original_amount = getattr(payment, 'original_amount', None)
+        total_refunded_amount = getattr(payment, 'total_refunded_amount', None)
         if getattr(payment, 'base_amount', None):
-            amount = str(payment.base_amount)
-            amount_value = str(payment.base_amount.amount)
-            currency = str(payment.base_amount.currency)
+            amount = str(payment.final_amount)
+            amount_value = str(payment.final_amount.amount)
+            currency = str(payment.final_amount.currency)
 
         method = getattr(payment, 'method', None)
         descriptor = payment.target_type.model if getattr(payment, 'target_type', None) else None
@@ -626,6 +628,8 @@ class EventViewSet(viewsets.ModelViewSet):
             'status': payment.status,
             'amount': amount,
             'amount_value': amount_value,
+            'original_amount': str(original_amount) if original_amount else None,
+            'total_refunded_amount': str(total_refunded_amount) if total_refunded_amount else None,
             'currency': currency,
             'created_at': payment.created_at,
             'method_type': getattr(method, 'method_type', None),

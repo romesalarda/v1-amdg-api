@@ -667,11 +667,12 @@ class BookingViewSet(viewsets.ModelViewSet):
                     ).order_by('-created_at').first()
 
                 if total_amount.amount == 0:
-                    payment = Payment.objects.create(
+                    payment = Payment.objects.create( # TODO: create better descriptions for checkout
                         user=user,
                         event=intent.event,
                         method=payment_method,
                         base_amount=total_amount,
+                        original_amount=total_amount,
                         percentage_modifier=Decimal('0.00'),
                         description=f"Checkout intent {intent.booking_intent_id} - {intent.event.title} (free)",
                         status=PaymentStatusChoices.COMPLETED,
@@ -696,25 +697,37 @@ class BookingViewSet(viewsets.ModelViewSet):
                     raise ValidationError({
                         'payment_method_id': 'Payment method is required when total amount is greater than 0.'
                     })
+                
+                description = "Booking payment from user '%s' for event '%s' for attendees [%s] (intent reference: %s...)" % (
+                        user.username,
+                        intent.event.title,
+                        ",".join([attendee["attendee_draft"]["first_name"] for attendee in payment_metadata['checkout_attendees']]),
+                        str(intent.booking_intent_id)[:8],
+                    )
 
                 if reserved_payment:
                     payment = reserved_payment
                     payment.method = payment_method
                     payment.base_amount = total_amount
+                    payment.original_amount = total_amount
                     payment.percentage_modifier = Decimal('0.00')
-                    payment.description = f"Checkout intent {intent.booking_intent_id} - {intent.event.title}"
+                    # payment.description = f"Checkout intent {intent.booking_intent_id} - {intent.event.title}"
+                    payment.description = description
+
                     payment.status = PaymentStatusChoices.DRAFTING
                     payment.metadata = {**(payment.metadata or {}), **payment_metadata}
                     payment.save()
                     payment.transition_to(PaymentStatusChoices.PENDING)
                 else:
+                    
                     payment = Payment.objects.create(
                         user=user,
                         event=intent.event,
                         method=payment_method,
                         base_amount=total_amount,
+                        original_amount=total_amount,
                         percentage_modifier=Decimal('0.00'),
-                        description=f"Checkout intent {intent.booking_intent_id} - {intent.event.title}",
+                        description=description,
                         status=PaymentStatusChoices.PENDING,
                         metadata=payment_metadata,
                     )
@@ -964,6 +977,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 event=intent.event,
                 method=payment_method,
                 base_amount=Money(0, 'GBP'),
+                original_amount=Money(0, 'GBP'),
                 percentage_modifier=Decimal('0.00'),
                 description=f"Bank transfer reservation for intent {intent.booking_intent_id} - {intent.event.title}",
                 status=PaymentStatusChoices.DRAFTING,
@@ -1374,9 +1388,9 @@ class BookingViewSet(viewsets.ModelViewSet):
                     return Response({'detail': 'Booking intent not found.'}, status=status.HTTP_404_NOT_FOUND)
 
             # Keep intent alive while user is actively progressing through checkout.
-            if intent.is_active:
-                intent.expires_at = timezone.now() + timezone.timedelta(minutes=20)
-                intent.save(update_fields=['expires_at'])
+            # if intent.is_active:
+            #     intent.expires_at = timezone.now() + timezone.timedelta(minutes=20)
+            #     intent.save(update_fields=['expires_at'])
 
             now = timezone.now()
             seconds_remaining = 0

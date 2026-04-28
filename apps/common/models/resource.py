@@ -6,6 +6,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 
 User = get_user_model()
 
@@ -50,6 +51,7 @@ class Resource(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='resources_added')
     
+    expires_at = models.DateTimeField(blank=True, null=True, help_text=_("Optional expiration date for the resource. If set, the resource will be considered expired after this date."))
     protected = models.BooleanField(default=False, help_text=_("If true, the resource cannot be deleted automatically.  "))
     
     class Meta:
@@ -93,6 +95,12 @@ class Resource(models.Model):
             return None
         
     @property
+    def is_expired(self):
+        if self.expires_at:
+            return self.expires_at < timezone.now()
+        return False    
+    
+    @property
     def is_image(self):
         return self.resource_type == ResourceTypeChoices.IMAGE
     
@@ -108,7 +116,6 @@ class Resource(models.Model):
     def is_audio(self):
         return self.resource_type == ResourceTypeChoices.AUDIO
     
-
     @property
     def is_video(self):
         return self.resource_type == ResourceTypeChoices.VIDEO  

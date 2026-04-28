@@ -1075,12 +1075,20 @@ class ProductVariantDetailSerializer(ProductVariantListSerializer):
             'main': None,
             'additional': []
         }
-        
-        if main_images.exists():
-            img = main_images.first()
+        img = main_images.first()
+        url = None
+        if img:
+            url = request.build_absolute_uri(img.image.url) if request else None
+        else:
+            # Fallback to product main image if variant main image is missing
+            product_main_img = obj.product.product_images.filter(tag='PRODUCT_PHOTO_MAIN').first()
+            if product_main_img and product_main_img.image:
+                url = request.build_absolute_uri(product_main_img.image.url) if request else None
+                img = product_main_img  # Use product main image for alt text if variant main image is missing
+        if url:
             result['main'] = {
                 'id': img.id,
-                'url': request.build_absolute_uri(img.image.url) if img.image else None,
+                'url': url,
                 'alt_text': img.name or '',
             }
         

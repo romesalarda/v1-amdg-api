@@ -144,7 +144,7 @@ class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
                 })
         
         # Validate Stripe details
-        elif method_type == PaymentMethodTypeChoices.STRIPE:
+        elif method_type == PaymentMethodTypeChoices.STRIPE and attrs.get('provided_details') is not None:
             if 'stripe_account_id' not in provided_details and not provided_details.get('use_platform_account'):
                 raise serializers.ValidationError({
                     'provided_details': "Stripe method requires 'stripe_account_id' or 'use_platform_account'"

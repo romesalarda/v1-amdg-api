@@ -783,6 +783,8 @@ class EventMyPaymentSummaryItemSerializer(serializers.Serializer):
     status = serializers.CharField(read_only=True)
     amount = serializers.CharField(read_only=True)
     amount_value = serializers.CharField(read_only=True, allow_null=True)
+    original_amount = serializers.CharField(read_only=True, allow_null=True)
+    total_refunded_amount = serializers.CharField(read_only=True, allow_null=True)
     currency = serializers.CharField(read_only=True, allow_null=True)
     created_at = serializers.DateTimeField(read_only=True, allow_null=True)
     method_type = serializers.CharField(read_only=True, allow_null=True)
