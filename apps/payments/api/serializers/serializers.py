@@ -1744,7 +1744,8 @@ class CreditExpenseListSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('credit_id', 'created_at', 'updated_at', 'target', 'target_type', 'target_type_name', 'target_id')
 
-    def get_target(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_target(self, obj) -> Optional[str]:
         return str(obj.target) if obj.target else None
 
     @extend_schema_field({

@@ -26,7 +26,8 @@ class WebhookEventHandler:
         self.event = event
         self.event_type = event.type
         self.event_id = event.id
-        self.account_id = getattr(event, 'account', None)
+        account_id = getattr(event, 'account', None)
+        self.account_id = account_id if isinstance(account_id, str) else None
         self.data = event.data.object
     
     def handle(self) -> Dict:

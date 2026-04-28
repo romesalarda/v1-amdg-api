@@ -135,6 +135,7 @@ class StripeConnectOnboardingView(APIView):
     """Create or refresh a Stripe Connect onboarding link."""
 
     permission_classes = [IsAuthenticated]
+    serializer_class = StripeConnectAccountSerializer
 
     @extend_schema(
         operation_id='create_stripe_connect_onboarding_link',
@@ -144,6 +145,7 @@ class StripeConnectOnboardingView(APIView):
             'Use this to send users into Stripe-hosted onboarding.'
         ),
         tags=['Stripe Connect'],
+        request=None,
         responses={200: StripeConnectAccountSerializer},
     )
     def post(self, request):
