@@ -301,6 +301,13 @@ class Payment(PayableModel):
             'user_id': str(self.user_id),
             'user_email': self.user.email[:500],
         }
+
+        stripe_account_id = None
+        if self.method and hasattr(self.method, 'get_stripe_account_id'):
+            stripe_account_id = self.method.get_stripe_account_id()
+
+        if stripe_account_id:
+            metadata['stripe_account_id'] = stripe_account_id
         
         # Add target-specific metadata
         if self.target:

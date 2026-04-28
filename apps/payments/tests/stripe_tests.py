@@ -20,9 +20,10 @@ import stripe
 
 from apps.payments.models import (
     Payment, PaymentStatusChoices, PaymentMethod, PaymentMethodTypeChoices,
-    RefundRequest, PaymentHistoryAction
+    RefundRequest, PaymentHistoryAction, StripeConnectedAccount
 )
 from apps.payments.services.stripe.client import StripeClient
+from apps.payments.services.stripe.connect import StripeConnectService
 from apps.payments.services.stripe.payment_intents import PaymentIntentService
 from apps.payments.services.stripe.refunds import RefundService
 from apps.payments.services.stripe.webhooks import (
@@ -141,6 +142,28 @@ class PaymentIntentServiceTestCase(TestCase):
         self.assertEqual(call_kwargs['currency'], 'gbp')
         self.assertEqual(call_kwargs['metadata'], {'test': 'data'})
         self.assertEqual(call_kwargs['idempotency_key'], 'PAY-TEST-001')
+
+    @patch('stripe.PaymentIntent.create')
+    def test_create_payment_intent_with_connected_account(self, mock_create):
+        """Test PaymentIntent creation passes the connected Stripe account."""
+        mock_payment_intent = Mock()
+        mock_payment_intent.id = 'pi_test123'
+        mock_payment_intent.client_secret = 'pi_test123_secret_abc'
+        mock_payment_intent.status = 'requires_payment_method'
+        mock_create.return_value = mock_payment_intent
+
+        payment_intent = PaymentIntentService.create(
+            amount=Money(50, 'GBP'),
+            currency='GBP',
+            payment_reference='PAY-TEST-004',
+            metadata={'test': 'data'},
+            customer_email='test@example.com',
+            description='Test payment',
+            stripe_account_id='acct_test123',
+        )
+
+        self.assertEqual(payment_intent.id, 'pi_test123')
+        self.assertEqual(mock_create.call_args[1]['stripe_account'], 'acct_test123')
     
     @patch('stripe.PaymentIntent.create')
     def test_create_payment_intent_invalid_amount(self, mock_create):
@@ -251,6 +274,24 @@ class RefundServiceTestCase(TestCase):
         call_kwargs = mock_create.call_args[1]
         self.assertEqual(call_kwargs['amount'], 2000)
         self.assertEqual(call_kwargs['idempotency_key'], 'REF-TEST-001')
+
+    @patch('stripe.Refund.create')
+    def test_create_refund_with_connected_account(self, mock_create):
+        """Test refund creation passes the connected Stripe account."""
+        mock_refund = Mock()
+        mock_refund.id = 're_test123'
+        mock_refund.status = 'succeeded'
+        mock_refund.amount = 5000
+        mock_create.return_value = mock_refund
+
+        refund = RefundService.create(
+            payment_intent_id='pi_test123',
+            reason=RefundService.REASON_REQUESTED_BY_CUSTOMER,
+            stripe_account_id='acct_test123'
+        )
+
+        self.assertEqual(refund.id, 're_test123')
+        self.assertEqual(mock_create.call_args[1]['stripe_account'], 'acct_test123')
     
     @patch('stripe.Refund.create')
     def test_create_refund_invalid_amount(self, mock_create):
@@ -262,6 +303,78 @@ class RefundServiceTestCase(TestCase):
             )
         
         mock_create.assert_not_called()
+
+
+class StripeConnectServiceTestCase(TestCase):
+    """Test Stripe Connect account service helpers."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='connectuser',
+            email='connect@example.com',
+            password='testpass123'
+        )
+
+        self.event_type = EventType.objects.create(
+            title='Connect Event Type',
+            code='CONNECT',
+            created_by=self.user
+        )
+
+        self.organisation = Organisation.objects.create(
+            title='Connect Org',
+            created_by=self.user
+        )
+
+        self.event = Event.objects.create(
+            title='Connect Event',
+            display_code='CE2025',
+            display_identifier='CE2025CONNECT001',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation
+        )
+
+    @patch('stripe.Account.create')
+    def test_create_or_refresh_account_creates_local_record(self, mock_create):
+        """Creating a connected account should persist the Stripe account ID locally."""
+        mock_account = Mock()
+        mock_account.id = 'acct_test123'
+        mock_account.type = 'express'
+        mock_account.country = 'GB'
+        mock_account.email = 'connect@example.com'
+        mock_account.business_type = 'individual'
+        mock_account.charges_enabled = False
+        mock_account.payouts_enabled = False
+        mock_account.details_submitted = False
+        mock_account.requirements = {'disabled_reason': ''}
+        mock_account.capabilities = {'card_payments': {'requested': True}}
+        mock_account.metadata = {}
+        mock_create.return_value = mock_account
+
+        account_record, stripe_account = StripeConnectService.create_or_refresh_account(self.user)
+
+        self.assertEqual(account_record.stripe_account_id, 'acct_test123')
+        self.assertEqual(stripe_account.id, 'acct_test123')
+        self.assertTrue(StripeConnectedAccount.objects.filter(user=self.user, stripe_account_id='acct_test123').exists())
+
+    def test_resolve_payment_method_stripe_account_id(self):
+        """The helper should read stripe_account_id from payment method details."""
+        payment_method = PaymentMethod.objects.create(
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.STRIPE,
+            title='Stripe with account',
+            is_active=True,
+            created_by=self.user,
+            provided_details={'stripe_account_id': 'acct_test456'}
+        )
+
+        stripe_account_id = StripeConnectService.resolve_payment_method_stripe_account_id(payment_method)
+
+        self.assertEqual(stripe_account_id, 'acct_test456')
 
 
 class WebhookTestCase(TestCase):

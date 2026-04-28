@@ -26,6 +26,7 @@ class WebhookEventHandler:
         self.event = event
         self.event_type = event.type
         self.event_id = event.id
+        self.account_id = getattr(event, 'account', None)
         self.data = event.data.object
     
     def handle(self) -> Dict:
@@ -40,7 +41,8 @@ class WebhookEventHandler:
     def log_event(self, message: str, level: str = 'info'):
         """Log event processing with context."""
         log_func = getattr(logger, level)
-        log_func(f"[{self.event_type}:{self.event_id}] {message}")
+        account_suffix = f" account={self.account_id}" if self.account_id else ""
+        log_func(f"[{self.event_type}:{self.event_id}{account_suffix}] {message}")
 
 
 class PaymentIntentSucceededHandler(WebhookEventHandler):
@@ -111,6 +113,7 @@ class PaymentIntentSucceededHandler(WebhookEventHandler):
                     performed_by=None,  # System action
                     metadata={
                         'event_id': self.event_id,
+                        'stripe_account_id': self.account_id,
                         'payment_intent_id': payment_intent_id,
                         'charge_id': charge_id,
                         'amount': str(self.data.amount_received),
@@ -221,6 +224,7 @@ class PaymentIntentPaymentFailedHandler(WebhookEventHandler):
                     performed_by=None,
                     metadata={
                         'event_id': self.event_id,
+                        'stripe_account_id': self.account_id,
                         'payment_intent_id': payment_intent_id,
                         'error_message': error_message,
                     }
@@ -287,6 +291,7 @@ class PaymentIntentCanceledHandler(WebhookEventHandler):
                     performed_by=None,
                     metadata={
                         'event_id': self.event_id,
+                        'stripe_account_id': self.account_id,
                         'payment_intent_id': payment_intent_id,
                         'cancellation_reason': cancellation_reason,
                     }
@@ -371,6 +376,7 @@ class ChargeRefundedHandler(WebhookEventHandler):
                             refund_request.metadata = {}
                         refund_request.metadata['stripe_refund_id'] = refund_id
                         refund_request.metadata['stripe_event_id'] = self.event_id
+                        refund_request.metadata['stripe_account_id'] = self.account_id
                         
                         # Mark as processed
                         refund_request.mark_processed()
@@ -449,6 +455,7 @@ class ChargeDisputeCreatedHandler(WebhookEventHandler):
                 performed_by=None,
                 metadata={
                     'event_id': self.event_id,
+                        'stripe_account_id': self.account_id,
                     'dispute_id': dispute_id,
                     'charge_id': charge_id,
                     'reason': reason,

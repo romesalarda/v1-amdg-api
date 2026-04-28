@@ -567,6 +567,7 @@ STRIPE_PUBLISHABLE_KEY = get_secret(
     ""
 )
 STRIPE_WEBHOOK_SECRET = get_secret("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_CONNECT_DEFAULT_COUNTRY = get_secret("STRIPE_CONNECT_DEFAULT_COUNTRY", "GB")
 
 # =============================================================================
 # GOOGLE OAUTH (for future implementation)

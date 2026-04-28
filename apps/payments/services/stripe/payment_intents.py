@@ -31,7 +31,8 @@ class PaymentIntentService:
         metadata: Dict,
         customer_email: Optional[str] = None,
         customer_id: Optional[str] = None,
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        stripe_account_id: Optional[str] = None,
     ) -> stripe.PaymentIntent:
         """
         Create a Stripe PaymentIntent.
@@ -82,17 +83,22 @@ class PaymentIntentService:
         
         if description:
             params['description'] = description[:1000]  # Stripe limit
-        
+
         if customer_id:
             params['customer'] = customer_id
         elif customer_email:
             params['receipt_email'] = customer_email
+
+        request_options = {}
+        if stripe_account_id:
+            request_options['stripe_account'] = stripe_account_id
         
         try:
             # Use payment_reference as idempotency key to prevent duplicate charges
             payment_intent = stripe.PaymentIntent.create(
                 **params,
-                idempotency_key=payment_reference
+                idempotency_key=payment_reference,
+                **request_options,
             )
             
             logger.info(
@@ -113,7 +119,7 @@ class PaymentIntentService:
             )
     
     @staticmethod
-    def retrieve(payment_intent_id: str) -> stripe.PaymentIntent:
+    def retrieve(payment_intent_id: str, stripe_account_id: Optional[str] = None) -> stripe.PaymentIntent:
         """
         Retrieve a PaymentIntent by ID.
         
@@ -129,7 +135,11 @@ class PaymentIntentService:
         StripeClient.initialize()
         
         try:
-            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+            kwargs = {}
+            if stripe_account_id:
+                kwargs['stripe_account'] = stripe_account_id
+
+            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id, **kwargs)
             return payment_intent
             
         except stripe.StripeError as e:
@@ -137,7 +147,11 @@ class PaymentIntentService:
             raise map_stripe_error(e)
     
     @staticmethod
-    def confirm(payment_intent_id: str, payment_method: Optional[str] = None) -> stripe.PaymentIntent:
+    def confirm(
+        payment_intent_id: str,
+        payment_method: Optional[str] = None,
+        stripe_account_id: Optional[str] = None,
+    ) -> stripe.PaymentIntent:
         """
         Manually confirm a PaymentIntent.
         
@@ -160,10 +174,15 @@ class PaymentIntentService:
             params = {}
             if payment_method:
                 params['payment_method'] = payment_method
+
+            request_options = {}
+            if stripe_account_id:
+                request_options['stripe_account'] = stripe_account_id
             
             payment_intent = stripe.PaymentIntent.confirm(
                 payment_intent_id,
-                **params
+                **params,
+                **request_options,
             )
             
             logger.info(f"Confirmed PaymentIntent {payment_intent_id}")
@@ -176,7 +195,8 @@ class PaymentIntentService:
     @staticmethod
     def cancel(
         payment_intent_id: str,
-        cancellation_reason: Optional[str] = None
+        cancellation_reason: Optional[str] = None,
+        stripe_account_id: Optional[str] = None,
     ) -> stripe.PaymentIntent:
         """
         Cancel a PaymentIntent.
@@ -200,10 +220,15 @@ class PaymentIntentService:
             params = {}
             if cancellation_reason:
                 params['cancellation_reason'] = cancellation_reason[:500]
+
+            request_options = {}
+            if stripe_account_id:
+                request_options['stripe_account'] = stripe_account_id
             
             payment_intent = stripe.PaymentIntent.cancel(
                 payment_intent_id,
-                **params
+                **params,
+                **request_options,
             )
             
             logger.info(f"Cancelled PaymentIntent {payment_intent_id}")
@@ -216,7 +241,8 @@ class PaymentIntentService:
     @staticmethod
     def update_metadata(
         payment_intent_id: str,
-        metadata: Dict
+        metadata: Dict,
+        stripe_account_id: Optional[str] = None,
     ) -> stripe.PaymentIntent:
         """
         Update metadata on an existing PaymentIntent.
@@ -234,9 +260,14 @@ class PaymentIntentService:
         StripeClient.initialize()
         
         try:
+            kwargs = {}
+            if stripe_account_id:
+                kwargs['stripe_account'] = stripe_account_id
+
             payment_intent = stripe.PaymentIntent.modify(
                 payment_intent_id,
-                metadata=metadata
+                metadata=metadata,
+                **kwargs,
             )
             
             logger.info(f"Updated metadata for PaymentIntent {payment_intent_id}")
