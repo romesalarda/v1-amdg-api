@@ -544,10 +544,12 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
 
         # Check if the user is a staff member of the event's organisation
         # with the necessary permission.
-        is_staff_member = self.event.organisation.staff.filter(
-            user=self.user,
-            permissions__codename='manage_events'
-        ).exists()
+        # is_staff_member = self.event.organisation.staff.filter(
+        #     user=self.user,
+        #     permissions__codename='manage_events'
+        # ).exists()
+
+        is_staff_member = self.event.is_staff(self.user)
 
         return is_staff_member
 

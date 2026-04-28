@@ -58,7 +58,7 @@ ALLOWED_STATUS_TRANSITIONS = {
 }
 
 MAX_PAYMENT_GENERATION_ATTEMPTS = 5
-MAX_LENGTH_BANK_REF = 6
+MAX_LENGTH_BANK_REF = 15
 
 class Payment(PayableModel):
     '''
@@ -203,7 +203,10 @@ class Payment(PayableModel):
                 and not self.bank_transfer_reference
             ):
                 #! must generate bank transfer reference only if payment method is bank transfer
-                self.bank_transfer_reference = generate_alphanumeric_id(MAX_LENGTH_BANK_REF) # TODO: change this to make it somewhat obvious incase someone needs to type it instead of copy/paste
+                # self.bank_transfer_reference = generate_alphanumeric_id(MAX_LENGTH_BANK_REF) # TODO: change this to make it somewhat obvious incase someone needs to type it instead of copy/paste
+                self.bank_transfer_reference = generate_human_readable_id(
+                    MAX_LENGTH_BANK_REF, '', str(self.user.username)[4:], str(self.event.display_code)[4:], separator=''
+                )
 
             try:
                 with transaction.atomic():
