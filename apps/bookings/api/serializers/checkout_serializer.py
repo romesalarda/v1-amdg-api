@@ -95,7 +95,6 @@ class ProductSelectionSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'variant_id': f'Variant does not belong to product {package_product.product.title}'
             })
-        print(variant.is_purchasable)
         if not variant.is_purchasable:
             raise serializers.ValidationError({
                 'variant_id': f'Variant {variant_id} is not currently purchasable.'
@@ -790,20 +789,29 @@ class CheckoutSerializer(serializers.Serializer):
 
     def validate_booking_intent_id(self, value):
         """Validate booking intent exists and is active."""
+        request = self.context.get('request')
+        idempotency_key = None
+        if request is not None:
+            idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
+
         try:
             intent = BookingIntent.objects.get(booking_intent_id=value)
         except BookingIntent.DoesNotExist:
             raise serializers.ValidationError(
                 f'BookingIntent with id {value} does not exist.'
             )
+
+        is_idempotent_replay = bool(
+            idempotency_key and intent.last_checkout_idempotency_key == idempotency_key
+        )
         
-        if not intent.is_active:
+        if not intent.is_active and not is_idempotent_replay:
             raise serializers.ValidationError(
                 f'BookingIntent {value} is not active. Status: {intent.get_status_display()}, '
                 f'Expired: {intent.is_expired}'
             )
         
-        if not intent.can_create_booking():
+        if not intent.can_create_booking() and not is_idempotent_replay:
             raise serializers.ValidationError(
                 f'Cannot create booking from intent {value}. Event may be full or closed.'
             )
@@ -854,13 +862,18 @@ class CheckoutSerializer(serializers.Serializer):
         
         request = self.context.get('request')
         user = getattr(request, 'user', None) if request else None
+        idempotency_key = None
+        if request is not None:
+            idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
         
         # Validate using CheckoutValidationService
         intent, method = CheckoutValidationService.validate_checkout_request(
             intent_id,
             method_id,
             attendee_selections,
-            user
+            user,
+            allow_inactive_idempotent_replay=True,
+            idempotency_key=idempotency_key,
         )
         
         # Store validated objects for processing

@@ -8,6 +8,8 @@ Tests the complete checkout flow via API endpoints with all payment methods:
 - FREE: Tests free event checkout
 - Edge cases: Stock issues, expired intents, validation errors
 """
+import json
+
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -1021,7 +1023,7 @@ class CheckoutAPITestCase(TestCase):
         self.assertEqual(Attendee.objects.count(), 0)
 
     def test_checkout_expires_intent(self):
-        """Checkout should be idempotent when Idempotency-Key matches."""
+        """Checkout should return the existing session when Idempotency-Key matches."""
         intent = self.create_booking_intent(ticket_count=1)
 
         payload = {
@@ -1055,9 +1057,147 @@ class CheckoutAPITestCase(TestCase):
             format='json',
             HTTP_IDEMPOTENCY_KEY='checkout-key-1'
         )
-        print(response_two.data)
-        self.assertEqual(response_two.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response_two.status_code, status.HTTP_200_OK)
         self.assertEqual(Booking.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 1)
+
+    def test_checkout_preview_accepts_pending_multipart_upload_marker(self):
+        """Preview should accept upload_file_key placeholders for pending multipart question uploads."""
+        intent = self.create_booking_intent(ticket_count=1)
+        short_question, upload_question = self.create_required_questions()
+
+        response = self.client.post(
+            '/api/bookings/list/checkout-preview/',
+            {
+                'booking_intent_id': str(intent.booking_intent_id),
+                'attendees': [
+                    {
+                        'package_id': self.package.id,
+                        'attendee': {
+                            'first_name': 'Preview',
+                            'last_name': 'Upload',
+                            'date_of_birth': '1990-01-01',
+                            'relationship_to_user': 'self',
+                            'area_from': self.area.id,
+                            'question_answers': [
+                                {
+                                    'question_id': str(short_question.id),
+                                    'answer_text': 'Yes',
+                                },
+                                {
+                                    'question_id': str(upload_question.id),
+                                    'upload_file_key': '__multipart_pending__',
+                                },
+                            ],
+                        },
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['currency'], 'GBP')
+
+    def test_checkout_multipart_creates_question_upload_resource(self):
+        """Multipart checkout should create a resource and persist its URL into the attendee answer."""
+        intent = self.create_booking_intent(ticket_count=1)
+        short_question, upload_question = self.create_required_questions()
+        upload = SimpleUploadedFile('passport.pdf', b'%PDF-1.4 test passport', content_type='application/pdf')
+
+        attendees_payload = [
+            {
+                'package_id': self.package.id,
+                'attendee': {
+                    'first_name': 'Multipart',
+                    'last_name': 'Tester',
+                    'date_of_birth': '1990-01-01',
+                    'relationship_to_user': 'self',
+                    'area_from': self.area.id,
+                    'question_answers': [
+                        {
+                            'question_id': str(short_question.id),
+                            'answer_text': 'Uploaded document attached',
+                        },
+                        {
+                            'question_id': str(upload_question.id),
+                            'upload_file_key': f'question_uploads[0][{upload_question.id}]',
+                        },
+                    ],
+                },
+            }
+        ]
+
+        response = self.client.post(
+            '/api/bookings/list/checkout/',
+            {
+                'booking_intent_id': str(intent.booking_intent_id),
+                'payment_method_id': self.cash_method.id,
+                'attendees': json.dumps(attendees_payload),
+                f'question_uploads[0][{upload_question.id}]': upload,
+            },
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        attendee = Attendee.objects.get(first_name='Multipart', last_name='Tester')
+        upload_answer = EventQuestionAnswer.objects.get(attendee=attendee, question=upload_question)
+        resource = Resource.objects.get(id=Payment.objects.get(payment_reference=response.data['payment_reference']).metadata['checkout_attendees'][0]['attendee_draft']['question_answers'][1]['upload_resource_id'])
+
+        self.assertEqual(resource.tag, 'QUESTION_UPLOAD')
+        self.assertEqual(resource.added_by, self.user)
+        self.assertEqual(str(resource.target_id), str(self.event.id))
+        self.assertEqual(upload_answer.answer_text, resource.resource_url)
+
+    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    def test_checkout_idempotent_stripe_retry_returns_client_secret(self, mock_create_intent, mock_retrieve_intent):
+        """Idempotent Stripe retries should return client_secret so frontend can continue confirmation."""
+        intent = self.create_booking_intent(ticket_count=1)
+        mock_create_intent.return_value = SimpleNamespace(
+            id='pi_retry_123',
+            client_secret='pi_retry_secret_123',
+        )
+        mock_retrieve_intent.return_value = SimpleNamespace(
+            id='pi_retry_123',
+            client_secret='pi_retry_secret_123',
+        )
+
+        payload = {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.stripe_method.id,
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Retry',
+                        'last_name': 'Stripe',
+                        'date_of_birth': '1990-01-01',
+                        'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                    },
+                }
+            ],
+        }
+
+        first_response = self.client.post(
+            '/api/bookings/list/checkout/',
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='stripe-retry-key',
+        )
+        self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(first_response.data['stripe_client_secret'], 'pi_retry_secret_123')
+
+        second_response = self.client.post(
+            '/api/bookings/list/checkout/',
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='stripe-retry-key',
+        )
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.data['stripe_client_secret'], 'pi_retry_secret_123')
+        self.assertEqual(Payment.objects.count(), 1)
 
     @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
     def test_checkout_stripe_confirmed_payment(self, mock_retrieve_intent):

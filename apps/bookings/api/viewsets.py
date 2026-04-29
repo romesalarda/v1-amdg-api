@@ -670,16 +670,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 intent = BookingIntent.objects.select_for_update().get(
                     booking_intent_id=intent.booking_intent_id
                 )
-                
-                # Extend intent expiry during checkout
-                intent.expires_at = timezone.now() + timezone.timedelta(minutes=30)
-                intent.save(update_fields=['expires_at'])
-                
-                # Revalidate intent is still active
-                if not intent.is_active or not intent.can_create_booking():
-                    raise ValidationError({
-                        'booking_intent_id': 'Booking intent is no longer valid for checkout.'
-                    })
 
                 if idempotency_key and intent.last_checkout_idempotency_key == idempotency_key:
                     existing_payment = Payment.objects.filter(
@@ -697,7 +687,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         if (
                             existing_payment.method
                             and existing_payment.method.method_type == PaymentMethodTypeChoices.STRIPE
-                            and not existing_booking
+                            and existing_payment.status != PaymentStatusChoices.COMPLETED
                             and existing_payment.stripe_payment_intent
                         ):
                             try:
@@ -717,6 +707,16 @@ class BookingViewSet(viewsets.ModelViewSet):
                             stripe_client_secret=stripe_client_secret,
                         )
                         return Response(response_data, status=status.HTTP_200_OK)
+                
+                # Extend intent expiry during checkout
+                intent.expires_at = timezone.now() + timezone.timedelta(minutes=30)
+                intent.save(update_fields=['expires_at'])
+                
+                # Revalidate intent is still active
+                if not intent.is_active or not intent.can_create_booking():
+                    raise ValidationError({
+                        'booking_intent_id': 'Booking intent is no longer valid for checkout.'
+                    })
 
                 materialize_multipart_question_uploads(attendee_selections, intent.event, user)
 

@@ -90,7 +90,12 @@ class CheckoutValidationService:
             })
 
     @staticmethod
-    def validate_booking_intent(intent_id, user: Optional[CommunityUser] = None) -> BookingIntent:
+    def validate_booking_intent(
+        intent_id,
+        user: Optional[CommunityUser] = None,
+        allow_inactive_idempotent_replay: bool = False,
+        idempotency_key: Optional[str] = None,
+    ) -> BookingIntent:
         """
         Validate booking intent exists, is active, and eligible for booking.
         
@@ -111,8 +116,14 @@ class CheckoutValidationService:
                 'booking_intent_id': f'BookingIntent with id {intent_id} does not exist.'
             })
         
+        is_idempotent_replay = bool(
+            allow_inactive_idempotent_replay
+            and idempotency_key
+            and intent.last_checkout_idempotency_key == idempotency_key
+        )
+
         # Validate status
-        if not intent.is_active:
+        if not intent.is_active and not is_idempotent_replay:
             raise ValidationError({
                 'booking_intent_id': (
                     f'BookingIntent {intent_id} is not active. '
@@ -121,7 +132,7 @@ class CheckoutValidationService:
             })
         
         # Validate can create booking
-        if not intent.can_create_booking():
+        if not intent.can_create_booking() and not is_idempotent_replay:
             raise ValidationError({
                 'booking_intent_id': (
                     f'Cannot create booking from intent {intent_id}. '
@@ -560,7 +571,9 @@ class CheckoutValidationService:
         intent_id,
         method_id: Optional[int],
         attendee_selections: List[Dict[str, Any]],
-        user: Optional[CommunityUser] = None
+        user: Optional[CommunityUser] = None,
+        allow_inactive_idempotent_replay: bool = False,
+        idempotency_key: Optional[str] = None,
     ) -> Tuple[BookingIntent, Optional[PaymentMethod]]:
         """
         Comprehensive validation of entire checkout request.
@@ -585,7 +598,12 @@ class CheckoutValidationService:
             ValidationError with field-specific errors
         """
         # Validate intent
-        intent = CheckoutValidationService.validate_booking_intent(intent_id, user)
+        intent = CheckoutValidationService.validate_booking_intent(
+            intent_id,
+            user,
+            allow_inactive_idempotent_replay=allow_inactive_idempotent_replay,
+            idempotency_key=idempotency_key,
+        )
         event = intent.event
         
         # Validate payment method only when explicitly provided.
