@@ -215,7 +215,7 @@ class PaymentIntentServiceTestCase(TestCase):
         
         self.assertEqual(payment_intent.id, 'pi_test123')
         self.assertEqual(payment_intent.status, 'succeeded')
-        mock_retrieve.assert_called_once_with('pi_test123')
+        mock_retrieve.assert_called_once_with('pi_test123', stripe_account='acct_test123')
     
     @patch('stripe.PaymentIntent.cancel')
     def test_cancel_payment_intent(self, mock_cancel):
