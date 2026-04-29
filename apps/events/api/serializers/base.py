@@ -96,7 +96,8 @@ class EventSettingsSerializer(serializers.ModelSerializer):
             'product_selling_enabled', 'donation_enabled', 'refunds_enabled',
             'accepting_sponsorships_enabled', 'participants_registration_require_verification',
             'requires_verified_sponsors_for_checkout', 'requires_invite_acceptance_for_checkout',
-            'sponsor_checkout_policy_notes',
+            'sponsor_checkout_policy_notes', 'max_attendees_per_booking', 'max_attendees_per_user',
+    
             'default_timezone', '_links'
         )
         read_only_fields = ('id',)
@@ -317,7 +318,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'can_participants_register', 'number_of_attendees',
             'availability_windows', 'resources', 'landing_images', 'main_landing_image',
             'deleted_at', 'deleted_by', 'is_deleted', 'user_permissions', 'general_price', 'outstanding_tasks',
-            'can_event_be_published', 'registration_open_date', 'registration_close_date',
+            'can_event_be_published', 'registration_open_date', 'registration_close_date', 'uptime',
             '_links'
         )
         read_only_fields = (

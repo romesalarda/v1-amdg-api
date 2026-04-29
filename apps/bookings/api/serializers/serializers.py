@@ -916,6 +916,7 @@ class BookingDetailSerializer(BookingListSerializer):
                 'ticket_id': {'type': 'string', 'format': 'uuid'},
                 'ticket_code': {'type': 'string'},
                 'attendee_name': {'type': 'string'},
+                'attendee_id': {'type': 'string', 'format': 'uuid'},
                 'status': {'type': 'string'},
                 'url': {'type': 'string', 'format': 'uri'},
             }
@@ -932,6 +933,7 @@ class BookingDetailSerializer(BookingListSerializer):
                     'ticket_id': str(ticket.ticket_id),
                     'ticket_code': ticket.ticket_code,
                     'attendee_name': attendee.full_name,
+                    'attendee_id': str(attendee.attendee_id),
                     'status': ticket.status,
                 }
                 if request:
