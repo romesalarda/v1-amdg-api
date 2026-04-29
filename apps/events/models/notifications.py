@@ -123,6 +123,19 @@ class EventNotification(models.Model):
             models.Index(fields=['notification_type', 'priority']),
             models.Index(fields=['created_at']),
         ]
+        constraints = [
+            # Prevent duplicate notifications for the same payment+order combination.
+            # The signal handler may fire more than once (e.g. re-save of a COMPLETED
+            # payment), so this acts as a DB-level safety net alongside get_or_create.
+            models.UniqueConstraint(
+                fields=['notification_type', 'related_payment', 'related_order'],
+                name='unique_notification_per_payment_order',
+                condition=models.Q(
+                    related_payment__isnull=False,
+                    related_order__isnull=False,
+                ),
+            ),
+        ]
         verbose_name = 'Event Notification'
         verbose_name_plural = 'Event Notifications'
     
