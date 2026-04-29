@@ -65,7 +65,7 @@ urlpatterns = [
     ),
     path(
         'stripe/connect-accounts/<str:stripe_account_id>/',
-        StripeConnectedAccountViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}),
+        StripeConnectedAccountViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'}),
         name='stripe-connect-accounts-detail',
     ),
     path(

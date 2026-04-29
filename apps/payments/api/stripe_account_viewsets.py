@@ -21,7 +21,7 @@ class StripeConnectedAccountViewSet(viewsets.ModelViewSet):
 
     permission_classes = [IsAuthenticated, IsStripeAccountOwner]
     lookup_field = 'stripe_account_id'
-    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
         return StripeConnectedAccount.objects.filter(user=self.request.user).order_by('-is_primary', '-created_at')
@@ -59,3 +59,29 @@ class StripeConnectedAccountViewSet(viewsets.ModelViewSet):
         account = StripeConnectService.set_primary(account)
         serializer = StripeConnectedAccountListSerializer(account)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        account = self.get_object()
+
+        # If this is the primary account, check whether other accounts exist.
+        # Prevent deletion without first re-assigning primary to avoid an
+        # ownerless account pool.
+        if account.is_primary:
+            other_active = (
+                StripeConnectedAccount.objects.filter(user=request.user, is_active=True)
+                .exclude(pk=account.pk)
+                .exists()
+            )
+            if other_active:
+                return Response(
+                    {
+                        'detail': (
+                            'Cannot delete the primary account while other active accounts exist. '
+                            'Set a different account as primary first.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        account.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
