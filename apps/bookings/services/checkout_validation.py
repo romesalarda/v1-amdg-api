@@ -51,6 +51,44 @@ class CheckoutValidationService:
     All methods are stateless and can be called independently.
     """
     
+    _ALLOWED_UPLOAD_CONTENT_TYPES = {
+        'application/pdf',
+        'text/csv',
+        'application/csv',
+        'application/vnd.ms-excel',
+    }
+    _ALLOWED_UPLOAD_EXTENSIONS = ('.pdf', '.csv')
+    _MAX_UPLOAD_FILE_SIZE_BYTES = 10 * 1024 * 1024
+
+    @staticmethod
+    def _validate_upload_file(answer: Dict[str, Any]) -> None:
+        upload_file = answer.get('_upload_file')
+        if not upload_file:
+            return
+
+        content_type = str(getattr(upload_file, 'content_type', '') or '').lower()
+        file_name = str(getattr(upload_file, 'name', '') or '').lower()
+        file_size = int(getattr(upload_file, 'size', 0) or 0)
+
+        if file_size <= 0:
+            raise ValidationError({'attendees': 'Uploaded question file is empty.'})
+
+        if file_size > CheckoutValidationService._MAX_UPLOAD_FILE_SIZE_BYTES:
+            raise ValidationError({
+                'attendees': 'Uploaded question file exceeds the maximum allowed size of 10MB.'
+            })
+
+        is_image = content_type.startswith('image/')
+        is_allowed_document = (
+            content_type in CheckoutValidationService._ALLOWED_UPLOAD_CONTENT_TYPES
+            or file_name.endswith(CheckoutValidationService._ALLOWED_UPLOAD_EXTENSIONS)
+        )
+
+        if not is_image and not is_allowed_document:
+            raise ValidationError({
+                'attendees': 'Unsupported question upload file type. Allowed: images, PDF, CSV.'
+            })
+
     @staticmethod
     def validate_booking_intent(intent_id, user: Optional[CommunityUser] = None) -> BookingIntent:
         """
@@ -428,6 +466,7 @@ class CheckoutValidationService:
             upload_resource_id = answer.get('upload_resource_id')
             upload_url = answer.get('upload_url')
             answer_text = answer.get('answer_text')
+            upload_file = answer.get('_upload_file')
             
             # Validate upload resource if provided
             if upload_resource_id:
@@ -444,6 +483,20 @@ class CheckoutValidationService:
                     raise ValidationError({
                         'attendees': 'Upload resource must belong to the same event.'
                     })
+
+            if upload_file and (upload_resource_id or upload_url):
+                raise ValidationError({
+                    'attendees': (
+                        f'Question {question_id} cannot use multipart upload and upload_resource_id/upload_url together.'
+                    )
+                })
+
+            if upload_file and question.question_type != EventQuestionTypeChoices.UPLOAD:
+                raise ValidationError({
+                    'attendees': f'Question {question_id} does not accept file uploads.'
+                })
+
+            CheckoutValidationService._validate_upload_file(answer)
             
             # Validate per question type
             if question.question_type in [
@@ -470,7 +523,7 @@ class CheckoutValidationService:
                 EventQuestionTypeChoices.LONG_ANSWER,
                 EventQuestionTypeChoices.UPLOAD,
             ]:
-                if not answer_text and not upload_resource_id and not upload_url:
+                if not answer_text and not upload_resource_id and not upload_url and not upload_file:
                     raise ValidationError({
                         'attendees': f'Question {question_id} (text) requires answer text.'
                     })
@@ -488,7 +541,7 @@ class CheckoutValidationService:
             if question.required:
                 has_content = bool(
                     answer_text or selected_option_ids or 
-                    upload_resource_id or upload_url
+                    upload_resource_id or upload_url or upload_file
                 )
                 if not has_content:
                     raise ValidationError({

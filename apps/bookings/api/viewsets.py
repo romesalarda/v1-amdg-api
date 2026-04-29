@@ -22,12 +22,14 @@ from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.core.serializers.json import DjangoJSONEncoder
+from django.contrib.contenttypes.models import ContentType
 # Import models
 from django.db import transaction
 from apps.products.models import Order
@@ -42,6 +44,7 @@ from apps.attendee.models.personal.accessibility import AttendeeAccessibilityReq
 from apps.attendee.models.personal.emergency import EmergencyContact
 from apps.attendee.models.personal.consent import AttendeeConsent, Consent
 from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
+from apps.common.models import Resource, ResourceTypeChoices
 from apps.bookings.models.ticket import Ticket
 from drf_spectacular.utils import (
     extend_schema,
@@ -418,7 +421,12 @@ class BookingViewSet(viewsets.ModelViewSet):
         },
         operation_id="bookings_checkout",
     )
-    @action(detail=False, methods=['post'], url_path='checkout')
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='checkout',
+        parser_classes=[JSONParser, FormParser, MultiPartParser]
+    )
     def checkout(self, request):
         """
         Complete booking checkout with payment.
@@ -457,16 +465,69 @@ class BookingViewSet(viewsets.ModelViewSet):
                         'quantity': int(prod_selection['quantity']),
                     })
 
+                question_answers = []
+                for answer in draft.get('question_answers', []) or []:
+                    answer_row = {
+                        'question_id': str(answer.get('question_id')) if answer.get('question_id') else None,
+                        'answer_text': answer.get('answer_text'),
+                        'selected_option_ids': answer.get('selected_option_ids') or [],
+                        'upload_resource_id': answer.get('upload_resource_id'),
+                        'upload_url': answer.get('upload_url'),
+                    }
+                    # Keep metadata payload JSON-safe and avoid persisting multipart mapping internals.
+                    question_answers.append(answer_row)
+
+                draft_payload = {
+                    **draft,
+                    'question_answers': question_answers,
+                }
+
                 serialized.append({
                     'attendee_id': str(attendee.attendee_id) if attendee else None,
                     'attendee_draft': (
-                        json.loads(json.dumps(draft, cls=DjangoJSONEncoder))
+                        json.loads(json.dumps(draft_payload, cls=DjangoJSONEncoder))
                         if not attendee else None
                     ),
                     'package_id': package.id,
                     'product_selections': product_rows,
                 })
             return serialized
+
+        def materialize_multipart_question_uploads(selections, event, actor):
+            content_type = ContentType.objects.get_for_model(event.__class__)
+
+            for selection in selections:
+                draft = selection.get('_attendee_draft') or {}
+                answers = draft.get('question_answers', []) or []
+                for answer in answers:
+                    upload_file = answer.pop('_upload_file', None)
+                    answer.pop('upload_file_key', None)
+                    if not upload_file:
+                        continue
+
+                    content_type_value = str(getattr(upload_file, 'content_type', '') or '').lower()
+                    is_image = content_type_value.startswith('image/')
+
+                    resource_kwargs = {
+                        'name': getattr(upload_file, 'name', 'question-upload'),
+                        'resource_type': ResourceTypeChoices.IMAGE if is_image else ResourceTypeChoices.DOCUMENT,
+                        'target_type': content_type,
+                        'target_id': event.id,
+                        'added_by': actor,
+                        'public': False,
+                        'tag': 'QUESTION_UPLOAD',
+                    }
+
+                    if is_image:
+                        resource_kwargs['image'] = upload_file
+                    else:
+                        resource_kwargs['file'] = upload_file
+
+                    resource = Resource.objects.create(**resource_kwargs)
+                    answer['upload_resource_id'] = resource.id
+                    answer['upload_url'] = resource.resource_url
+                    if not answer.get('answer_text'):
+                        answer['answer_text'] = resource.resource_url or ''
 
         def calculate_total_and_validate(intent_obj, selections):
             total_amount = Money(0, 'GBP')
@@ -629,13 +690,35 @@ class BookingViewSet(viewsets.ModelViewSet):
                     ).order_by('-id').first()
                     if existing_payment:
                         existing_booking = existing_payment.target if isinstance(existing_payment.target, Booking) else None
+                        stripe_client_secret = None
+
+                        # For Stripe pending payments, re-hydrate client secret so frontend
+                        # can continue confirmation on idempotent retries.
+                        if (
+                            existing_payment.method
+                            and existing_payment.method.method_type == PaymentMethodTypeChoices.STRIPE
+                            and not existing_booking
+                            and existing_payment.stripe_payment_intent
+                        ):
+                            try:
+                                existing_payment_intent = PaymentIntentService.retrieve(
+                                    existing_payment.stripe_payment_intent,
+                                    stripe_account_id=existing_payment.method.get_stripe_account_id(),
+                                )
+                                stripe_client_secret = getattr(existing_payment_intent, 'client_secret', None)
+                            except Exception:
+                                stripe_client_secret = None
+
                         response_data = build_response(
                             existing_payment,
                             'confirmed' if existing_booking else 'pending_payment',
                             'Returning previously initiated checkout session.',
                             booking=existing_booking,
+                            stripe_client_secret=stripe_client_secret,
                         )
                         return Response(response_data, status=status.HTTP_200_OK)
+
+                materialize_multipart_question_uploads(attendee_selections, intent.event, user)
 
                 total_amount = calculate_total_and_validate(intent, attendee_selections)
 

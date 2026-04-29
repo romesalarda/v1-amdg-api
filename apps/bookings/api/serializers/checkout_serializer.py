@@ -17,6 +17,9 @@ Serializers:
     - CheckoutSerializer: Main checkout request
     - CheckoutPreviewSerializer: Preview without payment
 """
+import json
+import re
+
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
@@ -337,19 +340,36 @@ class EventQuestionAnswerDraftSerializer(serializers.Serializer):
         required=False,
         help_text="URL of uploaded file (alternative to upload_resource_id)"
     )
+    upload_file_key = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=(
+            "Multipart-only file field key mapped to this answer. "
+            "Example: question_uploads[0][<question_uuid>]"
+        )
+    )
 
     def validate(self, attrs):
         answer_text = attrs.get('answer_text')
         selected_option_ids = attrs.get('selected_option_ids', [])
         upload_resource_id = attrs.get('upload_resource_id')
         upload_url = attrs.get('upload_url')
+        upload_file_key = (attrs.get('upload_file_key') or '').strip()
+
+        if upload_file_key:
+            attrs['upload_file_key'] = upload_file_key
 
         if upload_resource_id and upload_url:
             raise serializers.ValidationError(
                 'Provide only one of upload_resource_id or upload_url.'
             )
 
-        if not answer_text and not selected_option_ids and not upload_resource_id and not upload_url:
+        if upload_file_key and (upload_resource_id or upload_url):
+            raise serializers.ValidationError(
+                'Provide upload_file_key OR upload_resource_id/upload_url, not both.'
+            )
+
+        if not answer_text and not selected_option_ids and not upload_resource_id and not upload_url and not upload_file_key:
             raise serializers.ValidationError(
                 'An answer, selected options, or upload reference is required.'
             )
@@ -672,6 +692,101 @@ class CheckoutSerializer(serializers.Serializer):
         many=True,
         help_text="List of attendee selections with packages and products"
     )
+
+    _MULTIPART_UPLOAD_KEY_PATTERN = re.compile(
+        r'^question_uploads\[(?P<attendee_index>\d+)\]\[(?P<question_id>[0-9a-fA-F-]{36})\]$'
+    )
+
+    def _is_multipart_request(self) -> bool:
+        request = self.context.get('request')
+        content_type = str(getattr(request, 'content_type', '') or '')
+        return content_type.startswith('multipart/form-data')
+
+    def _normalize_input_data(self, data):
+        if not self._is_multipart_request():
+            return data
+
+        # Normalize multipart QueryDict into a plain dict so DRF treats nested
+        # values as regular JSON-like structures instead of HTML form lists.
+        if hasattr(data, 'keys') and hasattr(data, 'getlist'):
+            mutable_data = {}
+            for key in data.keys():
+                values = data.getlist(key)
+                mutable_data[key] = values if len(values) > 1 else (values[0] if values else None)
+        else:
+            mutable_data = dict(data)
+
+        attendees_raw = mutable_data.get('attendees')
+        if isinstance(attendees_raw, list) and len(attendees_raw) == 1 and isinstance(attendees_raw[0], str):
+            attendees_raw = attendees_raw[0]
+
+        if isinstance(attendees_raw, str):
+            try:
+                mutable_data['attendees'] = json.loads(attendees_raw)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError({
+                    'attendees': 'When using multipart checkout, attendees must be a valid JSON array string.'
+                })
+
+        return mutable_data
+
+    def _bind_multipart_question_uploads(self, attrs):
+        if not self._is_multipart_request():
+            return
+
+        request = self.context.get('request')
+        if not request:
+            return
+
+        attendees = attrs.get('attendees') or []
+        for attendee_index, selection in enumerate(attendees):
+            draft = selection.get('_attendee_draft')
+            if not draft:
+                continue
+
+            for answer in draft.get('question_answers', []) or []:
+                upload_file_key = (answer.get('upload_file_key') or '').strip()
+                if not upload_file_key:
+                    continue
+
+                match = self._MULTIPART_UPLOAD_KEY_PATTERN.match(upload_file_key)
+                if not match:
+                    raise serializers.ValidationError({
+                        'attendees': (
+                            f'Invalid upload_file_key format "{upload_file_key}". '
+                            'Expected: question_uploads[attendee_index][question_uuid].'
+                        )
+                    })
+
+                key_attendee_index = int(match.group('attendee_index'))
+                key_question_id = match.group('question_id')
+                if key_attendee_index != attendee_index:
+                    raise serializers.ValidationError({
+                        'attendees': (
+                            f'upload_file_key attendee index mismatch for key "{upload_file_key}".'
+                        )
+                    })
+
+                if str(answer.get('question_id')) != key_question_id:
+                    raise serializers.ValidationError({
+                        'attendees': (
+                            f'upload_file_key question mismatch for key "{upload_file_key}".'
+                        )
+                    })
+
+                upload_file = request.FILES.get(upload_file_key)
+                if not upload_file:
+                    raise serializers.ValidationError({
+                        'attendees': f'Multipart file not found for key "{upload_file_key}".'
+                    })
+
+                answer['_upload_file'] = upload_file
+
+    def to_internal_value(self, data):
+        normalized_data = self._normalize_input_data(data)
+        attrs = super().to_internal_value(normalized_data)
+        self._bind_multipart_question_uploads(attrs)
+        return attrs
 
     def validate_booking_intent_id(self, value):
         """Validate booking intent exists and is active."""
