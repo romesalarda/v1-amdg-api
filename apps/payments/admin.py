@@ -6,7 +6,7 @@ from apps.payments.models import (
     Payment, PaymentMethod, Discount, DiscountRule,
     RefundRequest, RefundAssociation, RefundPolicy,
     Donation, PaymentHistoryAction,
-    CreditExpense, BankTransferEvidence
+    CreditExpense, BankTransferEvidence, StripeConnectedAccount
 )
 
 
@@ -165,11 +165,11 @@ class PaymentMethodAdmin(admin.ModelAdmin):
     
     list_display = (
         'title', 'code', 'method_type', 'is_active', 'event',
-        'bank_transfer_required_immediately', 'created_at', 'get_payment_count'
+        'bank_transfer_required_immediately', 'get_stripe_account_id', 'created_at', 'get_payment_count'
     )
     list_filter = ('method_type', 'is_active', 'bank_transfer_required_immediately', 'event', 'created_at')
     search_fields = ('title', 'code', 'description', 'event__name')
-    readonly_fields = ('method_id', 'code', 'created_at', 'updated_at')
+    readonly_fields = ('method_id', 'code', 'created_at', 'updated_at', 'get_stripe_account_id')
     date_hierarchy = 'created_at'
     
     fieldsets = (
@@ -183,6 +183,10 @@ class PaymentMethodAdmin(admin.ModelAdmin):
         ('Configuration', {
             'fields': ('provided_details',),
             'description': 'JSON configuration for payment method (bank details, Stripe config, etc.)'
+        }),
+        ('Stripe Connect', {
+            'fields': ('get_stripe_account_id',),
+            'description': 'Connected Stripe account used when this method is charged.'
         }),
         ('Metadata', {
             'fields': ('created_by', 'created_at', 'updated_at'),
@@ -204,6 +208,11 @@ class PaymentMethodAdmin(admin.ModelAdmin):
             )
         return '0 payments'
     get_payment_count.short_description = 'Payments'
+
+    def get_stripe_account_id(self, obj):
+        account_id = obj.get_stripe_account_id()
+        return account_id or 'Not linked'
+    get_stripe_account_id.short_description = 'Stripe Account'
     
     def activate_methods(self, request, queryset):
         """Bulk action to activate payment methods."""
@@ -224,7 +233,7 @@ class PaymentAdmin(admin.ModelAdmin):
     
     list_display = (
         'payment_reference', 'get_target', 'get_payment_amount',
-        'status', 'method', 'get_bank_transfer_evidence_status', 'user', 'event', 'created_at'
+        'status', 'method', 'get_stripe_account_id', 'get_bank_transfer_evidence_status', 'user', 'event', 'created_at'
     )
     list_filter = (
         'status',
@@ -241,7 +250,7 @@ class PaymentAdmin(admin.ModelAdmin):
     readonly_fields = (
         'payment_id', 'payment_reference',
         'created_at', 'updated_at', 'modified_amount',
-        'target', 'get_refund_summary', 'get_donation_summary', 'get_bank_transfer_evidence_status'
+        'target', 'get_refund_summary', 'get_donation_summary', 'get_bank_transfer_evidence_status', 'get_stripe_account_id'
     )
     date_hierarchy = 'created_at'
     inlines = [PaymentHistoryActionInline]
@@ -261,6 +270,7 @@ class PaymentAdmin(admin.ModelAdmin):
             'fields': (
                 'method',
                 'bank_transfer_required_immediately',
+                'get_stripe_account_id',
                 'stripe_payment_intent',
                 'stripe_charge_id',
                 'bank_transfer_reference',
@@ -304,6 +314,12 @@ class PaymentAdmin(admin.ModelAdmin):
             )
         return format_html('<strong>{}</strong>', amount)
     get_payment_amount.short_description = 'Amount'
+
+    def get_stripe_account_id(self, obj):
+        if obj.method and hasattr(obj.method, 'get_stripe_account_id'):
+            return obj.method.get_stripe_account_id() or 'Not linked'
+        return 'Not linked'
+    get_stripe_account_id.short_description = 'Stripe Account'
     
     def get_refund_summary(self, obj):
         """Display refund requests summary."""
@@ -401,6 +417,41 @@ class PaymentAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related(
             'user', 'event', 'method', 'target_type'
         ).prefetch_related('refund_requests', 'donations', 'history_actions')
+
+
+@admin.register(StripeConnectedAccount)
+class StripeConnectedAccountAdmin(admin.ModelAdmin):
+    """Admin for connected Stripe accounts."""
+
+    list_display = (
+        'user', 'stripe_account_id', 'status', 'charges_enabled', 'payouts_enabled',
+        'details_submitted', 'disabled_reason', 'country', 'synced_at'
+    )
+    list_filter = ('charges_enabled', 'payouts_enabled', 'details_submitted', 'country', 'created_at')
+    search_fields = ('user__username', 'user__email', 'stripe_account_id', 'email')
+    readonly_fields = (
+        'connected_account_id', 'user', 'stripe_account_id', 'account_type', 'country', 'email',
+        'business_type', 'charges_enabled', 'payouts_enabled', 'details_submitted', 'disabled_reason',
+        'capabilities', 'requirements', 'metadata', 'synced_at', 'created_at', 'updated_at', 'status',
+        'is_ready_for_payments',
+    )
+
+    fieldsets = (
+        ('Connected Account', {
+            'fields': ('connected_account_id', 'user', 'stripe_account_id', 'account_type', 'country', 'email', 'business_type')
+        }),
+        ('Status', {
+            'fields': ('status', 'is_ready_for_payments', 'charges_enabled', 'payouts_enabled', 'details_submitted', 'disabled_reason')
+        }),
+        ('Stripe Payload', {
+            'fields': ('capabilities', 'requirements', 'metadata'),
+            'classes': ('collapse',)
+        }),
+        ('Audit', {
+            'fields': ('synced_at', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
 
 
 @admin.register(RefundRequest)

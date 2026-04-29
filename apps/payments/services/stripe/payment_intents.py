@@ -92,7 +92,12 @@ class PaymentIntentService:
         request_options = {}
         if stripe_account_id:
             request_options['stripe_account'] = stripe_account_id
-        
+        else:
+            raise StripeValidationError(
+                message="Stripe account ID is required for PaymentIntent creation.",
+                user_message="Payment processing error. Please try again."
+            )
+                
         try:
             # Use payment_reference as idempotency key to prevent duplicate charges
             payment_intent = stripe.PaymentIntent.create(
@@ -133,11 +138,22 @@ class PaymentIntentService:
             StripePaymentError: If retrieval fails
         """
         StripeClient.initialize()
+
+        if not payment_intent_id:
+            raise StripeValidationError(
+                message="PaymentIntent ID is required for retrieval.",
+                user_message="Payment retrieval error. Please try again."
+            )
         
         try:
             kwargs = {}
             if stripe_account_id:
                 kwargs['stripe_account'] = stripe_account_id
+            else:
+                raise StripeValidationError(
+                    message="Stripe account ID is required for PaymentIntent retrieval.",
+                    user_message="Payment retrieval error. Please try again."
+                )
 
             payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id, **kwargs)
             return payment_intent
@@ -169,25 +185,28 @@ class PaymentIntentService:
             StripePaymentError: If confirmation fails
         """
         StripeClient.initialize()
-        
+        if not stripe_account_id:
+            raise StripeValidationError(
+                message="Stripe account ID is required for PaymentIntent confirmation.",
+                user_message="Payment processing error. Please try again."
+            )
+
         try:
             params = {}
             if payment_method:
                 params['payment_method'] = payment_method
 
-            request_options = {}
-            if stripe_account_id:
-                request_options['stripe_account'] = stripe_account_id
-            
+            request_options = {'stripe_account': stripe_account_id}
+
             payment_intent = stripe.PaymentIntent.confirm(
                 payment_intent_id,
                 **params,
                 **request_options,
             )
-            
+
             logger.info(f"Confirmed PaymentIntent {payment_intent_id}")
             return payment_intent
-            
+
         except stripe.StripeError as e:
             logger.error(f"Failed to confirm PaymentIntent {payment_intent_id}: {str(e)}")
             raise map_stripe_error(e)
@@ -215,25 +234,28 @@ class PaymentIntentService:
             StripePaymentError: If cancellation fails
         """
         StripeClient.initialize()
-        
+        if not stripe_account_id:
+            raise StripeValidationError(
+                message="Stripe account ID is required for PaymentIntent cancellation.",
+                user_message="Payment processing error. Please try again."
+            )
+
         try:
             params = {}
             if cancellation_reason:
                 params['cancellation_reason'] = cancellation_reason[:500]
 
-            request_options = {}
-            if stripe_account_id:
-                request_options['stripe_account'] = stripe_account_id
-            
+            request_options = {'stripe_account': stripe_account_id}
+
             payment_intent = stripe.PaymentIntent.cancel(
                 payment_intent_id,
                 **params,
                 **request_options,
             )
-            
+
             logger.info(f"Cancelled PaymentIntent {payment_intent_id}")
             return payment_intent
-            
+
         except stripe.StripeError as e:
             logger.error(f"Failed to cancel PaymentIntent {payment_intent_id}: {str(e)}")
             raise map_stripe_error(e)

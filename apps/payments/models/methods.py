@@ -63,14 +63,9 @@ class PaymentMethod(models.Model):
     def get_stripe_account_id(self) -> Optional[str]:
         """
         Return the connected Stripe account ID configured for this payment method.
-
-        Payment methods can either use the platform Stripe account or a connected
-        account stored in provided_details.
+        Stripe payment methods now require a connected account stored in provided_details.
         """
         details = self.provided_details or {}
-        if details.get('use_platform_account'):
-            return None
-
         stripe_account_id = details.get('stripe_account_id')
         if stripe_account_id:
             return str(stripe_account_id)
