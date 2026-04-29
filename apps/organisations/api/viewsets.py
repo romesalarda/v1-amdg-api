@@ -998,6 +998,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
                         customer_email=payment.user.email,
                         customer_id=payment.stripe_customer_id,
                         description=f"Sponsorship payment for {event.title}",
+                        stripe_account_id=payment_method.get_stripe_account_id(),
                     )
                     payment.stripe_payment_intent = payment_intent.id
                     payment.save(update_fields=['stripe_payment_intent', 'updated_at'])

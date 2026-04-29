@@ -34,7 +34,8 @@ class RefundService:
         amount: Optional[Money] = None,
         reason: str = REASON_REQUESTED_BY_CUSTOMER,
         metadata: Optional[Dict] = None,
-        refund_reference: Optional[str] = None
+        refund_reference: Optional[str] = None,
+        stripe_account_id: Optional[str] = None,
     ) -> stripe.Refund:
         """
         Create a Stripe Refund.
@@ -79,12 +80,17 @@ class RefundService:
                 logger.warning(f"Metadata has {len(metadata)} keys. Stripe limit is 50. Truncating.")
                 metadata = dict(list(metadata.items())[:50])
             params['metadata'] = metadata
+
+        request_options = {}
+        if stripe_account_id:
+            request_options['stripe_account'] = stripe_account_id
         
         try:
             # Use refund_reference as idempotency key if provided
             kwargs = {}
             if refund_reference:
                 kwargs['idempotency_key'] = refund_reference
+            kwargs.update(request_options)
             
             refund = stripe.Refund.create(**params, **kwargs)
             
@@ -118,7 +124,7 @@ class RefundService:
             )
     
     @staticmethod
-    def retrieve(refund_id: str) -> stripe.Refund:
+    def retrieve(refund_id: str, stripe_account_id: Optional[str] = None) -> stripe.Refund:
         """
         Retrieve a Refund by ID.
         
@@ -134,7 +140,11 @@ class RefundService:
         StripeClient.initialize()
         
         try:
-            refund = stripe.Refund.retrieve(refund_id)
+            kwargs = {}
+            if stripe_account_id:
+                kwargs['stripe_account'] = stripe_account_id
+
+            refund = stripe.Refund.retrieve(refund_id, **kwargs)
             return refund
             
         except stripe.StripeError as e:
@@ -144,7 +154,8 @@ class RefundService:
     @staticmethod
     def list_for_payment_intent(
         payment_intent_id: str,
-        limit: int = 100
+        limit: int = 100,
+        stripe_account_id: Optional[str] = None,
     ) -> stripe.ListObject:
         """
         List all refunds for a PaymentIntent.
@@ -162,9 +173,14 @@ class RefundService:
         StripeClient.initialize()
         
         try:
+            kwargs = {}
+            if stripe_account_id:
+                kwargs['stripe_account'] = stripe_account_id
+
             refunds = stripe.Refund.list(
                 payment_intent=payment_intent_id,
-                limit=limit
+                limit=limit,
+                **kwargs,
             )
             
             return refunds
@@ -174,7 +190,7 @@ class RefundService:
             raise map_stripe_error(e)
     
     @staticmethod
-    def cancel(refund_id: str) -> stripe.Refund:
+    def cancel(refund_id: str, stripe_account_id: Optional[str] = None) -> stripe.Refund:
         """
         Cancel a pending Refund.
         
@@ -193,7 +209,11 @@ class RefundService:
         StripeClient.initialize()
         
         try:
-            refund = stripe.Refund.cancel(refund_id)
+            kwargs = {}
+            if stripe_account_id:
+                kwargs['stripe_account'] = stripe_account_id
+
+            refund = stripe.Refund.cancel(refund_id, **kwargs)
             
             logger.info(f"Cancelled Refund {refund_id}")
             return refund

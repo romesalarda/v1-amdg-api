@@ -5,6 +5,7 @@ from .refunds import RefundRequest, RefundAssociation, RefundPolicy, RefundPolic
 from .donations import Donation
 from .bank import BankTransferEvidence
 from .credit import CreditExpense, CreditExpenseTypeChoices
+from .stripe_accounts import StripeConnectedAccount, StripeConnectedAccountStatusChoices
 
 __all__ = [
     'DiscountType',
@@ -25,4 +26,6 @@ __all__ = [
     'BankTransferEvidence',
     'CreditExpense',
     'CreditExpenseTypeChoices',
+    'StripeConnectedAccount',
+    'StripeConnectedAccountStatusChoices',
 ]

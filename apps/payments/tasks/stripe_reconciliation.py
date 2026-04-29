@@ -62,7 +62,14 @@ def reconcile_stripe_payment(self, payment_id: str):
             
             # Retrieve current status from Stripe
             try:
-                payment_intent = PaymentIntentService.retrieve(payment.stripe_payment_intent)
+                stripe_account_id = None
+                if payment.method and hasattr(payment.method, 'get_stripe_account_id'):
+                    stripe_account_id = payment.method.get_stripe_account_id()
+
+                payment_intent = PaymentIntentService.retrieve(
+                    payment.stripe_payment_intent,
+                    stripe_account_id=stripe_account_id,
+                )
             except StripeServiceError as e:
                 logger.error(f"Failed to retrieve PaymentIntent {payment.stripe_payment_intent}: {e.message}")
                 # Retry with exponential backoff

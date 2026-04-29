@@ -16,25 +16,67 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
+from django.urls import reverse
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample
 import logging
 
-from apps.payments.models import Payment, PaymentStatusChoices
+from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 from apps.payments.api.stripe_serializers import (
     CreatePaymentIntentSerializer,
     PaymentIntentResponseSerializer,
     ConfirmPaymentIntentSerializer,
     ConfirmPaymentIntentResponseSerializer,
     StripeConfigResponseSerializer,
+    StripeConnectAccountSerializer,
     ErrorResponseSerializer,
     WebhookResponseSerializer,
 )
 from apps.payments.services.stripe.client import StripeClient
+from apps.payments.services.stripe.connect import StripeConnectService
 from apps.payments.services.stripe.payment_intents import PaymentIntentService
 from apps.payments.services.stripe.webhooks import verify_webhook_signature, process_webhook_event
 from apps.payments.services.stripe.exceptions import StripeServiceError, StripeWebhookError
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_connect_account(account, onboarding_url=None):
+    if not account:
+        return {
+            'connected_account_id': None,
+            'stripe_account_id': None,
+            'status': 'NOT_CREATED',
+            'charges_enabled': False,
+            'payouts_enabled': False,
+            'details_submitted': False,
+            'disabled_reason': '',
+            'country': '',
+            'email': '',
+            'business_type': '',
+            'onboarding_url': onboarding_url,
+            'requires_onboarding': True,
+            'created_at': None,
+            'updated_at': None,
+            'synced_at': None,
+        }
+
+    return {
+        'connected_account_id': account.connected_account_id,
+        'stripe_account_id': account.stripe_account_id,
+        'status': account.status,
+        'charges_enabled': account.charges_enabled,
+        'payouts_enabled': account.payouts_enabled,
+        'details_submitted': account.details_submitted,
+        'disabled_reason': account.disabled_reason,
+        'country': account.country,
+        'email': account.email,
+        'business_type': account.business_type,
+        'onboarding_url': onboarding_url,
+        'requires_onboarding': not account.is_ready_for_payments,
+        'created_at': account.created_at,
+        'updated_at': account.updated_at,
+        'synced_at': account.synced_at,
+    }
 
 
 class StripeConfigView(APIView):
@@ -63,6 +105,72 @@ class StripeConfigView(APIView):
         }
         serializer = StripeConfigResponseSerializer(data)
         return Response(serializer.data)
+
+
+class StripeConnectStatusView(APIView):
+    """Return the current user's Stripe Connect account state."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id='get_stripe_connect_status',
+        summary='Get Stripe Connect status',
+        description='Returns the authenticated user\'s Stripe Connect account state and readiness.',
+        tags=['Stripe Connect'],
+        responses={200: StripeConnectAccountSerializer},
+    )
+    def get(self, request):
+        try:
+            account = StripeConnectService.refresh_user_account(request.user)
+            serializer = StripeConnectAccountSerializer(_serialize_connect_account(account))
+            return Response(serializer.data)
+        except StripeServiceError as e:
+            return Response(
+                {'error': e.user_message, 'details': e.to_dict()},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class StripeConnectOnboardingView(APIView):
+    """Create or refresh a Stripe Connect onboarding link."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = StripeConnectAccountSerializer
+
+    @extend_schema(
+        operation_id='create_stripe_connect_onboarding_link',
+        summary='Create Stripe Connect onboarding link',
+        description=(
+            'Creates a Stripe Connect account if needed and returns a fresh onboarding link. '
+            'Use this to send users into Stripe-hosted onboarding.'
+        ),
+        tags=['Stripe Connect'],
+        request=None,
+        responses={200: StripeConnectAccountSerializer},
+    )
+    def post(self, request):
+        try:
+            country = request.data.get('country') if hasattr(request.data, 'get') else None
+            account_record, stripe_account = StripeConnectService.create_or_refresh_account(request.user, country=country)
+
+            refresh_url = request.build_absolute_uri(reverse('payments:stripe-connect-onboard'))
+            return_url = request.build_absolute_uri(reverse('payments:stripe-connect-status'))
+            onboarding_link = StripeConnectService.create_account_link(
+                account_record.stripe_account_id,
+                refresh_url=refresh_url,
+                return_url=return_url,
+            )
+
+            account_record = StripeConnectService.sync_from_stripe(account_record, stripe_account)
+            serializer = StripeConnectAccountSerializer(
+                _serialize_connect_account(account_record, onboarding_url=onboarding_link.url)
+            )
+            return Response(serializer.data)
+        except StripeServiceError as e:
+            return Response(
+                {'error': e.user_message, 'details': e.to_dict()},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 class CreatePaymentIntentView(APIView):
@@ -134,6 +242,17 @@ class CreatePaymentIntentView(APIView):
         
         # Prepare metadata matching Stripe format
         metadata = payment.prepare_stripe_metadata()
+
+        payment_method_stripe_account_id = None
+        if payment.method and hasattr(payment.method, 'get_stripe_account_id'):
+            payment_method_stripe_account_id = payment.method.get_stripe_account_id()
+
+        if payment.method and payment.method.method_type == PaymentMethodTypeChoices.STRIPE:
+            provided_details = payment.method.provided_details or {}
+            if not payment_method_stripe_account_id and not provided_details.get('use_platform_account'):
+                raise ValidationError({
+                    'payment_method_id': 'This Stripe payment method is not linked to a connected account.'
+                })
         
         # Create PaymentIntent
         try:
@@ -144,7 +263,8 @@ class CreatePaymentIntentView(APIView):
                 metadata=metadata,
                 customer_email=payment.user.email,
                 customer_id=payment.stripe_customer_id,
-                description=f"Payment for {payment.event.title}"
+                description=f"Payment for {payment.event.title}",
+                stripe_account_id=payment_method_stripe_account_id,
             )
             
             # Store PaymentIntent ID
@@ -254,6 +374,10 @@ class StripeConfirmPaymentView(APIView):
                 stripe_payment_intent=payment_intent_id,
                 user=request.user
             ).first()
+
+            payment_stripe_account_id = None
+            if payment and payment.method and hasattr(payment.method, 'get_stripe_account_id'):
+                payment_stripe_account_id = payment.method.get_stripe_account_id()
             
             if not payment:
                 return Response(
@@ -264,7 +388,8 @@ class StripeConfirmPaymentView(APIView):
             # Confirm payment intent
             payment_intent = PaymentIntentService.confirm(
                 payment_intent_id=payment_intent_id,
-                payment_method=payment_method
+                payment_method=payment_method,
+                stripe_account_id=payment_stripe_account_id,
             )
             
             return Response({

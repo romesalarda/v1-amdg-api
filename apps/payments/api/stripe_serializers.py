@@ -4,7 +4,13 @@ Serializers for Stripe API views.
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 
-from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices
+from apps.payments.models import (
+    Payment,
+    PaymentMethod,
+    PaymentMethodTypeChoices,
+    StripeConnectedAccount,
+    StripeConnectedAccountStatusChoices,
+)
 
 
 class StripeConfigResponseSerializer(serializers.Serializer):
@@ -16,6 +22,26 @@ class StripeConfigResponseSerializer(serializers.Serializer):
     test_mode = serializers.BooleanField(
         help_text="Whether Stripe is in test mode"
     )
+
+
+class StripeConnectAccountSerializer(serializers.Serializer):
+    """Response serializer for Stripe Connect account status."""
+
+    connected_account_id = serializers.UUIDField(required=False, allow_null=True)
+    stripe_account_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    status = serializers.ChoiceField(choices=StripeConnectedAccountStatusChoices.choices)
+    charges_enabled = serializers.BooleanField()
+    payouts_enabled = serializers.BooleanField()
+    details_submitted = serializers.BooleanField()
+    disabled_reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    country = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
+    business_type = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    onboarding_url = serializers.URLField(required=False, allow_null=True, allow_blank=True)
+    requires_onboarding = serializers.BooleanField()
+    created_at = serializers.DateTimeField(required=False, allow_null=True)
+    updated_at = serializers.DateTimeField(required=False, allow_null=True)
+    synced_at = serializers.DateTimeField(required=False, allow_null=True)
 
 
 class CreatePaymentIntentSerializer(serializers.Serializer):

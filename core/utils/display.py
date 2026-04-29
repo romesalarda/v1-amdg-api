@@ -1,12 +1,12 @@
 import uuid
 
-def generate_human_readable_id(max_length, prefix, *args):
+def generate_human_readable_id(max_length, prefix, *args, separator='-'):
     """
     Generates a unique identifier with the given prefix and maximum length.
     Ensures the total length does not exceed max_length.
     """
     # prefix, *args separated by hyphens then a unique part to fill max_length
-    base = '-'.join([prefix] + [str(arg) for arg in args if arg])
+    base = separator.join([prefix] + [str(arg) for arg in args if arg])
     if len(base) >= max_length:
         raise ValueError("Base length exceeds maximum length.")
     

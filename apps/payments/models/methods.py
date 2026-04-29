@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from typing import Optional
 
 import uuid
 
@@ -58,6 +59,18 @@ class PaymentMethod(models.Model):
     
     def __repr__(self):
         return f"<PaymentMethod id={self.method_id} code={self.code} type={self.method_type}>"
+
+    def get_stripe_account_id(self) -> Optional[str]:
+        """
+        Return the connected Stripe account ID configured for this payment method.
+        Stripe payment methods now require a connected account stored in provided_details.
+        """
+        details = self.provided_details or {}
+        stripe_account_id = details.get('stripe_account_id')
+        if stripe_account_id:
+            return str(stripe_account_id)
+
+        return None
     
     class Meta:
         ordering = ['-created_at']

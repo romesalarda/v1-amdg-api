@@ -25,6 +25,8 @@ from apps.payments.api.viewsets import (
 from apps.payments.api.statistics_viewsets import PaymentStatisticsViewSet
 from apps.payments.api.stripe_views import (
     StripeConfigView,
+    StripeConnectStatusView,
+    StripeConnectOnboardingView,
     CreatePaymentIntentView,
     StripeConfirmPaymentView,
     stripe_webhook_view,
@@ -56,6 +58,8 @@ urlpatterns = [
     
     # Stripe endpoints (outside router for custom URLs)
     path('stripe/config/', StripeConfigView.as_view(), name='stripe-config'),
+    path('stripe/connect/', StripeConnectStatusView.as_view(), name='stripe-connect-status'),
+    path('stripe/connect/onboard/', StripeConnectOnboardingView.as_view(), name='stripe-connect-onboard'),
     path('stripe/payment-intent/', CreatePaymentIntentView.as_view(), name='stripe-create-payment-intent'),
     path('stripe/confirm/', StripeConfirmPaymentView.as_view(), name='stripe-confirm-payment'),
     path('stripe/webhook/', stripe_webhook_view, name='stripe-webhook'),

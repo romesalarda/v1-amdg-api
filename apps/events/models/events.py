@@ -374,6 +374,10 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
 
         self.status = new_status
         self.save()
+
+    def is_staff(self, user):
+
+        return self.staff_members.filter(user=user).exists()
         
     
     @property

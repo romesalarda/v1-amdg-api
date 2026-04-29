@@ -1834,18 +1834,25 @@ class DonationViewSet(viewsets.ModelViewSet):
             if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
                 try:
                     stripe_metadata = payment.prepare_stripe_metadata()
+                    stripe_account_id = payment_method.get_stripe_account_id() if hasattr(payment_method, 'get_stripe_account_id') else None
+                    if not stripe_account_id:
+                        raise ValidationError({
+                            'payment_method_id': 'This Stripe payment method is not linked to a connected account.'
+                        })
+
                     payment_intent = PaymentIntentService.create(
                         amount=donation.amount,
                         currency=donation.amount.currency.code,
                         payment_reference=payment.payment_reference,
                         metadata=stripe_metadata,
-                        customer_email=donor_user.email
+                        customer_email=donor_user.email,
+                        stripe_account_id=stripe_account_id,
                     )
                     
-                    payment.stripe_payment_intent = payment_intent['id']
+                    payment.stripe_payment_intent = getattr(payment_intent, 'id', None) or payment_intent['id']
                     payment.save()
                     
-                    response_data['stripe_client_secret'] = payment_intent['client_secret']
+                    response_data['stripe_client_secret'] = getattr(payment_intent, 'client_secret', None) or payment_intent['client_secret']
                     response_data['status'] = 'pending_payment'
                     
                     logger.info(f"Created Stripe PaymentIntent for donation {donation.tracking_reference}")

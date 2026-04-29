@@ -772,7 +772,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
                     if stripe_payment_intent_id:
                         try:
-                            payment_intent = PaymentIntentService.retrieve(stripe_payment_intent_id)
+                            payment_intent = PaymentIntentService.retrieve(stripe_payment_intent_id, stripe_account_id=payment.method.get_stripe_account_id())
                         except Exception as e:
                             raise ValidationError({
                                 'stripe_payment_intent_id': f'Unable to retrieve Stripe payment intent: {str(e)}'
@@ -808,6 +808,10 @@ class BookingViewSet(viewsets.ModelViewSet):
                             booking=booking,
                         )
                         return Response(response_data, status=status.HTTP_201_CREATED)
+                    else:
+                        logger.warning(
+                            f"Checkout initiated with Stripe payment method but no Stripe PaymentIntent ID provided for payment {payment.payment_reference} and intent {intent.booking_intent_id}."
+                        )
 
                     try:
                         stripe_metadata = payment.prepare_stripe_metadata()
@@ -819,6 +823,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                             metadata=stripe_metadata,
                             customer_email=user.email,
                             description=payment.description,
+                            stripe_account_id=payment.method.get_stripe_account_id()
                         )
 
                         payment.stripe_payment_intent = payment_intent.id
