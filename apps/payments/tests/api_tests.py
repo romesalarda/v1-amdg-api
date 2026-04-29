@@ -23,7 +23,8 @@ from apps.payments.models import (
     Discount, DiscountRule, DiscountType, DiscountRuleTypeChoices,
     RefundRequest, RefundPolicy, RefundPolicyTypeChoices,
     Donation, PaymentHistoryAction,
-    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
+    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence,
+    StripeConnectedAccount,
 )
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
@@ -613,6 +614,236 @@ class PaymentMethodAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         for method in response.data['results']:
             self.assertEqual(method['method_type'], PaymentMethodTypeChoices.STRIPE)
+
+    def test_create_stripe_payment_method_rejects_other_user_connected_account(self):
+        """Creating a Stripe payment method should reject account IDs owned by another user."""
+        StripeConnectedAccount.objects.create(
+            user=self.regular_user,
+            stripe_account_id='acct_other_user_123',
+            charges_enabled=True,
+            details_submitted=True,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:paymentmethod-list')
+        data = {
+            'title': 'Stripe Invalid Ownership',
+            'event': self.event.id,
+            'method_type': PaymentMethodTypeChoices.STRIPE,
+            'is_active': True,
+            'provided_details': {
+                'stripe_account_id': 'acct_other_user_123'
+            }
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('provided_details', response.data)
+
+    def test_create_stripe_payment_method_accepts_owned_connected_account(self):
+        """Creating a Stripe payment method should accept account IDs owned by the authenticated user."""
+        StripeConnectedAccount.objects.create(
+            user=self.admin_user,
+            stripe_account_id='acct_admin_user_123',
+            charges_enabled=True,
+            details_submitted=True,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:paymentmethod-list')
+        data = {
+            'title': 'Stripe Owned Account',
+            'event': self.event.id,
+            'method_type': PaymentMethodTypeChoices.STRIPE,
+            'is_active': True,
+            'provided_details': {
+                'stripe_account_id': 'acct_admin_user_123'
+            }
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+
+class StripeConnectedAccountAPITestCase(APITestCase):
+    """Test suite for user-scoped Stripe connected account management endpoints."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='stripeowner',
+            email='stripeowner@test.com',
+            password='testpass123',
+        )
+        self.other_user = User.objects.create_user(
+            username='stripeother',
+            email='stripeother@test.com',
+            password='testpass123',
+        )
+        self.client = APIClient()
+
+    def _stripe_account_mock(self, account_id='acct_new_123'):
+        mock_account = Mock()
+        mock_account.id = account_id
+        mock_account.type = 'express'
+        mock_account.country = 'GB'
+        mock_account.email = 'stripeowner@test.com'
+        mock_account.business_type = 'individual'
+        mock_account.charges_enabled = False
+        mock_account.payouts_enabled = False
+        mock_account.details_submitted = False
+        mock_account.requirements = {'disabled_reason': ''}
+        mock_account.capabilities = {'card_payments': {'requested': True}}
+        mock_account.metadata = {}
+        return mock_account
+
+    def test_list_returns_only_authenticated_users_accounts(self):
+        StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_user_1')
+        StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_user_2')
+        StripeConnectedAccount.objects.create(user=self.other_user, stripe_account_id='acct_other_1')
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(reverse('payments:stripe-connect-accounts-list'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 2)
+        returned_ids = {item['stripe_account_id'] for item in response.data["results"]}
+        self.assertEqual(returned_ids, {'acct_user_1', 'acct_user_2'})
+
+    @patch('apps.payments.services.stripe.connect.StripeConnectService.retrieve_account')
+    def test_create_connected_account(self, mock_retrieve_account):
+        mock_retrieve_account.return_value = self._stripe_account_mock(account_id='acct_create_1')
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            reverse('payments:stripe-connect-accounts-list'),
+            {
+                'stripe_account_id': 'acct_create_1',
+                'display_name': 'Primary Wallet',
+                'is_primary': True,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['stripe_account_id'], 'acct_create_1')
+        self.assertEqual(response.data['display_name'], 'Primary Wallet')
+        self.assertTrue(response.data['is_primary'])
+
+    @patch('apps.payments.services.stripe.connect.StripeConnectService.retrieve_account')
+    def test_create_rejects_duplicate_for_same_user(self, mock_retrieve_account):
+        mock_retrieve_account.return_value = self._stripe_account_mock(account_id='acct_dup_1')
+        StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_dup_1')
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            reverse('payments:stripe-connect-accounts-list'),
+            {
+                'stripe_account_id': 'acct_dup_1',
+                'display_name': 'Duplicate',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('stripe_account_id', response.data)
+
+    @patch('apps.payments.services.stripe.connect.StripeConnectService.retrieve_account')
+    def test_create_rejects_account_registered_by_another_user(self, mock_retrieve_account):
+        mock_retrieve_account.return_value = self._stripe_account_mock(account_id='acct_taken_1')
+        StripeConnectedAccount.objects.create(user=self.other_user, stripe_account_id='acct_taken_1')
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            reverse('payments:stripe-connect-accounts-list'),
+            {
+                'stripe_account_id': 'acct_taken_1',
+                'display_name': 'Taken',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('stripe_account_id', response.data)
+
+    def test_retrieve_denies_other_users_account(self):
+        StripeConnectedAccount.objects.create(user=self.other_user, stripe_account_id='acct_private_1')
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(
+            reverse('payments:stripe-connect-accounts-detail', kwargs={'stripe_account_id': 'acct_private_1'})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patch_updates_allowed_fields(self):
+        account = StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_patch_1')
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(
+            reverse('payments:stripe-connect-accounts-detail', kwargs={'stripe_account_id': 'acct_patch_1'}),
+            {
+                'display_name': 'Updated Name',
+                'is_active': False,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        account.refresh_from_db()
+        self.assertEqual(account.display_name, 'Updated Name')
+        self.assertFalse(account.is_active)
+
+    def test_patch_rejects_immutable_stripe_account_id(self):
+        StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_immutable_1')
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(
+            reverse('payments:stripe-connect-accounts-detail', kwargs={'stripe_account_id': 'acct_immutable_1'}),
+            {
+                'stripe_account_id': 'acct_new_value',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('detail', response.data)
+
+    def test_patch_set_primary_unsets_other_accounts(self):
+        primary = StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_primary_1', is_primary=True)
+        secondary = StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_secondary_1', is_primary=False)
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(
+            reverse('payments:stripe-connect-accounts-detail', kwargs={'stripe_account_id': secondary.stripe_account_id}),
+            {
+                'is_primary': True,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        primary.refresh_from_db()
+        secondary.refresh_from_db()
+        self.assertFalse(primary.is_primary)
+        self.assertTrue(secondary.is_primary)
+
+    def test_set_primary_action_unsets_other_accounts(self):
+        first = StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_action_first', is_primary=True)
+        second = StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_action_second', is_primary=False)
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            reverse('payments:stripe-connect-accounts-set-primary', kwargs={'stripe_account_id': second.stripe_account_id}),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertFalse(first.is_primary)
+        self.assertTrue(second.is_primary)
 
 
 class RefundRequestAPITestCase(APITestCase):

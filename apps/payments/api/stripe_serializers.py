@@ -11,6 +11,8 @@ from apps.payments.models import (
     StripeConnectedAccount,
     StripeConnectedAccountStatusChoices,
 )
+from apps.payments.services.stripe.connect import StripeConnectService
+from apps.payments.services.stripe.exceptions import StripeServiceError
 
 
 class StripeConfigResponseSerializer(serializers.Serializer):
@@ -42,6 +44,150 @@ class StripeConnectAccountSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(required=False, allow_null=True)
     updated_at = serializers.DateTimeField(required=False, allow_null=True)
     synced_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class StripeConnectedAccountListSerializer(serializers.ModelSerializer):
+    """Serializer for listing and retrieving user Stripe connected accounts."""
+
+    status = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = StripeConnectedAccount
+        fields = (
+            'connected_account_id',
+            'stripe_account_id',
+            'display_name',
+            'is_active',
+            'is_primary',
+            'account_type',
+            'country',
+            'email',
+            'business_type',
+            'charges_enabled',
+            'payouts_enabled',
+            'details_submitted',
+            'disabled_reason',
+            'status',
+            'created_at',
+            'updated_at',
+            'synced_at',
+        )
+        read_only_fields = (
+            'connected_account_id',
+            'stripe_account_id',
+            'account_type',
+            'country',
+            'email',
+            'business_type',
+            'charges_enabled',
+            'payouts_enabled',
+            'details_submitted',
+            'disabled_reason',
+            'status',
+            'created_at',
+            'updated_at',
+            'synced_at',
+        )
+
+
+class StripeConnectedAccountCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating a user-owned Stripe connected account record."""
+
+    class Meta:
+        model = StripeConnectedAccount
+        fields = ('stripe_account_id', 'display_name', 'is_primary')
+
+    def validate_stripe_account_id(self, value):
+        normalized = str(value).strip()
+        if not normalized:
+            raise serializers.ValidationError("stripe_account_id is required.")
+        return normalized
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        stripe_account_id = attrs.get('stripe_account_id')
+
+        if not user or not user.is_authenticated:
+            raise serializers.ValidationError('Authentication is required.')
+
+        if StripeConnectedAccount.objects.filter(user=user, stripe_account_id=stripe_account_id).exists():
+            raise serializers.ValidationError({
+                'stripe_account_id': 'This Stripe account is already registered for your user.'
+            })
+
+        owner = StripeConnectedAccount.objects.filter(stripe_account_id=stripe_account_id).exclude(user=user).first()
+        if owner:
+            raise serializers.ValidationError({
+                'stripe_account_id': 'This Stripe account is already registered by another user.'
+            })
+
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        user = request.user
+        stripe_account_id = validated_data['stripe_account_id']
+
+        try:
+            stripe_account = StripeConnectService.retrieve_account(stripe_account_id)
+        except StripeServiceError as exc:
+            raise serializers.ValidationError({'stripe_account_id': exc.user_message}) from exc
+
+        account = StripeConnectedAccount.objects.create(
+            user=user,
+            stripe_account_id=stripe_account_id,
+            display_name=validated_data.get('display_name', ''),
+            is_primary=validated_data.get('is_primary', False),
+            account_type=getattr(stripe_account, 'type', 'express') or 'express',
+            country=getattr(stripe_account, 'country', '') or '',
+            email=getattr(stripe_account, 'email', '') or user.email,
+            business_type=getattr(stripe_account, 'business_type', '') or 'individual',
+            charges_enabled=bool(getattr(stripe_account, 'charges_enabled', False)),
+            payouts_enabled=bool(getattr(stripe_account, 'payouts_enabled', False)),
+            details_submitted=bool(getattr(stripe_account, 'details_submitted', False)),
+            disabled_reason=StripeConnectService.get_disabled_reason(getattr(stripe_account, 'requirements', None)),
+            capabilities=getattr(stripe_account, 'capabilities', {}) or {},
+            requirements=getattr(stripe_account, 'requirements', {}) or {},
+            metadata=getattr(stripe_account, 'metadata', {}) or {},
+        )
+
+        return account
+
+
+class StripeConnectedAccountUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating mutable Stripe connected account fields only."""
+
+    class Meta:
+        model = StripeConnectedAccount
+        fields = ('display_name', 'is_active', 'is_primary')
+
+    def validate(self, attrs):
+        immutable_fields = {
+            'stripe_account_id',
+            'charges_enabled',
+            'payouts_enabled',
+            'details_submitted',
+            'created_at',
+            'updated_at',
+            'synced_at',
+            'account_type',
+            'country',
+            'email',
+            'business_type',
+            'disabled_reason',
+            'capabilities',
+            'requirements',
+            'metadata',
+        }
+        attempted = immutable_fields.intersection(set(self.initial_data.keys()))
+        if attempted:
+            field_list = ', '.join(sorted(attempted))
+            raise serializers.ValidationError({
+                'detail': f'These fields are immutable: {field_list}'
+            })
+
+        return attrs
 
 
 class CreatePaymentIntentSerializer(serializers.Serializer):

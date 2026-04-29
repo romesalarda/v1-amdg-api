@@ -31,6 +31,7 @@ from apps.payments.api.stripe_views import (
     StripeConfirmPaymentView,
     stripe_webhook_view,
 )
+from apps.payments.api.stripe_account_viewsets import StripeConnectedAccountViewSet
 
 app_name = 'payments'
 
@@ -55,6 +56,23 @@ router.register(r'statistics', PaymentStatisticsViewSet, basename='payment-stati
 
 urlpatterns = [
     path('payments/', include(router.urls)),
+
+    # Stripe connected accounts (user-scoped)
+    path(
+        'stripe/connect-accounts/',
+        StripeConnectedAccountViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='stripe-connect-accounts-list',
+    ),
+    path(
+        'stripe/connect-accounts/<str:stripe_account_id>/',
+        StripeConnectedAccountViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}),
+        name='stripe-connect-accounts-detail',
+    ),
+    path(
+        'stripe/connect-accounts/<str:stripe_account_id>/set-primary/',
+        StripeConnectedAccountViewSet.as_view({'post': 'set_primary'}),
+        name='stripe-connect-accounts-set-primary',
+    ),
     
     # Stripe endpoints (outside router for custom URLs)
     path('stripe/config/', StripeConfigView.as_view(), name='stripe-config'),

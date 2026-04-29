@@ -194,6 +194,21 @@ class IsPaymentOwner(permissions.BasePermission):
         return None
 
 
+class IsStripeAccountOwner(permissions.BasePermission):
+    """Allow access only to Stripe connected account records owned by the request user."""
+
+    message = "You can only access your own Stripe connected accounts."
+
+    def has_permission(self, request, view) -> bool:
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        return getattr(obj, 'user_id', None) == request.user.id
+
+
 class IsPaymentOwnerOrAdministrative(permissions.BasePermission):
     """
     Combined permission: owner OR administrative staff.

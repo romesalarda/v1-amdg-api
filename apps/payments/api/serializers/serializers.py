@@ -161,6 +161,12 @@ class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
                     'provided_details': f"Stripe account '{stripe_acc}' not found. Connect the account first via the Stripe Connect flow."
                 })
 
+            request = self.context.get('request')
+            if request and request.user and account_record.user_id != request.user.id:
+                raise serializers.ValidationError({
+                    'provided_details': f"Stripe account '{stripe_acc}' does not belong to the authenticated user."
+                })
+
             # Ensure the connected account looks ready for payments
             if not account_record.is_ready_for_payments:
                 raise serializers.ValidationError({

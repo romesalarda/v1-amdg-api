@@ -11,6 +11,7 @@ from typing import Optional, Tuple
 import logging
 import stripe
 from django.conf import settings
+from django.db import transaction
 
 from apps.payments.models import StripeConnectedAccount, StripeConnectedAccountStatusChoices
 from apps.payments.services.stripe.client import StripeClient
@@ -33,11 +34,39 @@ class StripeConnectService:
     """Helpers for managing Stripe Connect accounts."""
 
     @staticmethod
+    def get_disabled_reason(requirements) -> str:
+        return _get_disabled_reason(requirements)
+
+    @staticmethod
     def get_user_account(user) -> Optional[StripeConnectedAccount]:
         if not user or not getattr(user, 'is_authenticated', False):
             return None
 
-        return StripeConnectedAccount.objects.filter(user=user).first()
+        return (
+            StripeConnectedAccount.objects
+            .filter(user=user, is_active=True)
+            .order_by('-is_primary', '-created_at')
+            .first()
+            or StripeConnectedAccount.objects
+            .filter(user=user)
+            .order_by('-is_primary', '-created_at')
+            .first()
+        )
+
+    @staticmethod
+    def set_primary(account: StripeConnectedAccount) -> StripeConnectedAccount:
+        if not account or not account.user_id:
+            raise StripeServiceError(
+                message='Invalid Stripe connected account for primary assignment.',
+                user_message='Unable to set primary account.',
+            )
+
+        with transaction.atomic():
+            StripeConnectedAccount.objects.filter(user_id=account.user_id).exclude(pk=account.pk).update(is_primary=False)
+            account.is_primary = True
+            account.save(update_fields=['is_primary', 'updated_at'])
+
+        return account
 
     @staticmethod
     def resolve_payment_method_stripe_account_id(payment_method) -> Optional[str]:
