@@ -8,6 +8,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db import transaction
 
 
 class StripeConnectedAccountStatusChoices(models.TextChoices):
@@ -22,12 +23,15 @@ class StripeConnectedAccount(models.Model):
     """A Stripe Connect account owned by a platform user."""
 
     connected_account_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='stripe_connected_account',
+        related_name='stripe_accounts',
     )
-    stripe_account_id = models.CharField(max_length=255, unique=True, db_index=True)
+    stripe_account_id = models.CharField(max_length=255, db_index=True)
+    display_name = models.CharField(max_length=255, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    is_primary = models.BooleanField(default=False)
     account_type = models.CharField(max_length=30, default='express')
     country = models.CharField(max_length=2, blank=True, default='')
     email = models.EmailField(blank=True, default='')
@@ -51,9 +55,25 @@ class StripeConnectedAccount(models.Model):
             models.Index(fields=['stripe_account_id']),
             models.Index(fields=['charges_enabled', 'payouts_enabled']),
         ]
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'stripe_account_id'], name='unique_user_stripe_account'),
+        ]
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            if self._state.adding and self.user_id:
+                has_existing_accounts = StripeConnectedAccount.objects.filter(user_id=self.user_id).exists()
+                if not has_existing_accounts:
+                    self.is_primary = True
+
+            super().save(*args, **kwargs)
+
+            if self.is_primary and self.user_id:
+                StripeConnectedAccount.objects.filter(user_id=self.user_id).exclude(pk=self.pk).update(is_primary=False)
 
     def __str__(self) -> str:
-        return f"{self.user} - {self.stripe_account_id}"
+        label = self.display_name or self.stripe_account_id
+        return f"{self.user} - {label}"
 
     @property
     def status(self) -> str:

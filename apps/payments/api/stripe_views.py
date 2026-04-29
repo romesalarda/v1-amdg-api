@@ -31,6 +31,7 @@ from apps.payments.api.stripe_serializers import (
     ErrorResponseSerializer,
     WebhookResponseSerializer,
 )
+from rest_framework import serializers as drf_serializers
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.connect import StripeConnectService
 from apps.payments.services.stripe.payment_intents import PaymentIntentService
@@ -142,16 +143,31 @@ class StripeConnectOnboardingView(APIView):
         summary='Create Stripe Connect onboarding link',
         description=(
             'Creates a Stripe Connect account if needed and returns a fresh onboarding link. '
-            'Use this to send users into Stripe-hosted onboarding.'
+            'Use this to send users into Stripe-hosted onboarding. '
+            'Set force_new=true to create a new account even if one exists.'
         ),
         tags=['Stripe Connect'],
-        request=None,
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'country': {'type': 'string', 'description': 'Optional country code'},
+                    'force_new': {'type': 'boolean', 'description': 'Force creation of a new account'},
+                },
+            }
+        },
         responses={200: StripeConnectAccountSerializer},
     )
     def post(self, request):
         try:
             country = request.data.get('country') if hasattr(request.data, 'get') else None
-            account_record, stripe_account = StripeConnectService.create_or_refresh_account(request.user, country=country)
+            force_new = request.data.get('force_new', False) if hasattr(request.data, 'get') else False
+            
+            account_record, stripe_account = StripeConnectService.create_or_refresh_account(
+                request.user, 
+                country=country,
+                force_new=force_new
+            )
 
             refresh_url = request.build_absolute_uri(reverse('payments:stripe-connect-onboard'))
             return_url = request.build_absolute_uri(reverse('payments:stripe-connect-status'))

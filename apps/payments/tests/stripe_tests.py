@@ -383,6 +383,62 @@ class StripeConnectServiceTestCase(TestCase):
 
         self.assertEqual(stripe_account_id, 'acct_test456')
 
+    def test_first_account_defaults_to_primary(self):
+        """The first Stripe account for a user should automatically become primary."""
+        account = StripeConnectedAccount.objects.create(
+            user=self.user,
+            stripe_account_id='acct_primary_default_1',
+        )
+
+        self.assertTrue(account.is_primary)
+
+    def test_set_primary_unsets_other_accounts(self):
+        """Setting one account as primary should unset all other accounts for the same user."""
+        first = StripeConnectedAccount.objects.create(
+            user=self.user,
+            stripe_account_id='acct_primary_switch_1',
+            is_primary=True,
+        )
+        second = StripeConnectedAccount.objects.create(
+            user=self.user,
+            stripe_account_id='acct_primary_switch_2',
+            is_primary=False,
+        )
+
+        StripeConnectService.set_primary(second)
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertFalse(first.is_primary)
+        self.assertTrue(second.is_primary)
+
+    def test_get_user_account_prefers_active_primary(self):
+        """User account resolution should prefer active primary accounts first."""
+        older = StripeConnectedAccount.objects.create(
+            user=self.user,
+            stripe_account_id='acct_resolution_older',
+            is_active=True,
+            is_primary=False,
+        )
+        preferred = StripeConnectedAccount.objects.create(
+            user=self.user,
+            stripe_account_id='acct_resolution_primary',
+            is_active=True,
+            is_primary=True,
+        )
+        StripeConnectedAccount.objects.create(
+            user=self.user,
+            stripe_account_id='acct_resolution_inactive',
+            is_active=False,
+            is_primary=True,
+        )
+
+        resolved = StripeConnectService.get_user_account(self.user)
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.pk, preferred.pk)
+        self.assertNotEqual(resolved.pk, older.pk)
+
 
 class WebhookTestCase(TestCase):
     """Test webhook signature verification and event processing."""
