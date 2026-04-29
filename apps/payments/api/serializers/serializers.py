@@ -39,6 +39,7 @@ from apps.payments.models import (
     Donation, PaymentHistoryAction,
     CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
 )
+from apps.payments.models.stripe_accounts import StripeConnectedAccount
 from apps.common.models import VerificationStatus
 from apps.payments.services.attendee_refunds import AttendeeRefundService
 
@@ -145,9 +146,25 @@ class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
         
         # Validate Stripe details
         elif method_type == PaymentMethodTypeChoices.STRIPE and attrs.get('provided_details') is not None:
-            if not provided_details.get('stripe_account_id'):
+            stripe_acc = provided_details.get('stripe_account_id')
+            if not stripe_acc:
                 raise serializers.ValidationError({
                     'provided_details': "Stripe method requires 'stripe_account_id'"
+                })
+
+            # Normalize and verify the provided Stripe account exists and is usable
+            stripe_acc = str(stripe_acc).strip()
+            try:
+                account_record = StripeConnectedAccount.objects.get(stripe_account_id=stripe_acc)
+            except StripeConnectedAccount.DoesNotExist:
+                raise serializers.ValidationError({
+                    'provided_details': f"Stripe account '{stripe_acc}' not found. Connect the account first via the Stripe Connect flow."
+                })
+
+            # Ensure the connected account looks ready for payments
+            if not account_record.is_ready_for_payments:
+                raise serializers.ValidationError({
+                    'provided_details': f"Stripe account '{stripe_acc}' is not ready for payments. Finish onboarding in Stripe."
                 })
 
         if method_type != PaymentMethodTypeChoices.BANK_TRANSFER and require_immediate:

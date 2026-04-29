@@ -110,6 +110,7 @@ class PaymentIntentServiceTestCase(TestCase):
             is_active=True,
             created_by=self.user
         )
+        self.stripe_account_id = 'acct_test123'
     
     @patch('stripe.PaymentIntent.create')
     def test_create_payment_intent_success(self, mock_create):
@@ -128,7 +129,8 @@ class PaymentIntentServiceTestCase(TestCase):
             payment_reference='PAY-TEST-001',
             metadata={'test': 'data'},
             customer_email='test@example.com',
-            description='Test payment'
+            description='Test payment',
+            stripe_account_id=self.stripe_account_id,
         )
         
         # Assert
@@ -195,7 +197,8 @@ class PaymentIntentServiceTestCase(TestCase):
                 amount=Money(50, 'GBP'),
                 currency='GBP',
                 payment_reference='PAY-TEST-003',
-                metadata={}
+                metadata={},
+                stripe_account_id=self.stripe_account_id,
             )
         
         self.assertIn('card', str(cm.exception.user_message).lower())
@@ -208,7 +211,7 @@ class PaymentIntentServiceTestCase(TestCase):
         mock_payment_intent.status = 'succeeded'
         mock_retrieve.return_value = mock_payment_intent
         
-        payment_intent = PaymentIntentService.retrieve('pi_test123')
+        payment_intent = PaymentIntentService.retrieve('pi_test123', stripe_account_id=self.stripe_account_id)
         
         self.assertEqual(payment_intent.id, 'pi_test123')
         self.assertEqual(payment_intent.status, 'succeeded')
@@ -222,7 +225,11 @@ class PaymentIntentServiceTestCase(TestCase):
         mock_payment_intent.status = 'canceled'
         mock_cancel.return_value = mock_payment_intent
         
-        payment_intent = PaymentIntentService.cancel('pi_test123', 'requested_by_customer')
+        payment_intent = PaymentIntentService.cancel(
+            'pi_test123',
+            'requested_by_customer',
+            stripe_account_id=self.stripe_account_id,
+        )
         
         self.assertEqual(payment_intent.status, 'canceled')
         mock_cancel.assert_called_once()
@@ -586,6 +593,8 @@ class IdempotencyTestCase(TestCase):
             is_active=True,
             created_by=self.user
         )
+
+        self.stripe_account_id = 'acct_test123'
     
     @patch('stripe.PaymentIntent.create')
     def test_payment_intent_creation_idempotency(self, mock_create):
@@ -600,7 +609,8 @@ class IdempotencyTestCase(TestCase):
             amount=Money(50, 'GBP'),
             currency='GBP',
             payment_reference='PAY-IDEMP-001',
-            metadata={}
+            metadata={},
+            stripe_account_id=self.stripe_account_id,
         )
         
         # Create second PaymentIntent with same idempotency key
@@ -608,7 +618,8 @@ class IdempotencyTestCase(TestCase):
             amount=Money(50, 'GBP'),
             currency='GBP',
             payment_reference='PAY-IDEMP-001',  # Same key
-            metadata={}
+            metadata={},
+            stripe_account_id=self.stripe_account_id,
         )
         
         # Both should return same PaymentIntent ID
