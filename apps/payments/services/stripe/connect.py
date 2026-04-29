@@ -91,16 +91,23 @@ class StripeConnectService:
         return StripeConnectedAccount.objects.filter(stripe_account_id=stripe_account_id).first()
 
     @staticmethod
-    def create_or_refresh_account(user, country: Optional[str] = None) -> Tuple[StripeConnectedAccount, stripe.Account]:
+    def create_or_refresh_account(user, country: Optional[str] = None, force_new: bool = False) -> Tuple[StripeConnectedAccount, stripe.Account]:
         """
         Ensure the user has a Stripe connected account and return the refreshed account.
+        
+        Args:
+            user: The user to create/refresh account for
+            country: Optional country code for the account
+            force_new: If True, create a new account even if one exists. If False, return existing account.
         """
         StripeClient.initialize()
-        existing_account = StripeConnectService.get_user_account(user)
-        if existing_account:
-            stripe_account = StripeConnectService.retrieve_account(existing_account.stripe_account_id)
-            account_record = StripeConnectService.sync_from_stripe(existing_account, stripe_account)
-            return account_record, stripe_account
+        
+        if not force_new:
+            existing_account = StripeConnectService.get_user_account(user)
+            if existing_account:
+                stripe_account = StripeConnectService.retrieve_account(existing_account.stripe_account_id)
+                account_record = StripeConnectService.sync_from_stripe(existing_account, stripe_account)
+                return account_record, stripe_account
 
         try:
             stripe_account = stripe.Account.create(
@@ -113,9 +120,21 @@ class StripeConnectService:
                     'transfers': {'requested': True},
                 },
             )
+            
+            # Determine if this should be the primary account
+            # It's primary only if no other accounts exist
+            existing_count = StripeConnectedAccount.objects.filter(user=user).count()
+            is_primary = existing_count == 0
+            
+            # Generate a display name if this is a secondary account
+            display_name = f"Account {existing_count + 1}" if existing_count > 0 else "Main account"
+            
             account_record = StripeConnectedAccount.objects.create(
                 user=user,
                 stripe_account_id=stripe_account.id,
+                display_name=display_name,
+                is_primary=is_primary,
+                is_active=True,
                 account_type=getattr(stripe_account, 'type', 'express'),
                 country=getattr(stripe_account, 'country', '') or '',
                 email=getattr(stripe_account, 'email', '') or user.email,
@@ -128,7 +147,7 @@ class StripeConnectService:
                 requirements=getattr(stripe_account, 'requirements', {}) or {},
                 metadata=getattr(stripe_account, 'metadata', {}) or {},
             )
-            logger.info("Created Stripe Connect account %s for user %s", stripe_account.id, user.id)
+            logger.info("Created Stripe Connect account %s for user %s (is_primary=%s)", stripe_account.id, user.id, is_primary)
             return account_record, stripe_account
         except stripe.StripeError as e:
             logger.error("Failed to create Stripe Connect account for user %s: %s", user.id, str(e))
@@ -189,3 +208,11 @@ class StripeConnectService:
 
         stripe_account = StripeConnectService.retrieve_account(account_record.stripe_account_id)
         return StripeConnectService.sync_from_stripe(account_record, stripe_account)
+
+    @staticmethod
+    def get_user_accounts(user):
+        """Get all Stripe connected accounts for a user, ordered by primary then creation date."""
+        if not user or not getattr(user, 'is_authenticated', False):
+            return StripeConnectedAccount.objects.none()
+
+        return StripeConnectedAccount.objects.filter(user=user).order_by('-is_primary', '-created_at')
