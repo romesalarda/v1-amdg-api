@@ -2,6 +2,16 @@
 Payment signals
 
 Handles automatic actions when payments change state.
+
+Architecture note
+-----------------
+The signal handler is intentionally thin: it validates preconditions and
+schedules work via ``transaction.on_commit`` so side-effects only execute
+after the outer DB transaction commits. All business logic lives in
+dedicated service classes in their respective apps:
+
+  - apps.bookings.services.BookingPaymentProcessor  (Booking targets)
+  - apps.products.services.OrderPaymentProcessor    (standalone Order targets)
 """
 import logging
 from django.db import transaction
@@ -21,301 +31,188 @@ logger = logging.getLogger(__name__)
 @receiver(post_save, sender=Payment)
 def handle_payment_completion(sender, instance, created, **kwargs):
     """
-    Handle post-payment actions based on payment target type.
-    
-    This handler supports multiple target types:
-    - Booking: Creates tickets for attendees
-    - Order: Transitions order to processing (based on event settings)
-    - None/Other: Logs informational message (e.g., donations)
-    
-    All operations are atomic - if any step fails, changes are rolled back.
-    
-    Args:
-        sender: Payment model class
-        instance: Payment instance that was saved
-        created: Boolean indicating if this is a new instance
-        **kwargs: Additional signal arguments
+    Schedule post-payment processing via transaction.on_commit.
+
+    Only COMPLETED payments are processed. A ``signal_processed`` flag in
+    ``metadata`` prevents double-processing if the payment row is saved again
+    after completion (e.g. Stripe webhook attaching charge IDs, admin edits).
+
+    The actual work is deferred to ``_process_completed_payment`` so that
+    side-effects (ticket creation, order transitions, notifications) only run
+    after the caller's DB transaction has fully committed.
     """
-    from apps.bookings.models import Booking
-    from apps.products.models import Order, OrderStatusChoices
-    from apps.events.models import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
-    
-    # Only process completed payments
     if instance.status != PaymentStatusChoices.COMPLETED:
         return
-    
-    # Deferred booking finalization path (two-phase checkout).
-    if instance.target is None and (instance.metadata or {}).get('checkout_intent_id'):
+
+    # Guard: skip re-saves of already-processed payments.
+    # Use update_fields as a fast-path: if this save didn't touch 'status'
+    # it cannot be a new COMPLETED transition (still guarded by the metadata
+    # flag below for callers that omit update_fields).
+    update_fields = kwargs.get('update_fields')
+    if update_fields is not None and 'status' not in update_fields:
+        return
+
+    if (instance.metadata or {}).get('signal_processed'):
+        logger.debug(
+            f"Payment {instance.payment_reference} already signal-processed. Skipping."
+        )
+        return
+
+    payment_pk = instance.pk
+    transaction.on_commit(lambda: _process_completed_payment(payment_pk))
+
+
+# ---------------------------------------------------------------------------
+# Core processor — executes after the outer transaction commits
+# ---------------------------------------------------------------------------
+
+def _process_completed_payment(payment_pk: int) -> None:
+    """
+    Fetch the payment fresh from the database and run all post-completion logic.
+
+    Fetching fresh avoids stale GenericForeignKey descriptor caches and ensures
+    we see the fully committed state (including any target set by
+    BookingCheckoutFinalizer).
+    """
+    try:
+        payment = Payment.objects.select_related('method').get(pk=payment_pk)
+    except Payment.DoesNotExist:
+        logger.error(f"_process_completed_payment: Payment pk={payment_pk} not found.")
+        return
+
+    # Re-check status after commit — it could have changed between the signal
+    # firing and this callback running.
+    if payment.status != PaymentStatusChoices.COMPLETED:
+        return
+
+    # Re-check idempotency guard after re-fetch (covers concurrent workers).
+    if (payment.metadata or {}).get('signal_processed'):
+        logger.debug(
+            f"Payment {payment.payment_reference} already signal-processed (post-commit check). Skipping."
+        )
+        return
+
+    # ------------------------------------------------------------------
+    # Phase 1: Deferred booking finalization (two-phase checkout)
+    # ------------------------------------------------------------------
+    if payment.target is None and (payment.metadata or {}).get('checkout_intent_id'):
         try:
-            result = BookingCheckoutFinalizer.finalize_from_payment(instance)
+            result = BookingCheckoutFinalizer.finalize_from_payment(payment)
             booking = result.get('booking')
             if booking:
-                instance.refresh_from_db(fields=['target_type', 'target_id', 'metadata'])
+                # Re-fetch to get the updated target after finalization.
+                # finalize_from_payment sets target_type/target_id inside its
+                # own atomic block; we need a fresh instance to see those writes.
+                payment = Payment.objects.select_related('method').get(pk=payment_pk)
                 logger.info(
-                    f"Finalized deferred checkout payment {instance.payment_reference} "
+                    f"Finalized deferred checkout payment {payment.payment_reference} "
                     f"into booking {booking.booking_reference}"
                 )
         except CheckoutFinalizationError as e:
             logger.error(
-                f"Failed deferred checkout finalization for payment {instance.payment_reference}: {str(e)}",
+                f"Failed deferred checkout finalization for payment {payment.payment_reference}: {e}",
                 exc_info=True,
             )
+            _mark_requires_review(payment, str(e))
             return
         except Exception as e:
             logger.error(
-                f"Unexpected deferred finalization error for payment {instance.payment_reference}: {str(e)}",
+                f"Unexpected deferred finalization error for payment {payment.payment_reference}: {e}",
                 exc_info=True,
             )
+            _mark_requires_review(payment, str(e))
             return
 
-    # Check if we should auto-process this payment method
-    if not TicketCreatorService.should_create_tickets_for_payment(instance):
+    # ------------------------------------------------------------------
+    # Phase 2: Auto-processing gate
+    # ------------------------------------------------------------------
+    if not TicketCreatorService.should_create_tickets_for_payment(payment):
         logger.info(
-            f"Skipping auto-processing for payment {instance.payment_reference} "
-            f"with method {instance.method.method_type if instance.method else 'None'}"
+            f"Skipping auto-processing for payment {payment.payment_reference} "
+            f"with method {payment.method.method_type if payment.method else 'None'}"
         )
+        _mark_signal_processed(payment)
         return
-    
-    target = instance.target
-    
-    # Handle different target types
+
+    # ------------------------------------------------------------------
+    # Phase 3: Dispatch to the appropriate processor
+    # ------------------------------------------------------------------
+    from apps.bookings.models import Booking
+    from apps.products.models import Order
+    from apps.payments.models import Donation
+    from apps.bookings.services import BookingPaymentProcessor
+    from apps.products.services import OrderPaymentProcessor
+
+    target = payment.target
+
     try:
         with transaction.atomic():
             if isinstance(target, Booking):
-                _handle_booking_payment(instance, target)
+                BookingPaymentProcessor.process(payment, target)
             elif isinstance(target, Order):
-                _handle_order_payment(instance, target)
-            elif hasattr(target, '__class__') and target.__class__.__name__ == 'Donation':
-                # Import here to avoid circular imports
-                from apps.payments.models import Donation
-                if isinstance(target, Donation):
-                    _handle_donation_payment(instance, target)
+                OrderPaymentProcessor.process(payment, target)
+            elif isinstance(target, Donation):
+                _handle_donation_payment(payment, target)
             elif target is None:
-                _handle_null_target_payment(instance)
+                logger.info(
+                    f"Payment {payment.payment_reference} completed with no target "
+                    "(likely a donation or standalone payment). No action required."
+                )
             else:
                 logger.warning(
-                    f"Payment {instance.payment_reference} has unexpected target type: "
+                    f"Payment {payment.payment_reference} has unexpected target type: "
                     f"{type(target).__name__}. No action taken."
                 )
     except Exception as e:
         logger.error(
-            f"Signal handler: Failed to process payment {instance.payment_reference}: {str(e)}",
-            exc_info=True
+            f"Failed to process payment {payment.payment_reference}: {e}",
+            exc_info=True,
         )
-        # Don't raise - we don't want to break the payment save
-        # Manual intervention or retry mechanism can handle failures
-
-
-def _handle_booking_payment(payment: Payment, booking) -> None:
-    """
-    Handle payment completion for Booking targets.
-    
-    Creates tickets for all attendees and processes any related orders
-    (from booking packages with products).
-    
-    Args:
-        payment: Completed payment instance
-        booking: Booking associated with the payment
-    """
-    from apps.events.models import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
-    from apps.products.models import OrderStatusChoices
-    from apps.bookings.services.ticket_creator import TicketCreationError
-    
-    # 1. Create tickets for the booking (if metadata is present)
-    try:
-        tickets = TicketCreatorService.create_tickets_for_payment(payment)
-        logger.info(
-            f"Created {len(tickets)} tickets for booking {booking.booking_reference} "
-            f"(payment {payment.payment_reference})"
-        )
-    except TicketCreationError as e:
-        # Ticket creation failed due to missing/invalid metadata or other issues
-        # Log error but don't fail the entire payment processing
-        logger.warning(
-            f"Could not auto-create tickets for booking {booking.booking_reference}: {str(e)}. "
-            f"Tickets may need to be created manually or payment metadata is incomplete."
-        )
-        # Continue processing - tickets might be created manually later
-    except Exception as e:
-        logger.error(
-            f"Unexpected error creating tickets for booking {booking.booking_reference}: {str(e)}",
-            exc_info=True
-        )
-        # Don't re-raise - continue with order processing
-    
-    # 2. Handle related orders (from booking packages with products)
-    related_orders = booking.get_related_orders()
-    
-    if related_orders.exists():
-        event = booking.event
-        event_settings = getattr(event, 'settings', None)
-        
-        # Check if orders should be auto-processed
-        auto_process = (
-            event_settings and 
-            not event_settings.orders_require_approval
-        )
-        
-        for order in related_orders:
-            if auto_process:
-                # Automatically transition to processing
-                try:
-                    if order.can_transition_to(OrderStatusChoices.PROCESSING):
-                        order.transition_to(OrderStatusChoices.PROCESSING)
-                        logger.info(
-                            f"Auto-transitioned order {order.order_reference_id} to PROCESSING "
-                            f"(booking {booking.booking_reference})"
-                        )
-                        
-                        # Create fulfillment notification
-                        EventNotification.objects.create(
-                            event=event,
-                            notification_type=NotificationTypeChoices.ORDER_FULFILLMENT,
-                            priority=NotificationPriorityChoices.NORMAL,
-                            related_payment=payment,
-                            related_order=order,
-                            related_booking=booking,
-                            metadata={
-                                'message': f'Order {order.order_reference_id} ready for fulfillment',
-                                'auto_processed': True,
-                                'booking_reference': booking.booking_reference,
-                            }
-                        )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to transition order {order.order_reference_id}: {str(e)}",
-                        exc_info=True
-                    )
-                    raise
-            else:
-                # Requires manual approval - create notification
-                EventNotification.objects.create(
-                    event=event,
-                    notification_type=NotificationTypeChoices.ORDER_FULFILLMENT,
-                    priority=NotificationPriorityChoices.HIGH,
-                    related_payment=payment,
-                    related_order=order,
-                    related_booking=booking,
-                    metadata={
-                        'message': f'Order {order.order_reference_id} requires approval before processing',
-                        'auto_processed': False,
-                        'requires_approval': True,
-                        'booking_reference': booking.booking_reference,
-                    }
-                )
-                logger.info(
-                    f"Created approval notification for order {order.order_reference_id} "
-                    f"(event requires manual approval)"
-                )
-
-
-def _handle_order_payment(payment: Payment, order) -> None:
-    """
-    Handle payment completion for standalone Order targets.
-    
-    Transitions order to processing status (if event settings allow)
-    and creates notifications for admin fulfillment.
-    
-    Args:
-        payment: Completed payment instance
-        order: Order associated with the payment
-    """
-    from apps.events.models import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
-    from apps.products.models import OrderStatusChoices
-    
-    # Get event from order's attendee
-    event = order.attendee.event if order.attendee else None
-    if not event:
-        logger.warning(
-            f"Order {order.order_reference_id} has no associated event. Cannot determine settings."
-        )
+        _mark_requires_review(payment, str(e))
+        # Do not re-raise — the payment row is already committed; raising here
+        # would surface a 500 to the webhook caller with no benefit.
         return
-    
-    event_settings = getattr(event, 'settings', None)
-    
-    # Check if orders should be auto-completed (use auto_complete_orders setting)
-    auto_complete = (
-        event_settings and 
-        getattr(event_settings, 'auto_complete_orders', False)
-    )
-    
-    if auto_complete:
-        # Automatically transition to processing
-        try:
-            if order.can_transition_to(OrderStatusChoices.PROCESSING):
-                order.transition_to(OrderStatusChoices.PROCESSING)
-                logger.info(
-                    f"Auto-transitioned standalone order {order.order_reference_id} to PROCESSING"
-                )
-                
-                # Create fulfillment notification
-                EventNotification.objects.create(
-                    event=event,
-                    notification_type=NotificationTypeChoices.ORDER_FULFILLMENT,
-                    priority=NotificationPriorityChoices.NORMAL,
-                    related_payment=payment,
-                    related_order=order,
-                    metadata={
-                        'message': f'Order {order.order_reference_id} ready for fulfillment',
-                        'auto_processed': True,
-                        'standalone_order': True,
-                    }
-                )
-        except Exception as e:
-            logger.error(
-                f"Failed to transition order {order.order_reference_id}: {str(e)}",
-                exc_info=True
-            )
-            raise
-    else:
-        # Requires manual approval - create notification
-        EventNotification.objects.create(
-            event=event,
-            notification_type=NotificationTypeChoices.ORDER_FULFILLMENT,
-            priority=NotificationPriorityChoices.HIGH,
-            related_payment=payment,
-            related_order=order,
-            metadata={
-                'message': f'Order {order.order_reference_id} requires approval before processing',
-                'auto_processed': False,
-                'requires_approval': True,
-                'standalone_order': True,
-            }
-        )
-        logger.info(
-            f"Created approval notification for order {order.order_reference_id} "
-            f"(event requires manual approval)"
-        )
 
+    _mark_signal_processed(payment)
+
+
+# ---------------------------------------------------------------------------
+# Donation handler (remains in payments app — target type is local)
+# ---------------------------------------------------------------------------
 
 def _handle_donation_payment(payment: Payment, donation) -> None:
     """
     Handle payment completion for Donation targets.
-    
-    Donation is linked to the payment, so payment completion status is tracked
-    via the payment relationship. Donation still requires admin verification
-    before being marked as VERIFIED/PROCESSED.
-    
-    Args:
-        payment: Completed payment instance
-        donation: Donation associated with the payment
+
+    Donations require admin verification before being marked VERIFIED/PROCESSED.
+    Payment completion alone does not auto-verify a donation — it only confirms
+    funds were received.
     """
     logger.info(
         f"Payment completed for donation {donation.tracking_reference} "
         f"(payment {payment.payment_reference}). Awaiting admin verification."
     )
+    # Do NOT call donation.mark_verified() here.
+    # The Donation docstring is explicit: admin reviews and marks verified/rejected.
+    # Calling mark_verified() automatically contradicts that workflow.
 
-    donation.mark_verified()
 
+# ---------------------------------------------------------------------------
+# Metadata helpers — use .update() to avoid recursive signal firing
+# ---------------------------------------------------------------------------
 
-def _handle_null_target_payment(payment: Payment) -> None:
-    """
-    Handle payment completion for null targets (e.g., donations).
-    
-    Args:
-        payment: Completed payment instance with no target
-    """
-    logger.info(
-        f"Payment {payment.payment_reference} completed with no target "
-        f"(likely a donation or standalone payment). No action required."
+def _mark_signal_processed(payment: Payment) -> None:
+    Payment.objects.filter(pk=payment.pk).update(
+        metadata={**(payment.metadata or {}), 'signal_processed': True}
     )
+
+
+def _mark_requires_review(payment: Payment, error: str) -> None:
+    Payment.objects.filter(pk=payment.pk).update(
+        metadata={
+            **(payment.metadata or {}),
+            'processing_error': error,
+            'requires_manual_review': True,
+        }
+    )
+

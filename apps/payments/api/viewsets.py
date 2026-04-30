@@ -1408,8 +1408,10 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
         
         refund_request.mark_rejected(request.user)
-        refund_request.payment.transition_to(PaymentStatusChoices.COMPLETED)    
-
+        refund_request.payment.transition_to(PaymentStatusChoices.COMPLETED)  
+        # TODO: need to restore the payment to the previous amount if this was a partial refund. 
+        # TODO Currently we just leave the payment amount as-is which is not ideal but avoids complications with the payment history and audit trail. We can address this in a future improvement where we add more explicit support for partial refunds in the payment model and history.  
+        # look at previous refund requested and undo
         PaymentHistoryAction.objects.create(
             payment=refund_request.payment,
             action='REFUND_REJECTED',

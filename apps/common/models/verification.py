@@ -44,6 +44,8 @@ class RequiresVerificationModel(models.Model):
         abstract = True
         
     def mark_verified(self, verifier=None):
+        if self.verification_status == VerificationStatus.VERIFIED:
+            return
         self.verification_status = VerificationStatus.VERIFIED
         self.verified_updated_at = timezone.now()
         self.verified_by = verifier

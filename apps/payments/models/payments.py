@@ -15,6 +15,7 @@ from core.utils.display import generate_human_readable_id, generate_alphanumeric
 from core.utils.data import save_with_unique_field
 
 from apps.payments.models.methods import PaymentMethod, PaymentMethodTypeChoices
+from apps.common.models.verification import VerificationStatus
 
 import uuid
 
@@ -49,7 +50,8 @@ ALLOWED_STATUS_TRANSITIONS = {
     ],
     PaymentStatusChoices.PENDING_REFUND: [
         PaymentStatusChoices.REFUNDED, # full refund completed
-        PaymentStatusChoices.PARTIALLY_REFUNDED
+        PaymentStatusChoices.PARTIALLY_REFUNDED,
+        PaymentStatusChoices.COMPLETED, # refund cancelled, back to completed
     ],
     PaymentStatusChoices.PARTIALLY_REFUNDED: [
         PaymentStatusChoices.REFUNDED, # full refund completed
@@ -159,7 +161,7 @@ class Payment(PayableModel):
         '''
         Calculate the total refunded amount for this payment by summing all related refunds.
         '''
-        return self.refund_requests.aggregate(total=models.Sum('amount'))['total']
+        return self.refund_requests.filter(verification_status=VerificationStatus.VERIFIED).aggregate(total=models.Sum('amount'))['total']
 
     @property
     def outstanding_bank_transfer_evidence(self) -> bool:
