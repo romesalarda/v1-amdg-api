@@ -205,9 +205,11 @@ class Payment(PayableModel):
                 and not self.bank_transfer_reference
             ):
                 #! must generate bank transfer reference only if payment method is bank transfer
-                # self.bank_transfer_reference = generate_alphanumeric_id(MAX_LENGTH_BANK_REF) # TODO: change this to make it somewhat obvious incase someone needs to type it instead of copy/paste
+                # Limit username and display_code slices so the base never reaches MAX_LENGTH_BANK_REF,
+                # leaving room for the unique suffix. With MAX_LENGTH_BANK_REF=15 this gives:
+                # max base = 4 + 3 = 7 chars → unique_part = 15 - 7 - 1 = 7 chars → total = 15 ✓
                 self.bank_transfer_reference = generate_human_readable_id(
-                    MAX_LENGTH_BANK_REF, '', str(self.user.username)[4:], str(self.event.display_code)[4:], separator=''
+                    MAX_LENGTH_BANK_REF, '', str(self.user.username)[4:8], str(self.event.display_code)[4:7], separator=''
                 )
 
             try:

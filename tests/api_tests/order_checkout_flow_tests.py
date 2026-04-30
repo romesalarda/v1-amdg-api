@@ -8,7 +8,7 @@ Tests the complete order checkout flow via API endpoints with all payment method
 - FREE: Tests free order checkout (£0 total)
 - Edge cases: Stock validation, quantity limits, inactive products, payment verification
 """
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -427,6 +427,22 @@ class OrderCheckoutAPITestCase(TestCase):
         
         # Verify validation error
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_checkout_requires_attendee_event_context(self):
+        """Checkout should fail when order attendee/event context is missing."""
+        order = self.create_order_with_items([(self.variant, 1)])
+        order.attendee = None
+        order.save(update_fields=['attendee'])
+
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        response = self.client.post(
+            url,
+            {'payment_method_id': self.stripe_method.id},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('order', response.data)
     
     def test_checkout_inactive_payment_method(self):
         """Test checkout fails with inactive payment method."""
@@ -771,7 +787,7 @@ class OrderCompletionAPITestCase(TestCase):
         self.assertEqual(order.status, OrderStatusChoices.PENDING)
 
 
-class OrderPaymentCompletionSignalTestCase(TestCase):
+class OrderPaymentCompletionSignalTestCase(TransactionTestCase):
     """Test payment completion signal handling for orders."""
     
     def setUp(self):
@@ -933,3 +949,40 @@ class OrderPaymentCompletionSignalTestCase(TestCase):
         # Verify order remains PENDING
         order.refresh_from_db()
         self.assertEqual(order.status, OrderStatusChoices.PENDING)
+
+    def test_payment_completion_missing_attendee_marks_manual_review(self):
+        """Completion path should flag manual review when order attendee context is missing."""
+        order = Order.objects.create(
+            customer=self.user,
+            attendee=self.attendee,
+            status=OrderStatusChoices.DRAFT,
+            total_amount=Money(0, 'GBP'),
+            created_by=self.user,
+        )
+
+        order.add_order_item(self.variant, 1)
+        order.refresh_from_db()
+        order.transition_to(OrderStatusChoices.PENDING)
+        order.attendee = None
+        order.save(update_fields=['attendee'])
+
+        payment = Payment.objects.create(
+            user=self.user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=order.total_amount,
+            status=PaymentStatusChoices.PENDING,
+            target=order,
+            metadata={'order_reference_id': order.order_reference_id},
+        )
+
+        order.payment = payment
+        order.save(update_fields=['payment'])
+
+        payment.status = PaymentStatusChoices.COMPLETED
+        payment.save(update_fields=['status'])
+
+        payment.refresh_from_db()
+        metadata = payment.metadata or {}
+        self.assertTrue(metadata.get('requires_manual_review'))
+        self.assertIn('processing_error', metadata)

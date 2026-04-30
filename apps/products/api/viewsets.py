@@ -3488,15 +3488,22 @@ class OrderViewSet(viewsets.ModelViewSet):
             if locked_order.payment_id:
                 raise ValidationError({'order': 'Order already has a payment linked. Refresh and continue from existing checkout state.'})
 
+            attendee = locked_order.attendee
+            order_event = attendee.event if attendee else None
+            if not attendee or not order_event:
+                raise ValidationError({
+                    'order': 'Order must have an attendee with valid event context before checkout.'
+                })
+
             locked_order.transition_to(OrderStatusChoices.PENDING)
 
             attendee_name = (
-                f"{locked_order.attendee.first_name} {locked_order.attendee.last_name}".strip()
-                or str(locked_order.attendee.attendee_id)
+                f"{attendee.first_name} {attendee.last_name}".strip()
+                or str(attendee.attendee_id)
             )
             payment_description = (
                 f"Payment made for attendee {attendee_name} "
-                f"for {locked_order.attendee.event.title} with price of {locked_order.total_amount}"
+                f"for {order_event.title} with price of {locked_order.total_amount}"
             )
 
             if reserved_payment:
@@ -3518,7 +3525,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 # Create payment for non-free orders
                 payment = Payment.objects.create(
                     user=request.user,
-                    event=locked_order.attendee.event,
+                    event=order_event,
                     method=payment_method,
                     base_amount=locked_order.total_amount,
                     status=PaymentStatusChoices.PENDING,

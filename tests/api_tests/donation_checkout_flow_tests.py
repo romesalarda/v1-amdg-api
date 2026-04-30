@@ -9,7 +9,7 @@ Tests the complete donation flow via API endpoints with all payment methods:
 - Donation verification workflow (admin approval/rejection)
 - Edge cases: Amount validation, payment method validation
 """
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -640,7 +640,7 @@ class DonationVerificationWorkflowTestCase(TestCase):
         # This depends on your model implementation
 
 
-class DonationPaymentCompletionSignalTestCase(TestCase):
+class DonationPaymentCompletionSignalTestCase(TransactionTestCase):
     """Test payment completion signal handling for donations."""
     
     def setUp(self):

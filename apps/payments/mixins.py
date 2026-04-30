@@ -171,6 +171,8 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         :param self: Instance of PayableModel
         :param context: ContextObject providing context for discount evaluation
         '''
+        from decimal import Decimal, ROUND_HALF_UP
+
         price = self.modified_amount
 
         discount = self.calculate_total_discounts(
@@ -180,7 +182,13 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
 
         total = price - discount
         zero = Money(0, price.currency)
-        return max(total, zero)
+        result = max(total, zero)
+
+        # Ensure exactly 2 decimal places to satisfy MoneyField(decimal_places=2) validation.
+        # Decimal arithmetic on percentage modifiers can silently produce 4+ decimal places
+        # (e.g. base * Decimal('1.0000') = Decimal('50.0000')), which fails full_clean().
+        rounded_amount = result.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return Money(rounded_amount, result.currency)
 
     @property
     def is_free(self):

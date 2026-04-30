@@ -639,6 +639,69 @@ class AttendeeViewSet(viewsets.ModelViewSet):
                     'pagination': linked_payment_pagination,
                     'action_hint': 'Review each payment and request a refund from the specific payment row when eligible.',
                 })
+
+        # 3. Block if the attendee has active tickets
+        from apps.bookings.models import Ticket, TicketStatusChoices
+        active_tickets = Ticket.objects.filter(
+            attendee=attendee,
+            status=TicketStatusChoices.ACTIVE,
+        ).select_related('ticket_type', 'payment__method')
+        if active_tickets.exists():
+            active_ticket_items, active_ticket_pagination = self._paginate_items([
+                self._serialize_ticket_blocker_item(ticket) for ticket in active_tickets
+            ])
+            blockers.append({
+                'code': 'active_tickets',
+                'severity': 'high',
+                'count': active_tickets.count(),
+                'message': 'Attendee has active tickets that must be cancelled before deletion.',
+                'items': active_ticket_items,
+                'pagination': active_ticket_pagination,
+                'action_hint': 'Cancel or invalidate all active tickets before removing this attendee.',
+            })
+            summary_counts['active_tickets'] = active_tickets.count()
+
+        # 4. Warn about linked orders that have financial history
+        from apps.products.models import Order, OrderStatusChoices
+        linked_orders = Order.objects.filter(
+            attendee=attendee,
+        ).exclude(
+            status__in=[OrderStatusChoices.CANCELLED],
+        ).select_related('payment__method')
+        if linked_orders.exists():
+            order_items, order_pagination = self._paginate_items([
+                self._serialize_order_blocker_item(order) for order in linked_orders
+            ])
+            blockers.append({
+                'code': 'unresolved_orders',
+                'severity': 'medium',
+                'count': linked_orders.count(),
+                'message': 'Attendee has linked orders that may require review before deletion.',
+                'items': order_items,
+                'pagination': order_pagination,
+                'action_hint': 'Review each order and ensure it is in a final state before removing this attendee.',
+            })
+            summary_counts['unresolved_orders'] = linked_orders.count()
+
+        # 5. Block if any linked payment has an active refund request
+        payments_with_active_refunds = blocking_payments.filter(
+            refund_requests__is_active=True,
+        ).distinct()
+        if payments_with_active_refunds.exists():
+            refund_blocker_items, refund_blocker_pagination = self._paginate_items([
+                self._serialize_refund_blocker_item(payment) for payment in payments_with_active_refunds
+            ])
+            blockers.append({
+                'code': 'active_refunds',
+                'severity': 'medium',
+                'count': payments_with_active_refunds.count(),
+                'message': 'Attendee has payments with active refund requests that must be resolved before deletion.',
+                'items': refund_blocker_items,
+                'pagination': refund_blocker_pagination,
+                'action_hint': 'Resolve all pending refund requests before removing this attendee.',
+            })
+            summary_counts['active_refund_requests'] = payments_with_active_refunds.count()
+
         return self._serialize_pre_removal_summary({
             'attendee': {
                 'attendee_id': str(attendee.attendee_id),

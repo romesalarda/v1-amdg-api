@@ -38,6 +38,9 @@ class BookingCheckoutFinalizer:
         method_type = payment.method.method_type if payment.method else None
         if method_type == PaymentMethodTypeChoices.STRIPE:
             return cls.finalize_for_stripe(payment, actor=actor)
+        # For any non-Stripe method that is already COMPLETED (e.g. CASH), create tickets immediately.
+        if payment.status == PaymentStatusChoices.COMPLETED:
+            return cls.finalize_for_stripe(payment, actor=actor)
         return cls.finalize_for_bank_transfer(payment, actor=actor)
 
     @classmethod

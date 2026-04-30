@@ -654,7 +654,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         {
                             'ticket_id': str(ticket.ticket_id),
                             'ticket_code': ticket.ticket_code,
-                            'attendee_name': ticket.attendee.full_name,
+                            'attendee_name': ticket.attendee.full_name if ticket.attendee else None,
                             '_links': {
                                 'self': request.build_absolute_uri(f'/api/bookings/tickets/{ticket.ticket_id}/'),
                             }
@@ -690,10 +690,15 @@ class BookingViewSet(viewsets.ModelViewSet):
                             and existing_payment.status != PaymentStatusChoices.COMPLETED
                             and existing_payment.stripe_payment_intent
                         ):
+                            stripe_account_id = (
+                                existing_payment.method.get_stripe_account_id()
+                                if hasattr(existing_payment.method, 'get_stripe_account_id')
+                                else None
+                            )
                             try:
                                 existing_payment_intent = PaymentIntentService.retrieve(
                                     existing_payment.stripe_payment_intent,
-                                    stripe_account_id=existing_payment.method.get_stripe_account_id(),
+                                    stripe_account_id=stripe_account_id,
                                 )
                                 stripe_client_secret = getattr(existing_payment_intent, 'client_secret', None)
                             except Exception:
@@ -784,7 +789,12 @@ class BookingViewSet(viewsets.ModelViewSet):
                 description = "Booking payment from user '%s' for event '%s' for attendees [%s] (intent reference: %s...)" % (
                         user.username,
                         intent.event.title,
-                        ",".join([attendee["attendee_draft"]["first_name"] for attendee in payment_metadata['checkout_attendees']]),
+                        ",".join([
+                            (attendee.get("attendee_draft") or {}).get("first_name")
+                            or attendee.get("attendee_id")
+                            or "unknown"
+                            for attendee in payment_metadata['checkout_attendees']
+                        ]),
                         str(intent.booking_intent_id)[:8],
                     )
 
@@ -853,9 +863,16 @@ class BookingViewSet(viewsets.ModelViewSet):
                     prefinalized_booking = prefinalization.get('booking')
 
                 if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
+                    stripe_account_id = None
+                    if payment.method and hasattr(payment.method, 'get_stripe_account_id'):
+                        stripe_account_id = payment.method.get_stripe_account_id()
+
                     if stripe_payment_intent_id:
                         try:
-                            payment_intent = PaymentIntentService.retrieve(stripe_payment_intent_id, stripe_account_id=payment.method.get_stripe_account_id())
+                            payment_intent = PaymentIntentService.retrieve(
+                                stripe_payment_intent_id,
+                                stripe_account_id=stripe_account_id,
+                            )
                         except Exception as e:
                             raise ValidationError({
                                 'stripe_payment_intent_id': f'Unable to retrieve Stripe payment intent: {str(e)}'
@@ -906,7 +923,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                             metadata=stripe_metadata,
                             customer_email=user.email,
                             description=payment.description,
-                            stripe_account_id=payment.method.get_stripe_account_id()
+                            stripe_account_id=stripe_account_id,
                         )
 
                         payment.stripe_payment_intent = payment_intent.id

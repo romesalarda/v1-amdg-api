@@ -374,7 +374,7 @@ class CheckoutAPITestCase(TestCase):
                     'package_id': self.package.id
                 }
             ]
-        })
+        }, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('booking_intent_id', response.data)
@@ -1060,6 +1060,65 @@ class CheckoutAPITestCase(TestCase):
         self.assertEqual(response_two.status_code, status.HTTP_200_OK)
         self.assertEqual(Booking.objects.count(), 1)
         self.assertEqual(Payment.objects.count(), 1)
+
+    def test_checkout_idempotency_handles_existing_payment_without_method(self):
+        """Idempotent retries should safely return existing sessions even when stored payment method is null."""
+        intent = self.create_booking_intent(ticket_count=1)
+        intent.last_checkout_idempotency_key = 'checkout-null-method-key'
+        intent.save(update_fields=['last_checkout_idempotency_key'])
+
+        Payment.objects.create(
+            user=self.user,
+            event=self.event,
+            method=None,
+            base_amount=Money(50, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+            metadata={
+                'checkout_intent_id': str(intent.booking_intent_id),
+                'checkout_idempotency_key': 'checkout-null-method-key',
+                'checkout_attendees': [
+                    {
+                        'attendee_id': None,
+                        'attendee_draft': {
+                            'first_name': 'Null',
+                            'last_name': 'Method',
+                            'date_of_birth': '1990-01-01',
+                            'relationship_to_user': 'self',
+                        },
+                        'package_id': self.package.id,
+                        'product_selections': [],
+                    }
+                ],
+                'payment_type': 'booking_checkout_pending_finalization',
+            },
+        )
+
+        payload = {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.cash_method.id,
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Retry',
+                        'last_name': 'User',
+                        'date_of_birth': '1990-01-01',
+                        'relationship_to_user': 'self',
+                    },
+                }
+            ],
+        }
+
+        response = self.client.post(
+            '/api/bookings/list/checkout/',
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='checkout-null-method-key',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'pending_payment')
+        self.assertIn('payment_reference', response.data)
 
     def test_checkout_preview_accepts_pending_multipart_upload_marker(self):
         """Preview should accept upload_file_key placeholders for pending multipart question uploads."""
