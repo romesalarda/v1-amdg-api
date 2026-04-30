@@ -72,7 +72,7 @@ from .serializers import (
     PackageProductSerializer, PackageProductCreateUpdateSerializer,
     EventAlternativeSigninListSerializer, EventAlternativeSigninDetailSerializer, EventAlternativeSigninCreateUpdateSerializer,
     AttendeeAlternativeSigninListSerializer, AttendeeAlternativeSigninDetailSerializer, AttendeeAlternativeSigninCreateUpdateSerializer,
-    CheckoutSerializer, CheckoutPreviewSerializer,
+    CheckoutSerializer, CheckoutPreviewSerializer, BookingAttendeePrecheckSerializer,
 )
 from .filtersets import (
     BookingFilterSet, BookingIntentFilterSet,
@@ -367,6 +367,39 @@ class BookingViewSet(viewsets.ModelViewSet):
         serializer = TicketListSerializer(tickets, many=True, context={'request': request, 'event': booking.event})
         return Response(serializer.data)
     
+    @extend_schema(
+        summary="Precheck attendees before checkout",
+        description=(
+            "Validate attendee payload for duplicate detection, self re-registration guard, "
+            "and event registration limits before calling checkout."
+        ),
+        tags=["Bookings"],
+        request={'application/json': BookingAttendeePrecheckSerializer},
+        responses={
+            200: OpenApiResponse(description="Precheck passed"),
+            400: OpenApiResponse(description="Precheck validation failed"),
+        },
+        operation_id="bookings_attendee_precheck",
+    )
+    @action(detail=False, methods=['post'], url_path='attendee-precheck')
+    def attendee_precheck(self, request):
+        """Validate attendee constraints before checkout submission."""
+        from apps.bookings.services import AttendeePrecheckValidationService
+
+        serializer = BookingAttendeePrecheckSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        intent = serializer.validated_data['_intent']
+        attendee_selections = serializer.validated_data['attendees']
+        precheck_result = AttendeePrecheckValidationService.validate(
+            event=intent.event,
+            user=request.user,
+            attendee_selections=attendee_selections,
+        )
+
+        response_status = status.HTTP_200_OK if precheck_result['valid'] else status.HTTP_400_BAD_REQUEST
+        return Response(precheck_result, status=response_status)
+
     @extend_schema(
         summary="Checkout booking with payment",
         description=(

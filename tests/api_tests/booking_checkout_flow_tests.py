@@ -16,6 +16,7 @@ from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.contenttypes.models import ContentType
 from rest_framework.test import APIClient
+from rest_framework.test import APIRequestFactory
 from rest_framework import status
 from datetime import date, timedelta
 from decimal import Decimal
@@ -54,6 +55,7 @@ from apps.locations.models import (
     GeneralSectorType, SpecificSectorType,
 )
 from apps.products.models import Order
+from apps.events.api.serializers.base import EventDetailSerializer
 
 import logging
 
@@ -191,6 +193,7 @@ class CheckoutAPITestCase(TestCase):
             is_active=True,
             created_by=self.user
         )
+        self.request_factory = APIRequestFactory()
     
     def create_booking_intent(self, ticket_count=1):
         """Helper to create a booking intent."""
@@ -335,6 +338,174 @@ class CheckoutAPITestCase(TestCase):
         self.assertIn('booking_intent_id', response.data)
         self.assertIn('payment_method_id', response.data)
         self.assertIn('attendees', response.data)
+
+    def test_attendee_precheck_passes_for_valid_payload(self):
+        """Precheck should pass for a valid attendee list within limits."""
+        intent = self.create_booking_intent(ticket_count=1)
+
+        response = self.client.post('/api/bookings/list/attendee-precheck/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'attendees': [
+                {
+                    'attendee': {
+                        'first_name': 'Alice',
+                        'last_name': 'Walker',
+                        'email': 'alice.walker@example.com',
+                        'phone_number': '+447000000111',
+                        'date_of_birth': '1993-04-15',
+                        'gender': 'FEMALE',
+                        'relationship_to_user': 'other',
+                        'area_from': self.area.id,
+                    }
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['valid'])
+        self.assertEqual(response.data['attendee_errors'], [])
+
+    def test_attendee_precheck_rejects_duplicate_email_in_event(self):
+        """Precheck should reject attendee email already used by another active attendee in this event."""
+        intent = self.create_booking_intent(ticket_count=1)
+
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-DEDUP-EMAIL',
+            made_by=self.user,
+        )
+        Attendee.objects.create(
+            first_name='Existing',
+            last_name='Member',
+            email='duplicate@example.com',
+            phone_number='+447000000555',
+            date_of_birth=date(1990, 1, 1),
+            event=self.event,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.OTHER,
+            area_from=self.area,
+            defined_by=self.user,
+        )
+
+        response = self.client.post('/api/bookings/list/attendee-precheck/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'attendees': [
+                {
+                    'attendee': {
+                        'first_name': 'New',
+                        'last_name': 'Person',
+                        'email': 'duplicate@example.com',
+                        'phone_number': '+447000000999',
+                        'date_of_birth': '1992-05-10',
+                        'gender': 'MALE',
+                        'relationship_to_user': 'other',
+                        'area_from': self.area.id,
+                    }
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.data['valid'])
+        self.assertEqual(response.data['attendee_errors'][0]['index'], 0)
+        self.assertIn('DUPLICATE_EMAIL', response.data['attendee_errors'][0]['codes'])
+
+    def test_attendee_precheck_rejects_second_self_registration(self):
+        """Precheck should reject SELF relationship when user already has SELF attendee for event."""
+        intent = self.create_booking_intent(ticket_count=1)
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-SELF-EXISTING',
+            made_by=self.user,
+        )
+        self.create_attendee(booking)
+
+        response = self.client.post('/api/bookings/list/attendee-precheck/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'attendees': [
+                {
+                    'attendee': {
+                        'first_name': 'Test',
+                        'last_name': 'Attendee',
+                        'email': 'newself@example.com',
+                        'phone_number': '+447000000222',
+                        'date_of_birth': '1990-01-01',
+                        'gender': 'MALE',
+                        'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                    }
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.data['valid'])
+        self.assertIn('SELF_ALREADY_REGISTERED', response.data['attendee_errors'][0]['codes'])
+
+    def test_checkout_rejects_duplicate_email_via_hard_guardrail(self):
+        """Checkout must reject duplicate attendee email even if precheck was not called."""
+        intent = self.create_booking_intent(ticket_count=1)
+
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-CHECKOUT-GUARDRAIL',
+            made_by=self.user,
+        )
+        Attendee.objects.create(
+            first_name='Existing',
+            last_name='Member',
+            email='guardrail@example.com',
+            phone_number='+447000123123',
+            date_of_birth=date(1991, 7, 1),
+            event=self.event,
+            booking=booking,
+            relationship_to_user=AttendeeRelationship.OTHER,
+            area_from=self.area,
+            defined_by=self.user,
+        )
+
+        response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.cash_method.id,
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Another',
+                        'last_name': 'Person',
+                        'email': 'guardrail@example.com',
+                        'phone_number': '+447000000321',
+                        'date_of_birth': '1995-03-12',
+                        'gender': 'MALE',
+                        'relationship_to_user': 'other',
+                        'area_from': self.area.id,
+                    }
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('attendees', response.data)
+
+    def test_event_detail_serializer_exposes_user_registration_context(self):
+        """Event detail serializer should include user registration counters for landing-page gating."""
+        self.event.settings.max_attendees_per_user = 3
+        self.event.settings.save(update_fields=['max_attendees_per_user'])
+
+        booking = Booking.objects.create(
+            event=self.event,
+            booking_reference='BKG-EVENT-CONTEXT',
+            made_by=self.user,
+        )
+        self.create_attendee(booking)
+
+        request = self.request_factory.get('/api/event/list/')
+        request.user = self.user
+
+        payload = EventDetailSerializer(self.event, context={'request': request}).data
+        self.assertEqual(payload['user_registered_attendee_count'], 1)
+        self.assertEqual(payload['user_remaining_registration_slots'], 2)
+        self.assertTrue(payload['user_self_registered'])
     
     def test_checkout_validates_intent_exists(self):
         """Test that checkout validates intent exists."""

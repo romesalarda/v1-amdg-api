@@ -31,6 +31,7 @@ from apps.bookings.models import (
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.events.models import EventQuestion, EventQuestionTypeChoices
 from apps.payments.models import BankTransferEvidence
+from apps.bookings.services import AttendeePrecheckValidationService
 
 
 # ============================================================================
@@ -588,6 +589,85 @@ class AttendeeCheckoutSerializer(serializers.Serializer):
         return attrs
 
 
+class AttendeePrecheckItemSerializer(serializers.Serializer):
+    """Precheck payload item supporting existing attendee reference or draft payload."""
+
+    attendee_id = serializers.UUIDField(required=False)
+    attendee = AttendeeDraftSerializer(required=False)
+
+    def validate(self, attrs):
+        attendee_id = attrs.get('attendee_id')
+        attendee_draft = attrs.get('attendee')
+
+        if bool(attendee_id) == bool(attendee_draft):
+            raise serializers.ValidationError({
+                'attendee_id': 'Provide either attendee_id or attendee, but not both.'
+            })
+
+        if attendee_id:
+            try:
+                attendee = Attendee.objects.get(attendee_id=attendee_id)
+            except Attendee.DoesNotExist:
+                raise serializers.ValidationError({
+                    'attendee_id': f'Attendee with id {attendee_id} does not exist.'
+                })
+            attrs['_attendee'] = attendee
+        else:
+            attrs['_attendee_draft'] = attendee_draft
+
+        return attrs
+
+
+class BookingAttendeePrecheckSerializer(serializers.Serializer):
+    """Validate attendee payload for duplicate and limit guardrails before checkout."""
+
+    booking_intent_id = serializers.UUIDField(help_text='UUID of the BookingIntent to precheck')
+    attendees = AttendeePrecheckItemSerializer(many=True, help_text='Full attendee list for this intended booking')
+
+    def validate_booking_intent_id(self, value):
+        try:
+            intent = BookingIntent.objects.get(booking_intent_id=value)
+        except BookingIntent.DoesNotExist:
+            raise serializers.ValidationError(f'BookingIntent with id {value} does not exist.')
+
+        if not intent.is_active:
+            raise serializers.ValidationError(
+                f'BookingIntent {value} is not active. Status: {intent.status}, Expired: {intent.is_expired}'
+            )
+
+        return value
+
+    def validate(self, attrs):
+        intent = BookingIntent.objects.get(booking_intent_id=attrs['booking_intent_id'])
+        attendees = attrs.get('attendees', [])
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+
+        if user and not user.is_staff and not user.is_superuser:
+            if not intent.made_by_id or intent.made_by_id != user.id:
+                raise serializers.ValidationError({
+                    'booking_intent_id': 'This booking intent does not belong to the authenticated user.'
+                })
+
+        if len(attendees) != intent.intended_ticket_count:
+            raise serializers.ValidationError({
+                'attendees': (
+                    f'Expected {intent.intended_ticket_count} attendees based on booking intent, '
+                    f'but received {len(attendees)} selections.'
+                )
+            })
+
+        for selection in attendees:
+            attendee = selection.get('_attendee')
+            if attendee and attendee.event_id != intent.event_id:
+                raise serializers.ValidationError({
+                    'attendees': f'Attendee {attendee.attendee_id} must belong to the same event as booking intent.'
+                })
+
+        attrs['_intent'] = intent
+        return attrs
+
+
 # ============================================================================
 # CHECKOUT SERIALIZERS
 # ============================================================================
@@ -875,6 +955,26 @@ class CheckoutSerializer(serializers.Serializer):
             allow_inactive_idempotent_replay=True,
             idempotency_key=idempotency_key,
         )
+
+        is_idempotent_replay = bool(
+            idempotency_key
+            and intent.last_checkout_idempotency_key
+            and idempotency_key == intent.last_checkout_idempotency_key
+        )
+
+        if not is_idempotent_replay:
+            precheck_result = AttendeePrecheckValidationService.validate(
+                event=intent.event,
+                user=user,
+                attendee_selections=attendee_selections,
+            )
+            if not precheck_result['valid']:
+                raise serializers.ValidationError({
+                    'attendees': {
+                        'booking_errors': precheck_result['booking_errors'],
+                        'attendee_errors': precheck_result['attendee_errors'],
+                    }
+                })
         
         # Store validated objects for processing
         attrs['_intent'] = intent

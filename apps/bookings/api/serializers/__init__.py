@@ -10,6 +10,7 @@ from .checkout_serializer import (
 	EventQuestionAnswerDraftSerializer,
 	AttendeeDraftSerializer,
 	AttendeeCheckoutSerializer,
+	BookingAttendeePrecheckSerializer,
 	CheckoutSerializer,
 	CheckoutPreviewSerializer,
 )

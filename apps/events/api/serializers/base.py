@@ -301,6 +301,9 @@ class EventDetailSerializer(serializers.ModelSerializer):
     
     # User permissions context
     user_permissions = serializers.SerializerMethodField()
+    user_registered_attendee_count = serializers.SerializerMethodField(read_only=True)
+    user_remaining_registration_slots = serializers.SerializerMethodField(read_only=True)
+    user_self_registered = serializers.SerializerMethodField(read_only=True)
     # TODO: return a field in which we can see the registration availability dates
     
     _links = serializers.SerializerMethodField()
@@ -319,6 +322,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'availability_windows', 'resources', 'landing_images', 'main_landing_image',
             'deleted_at', 'deleted_by', 'is_deleted', 'user_permissions', 'general_price', 'outstanding_tasks',
             'can_event_be_published', 'registration_open_date', 'registration_close_date', 'uptime',
+            'user_registered_attendee_count', 'user_remaining_registration_slots', 'user_self_registered',
             '_links'
         )
         read_only_fields = (
@@ -512,6 +516,57 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'assigned_permissions': assigned_permissions,
             'assigned_roles': assigned_roles
         }
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_user_registered_attendee_count(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return None
+
+        from apps.attendee.models import AttendeeStatus
+
+        return obj.attendees.filter(
+            booking__made_by=request.user,
+            status__in=[AttendeeStatus.REGISTERED, AttendeeStatus.CHECKED_IN],
+            deleted_at__isnull=True,
+        ).count()
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_user_remaining_registration_slots(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return None
+
+        settings_obj = getattr(obj, 'settings', None)
+        if not settings_obj:
+            return None
+
+        max_per_user = settings_obj.max_attendees_per_user
+        if max_per_user is None:
+            return None
+
+        current_count = self.get_user_registered_attendee_count(obj) or 0
+        return max(0, max_per_user - current_count)
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_user_self_registered(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return False
+
+        from apps.attendee.models import AttendeeRelationship, AttendeeStatus
+
+        return obj.attendees.filter(
+            user=request.user,
+            relationship_to_user=AttendeeRelationship.SELF,
+            status__in=[
+                AttendeeStatus.PENDING_PAYMENT,
+                AttendeeStatus.REGISTERED,
+                AttendeeStatus.CHECKED_IN,
+                AttendeeStatus.WHITELISTED,
+            ],
+            deleted_at__isnull=True,
+        ).exists()
     
     @extend_schema_field({
         'type': 'object',
