@@ -612,10 +612,150 @@ class OrderCheckoutAPITestCase(TestCase):
             order.order_reference_id
         )
 
+    # ------------------------------------------------------------------
+    # Reserved-payment negative tests
+    # ------------------------------------------------------------------
+
+    def test_checkout_stale_reserved_payment_rejected(self):
+        """Reserved payment that is no longer in DRAFTING status must be rejected with 400."""
+        order = self.create_order_with_items([(self.variant, 1)])
+
+        stale_payment = Payment.objects.create(
+            user=self.user,
+            event=self.event,
+            method=self.stripe_method,
+            base_amount=order.total_amount,
+            status=PaymentStatusChoices.PENDING,  # Not DRAFTING → stale
+            target=order,
+        )
+
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        data = {
+            'payment_method_id': self.stripe_method.id,
+            'payment_id': str(stale_payment.payment_id),
+        }
+
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_checkout_reserved_payment_wrong_user_rejected(self):
+        """Reserved payment belonging to a different user must be rejected with 400."""
+        other_user = User.objects.create_user(
+            username='other_ser_rp',
+            email='other_rp@example.com',
+            password='pass12345',
+        )
+        order = self.create_order_with_items([(self.variant, 1)])
+
+        other_payment = Payment.objects.create(
+            user=other_user,  # different user
+            event=self.event,
+            method=self.stripe_method,
+            base_amount=order.total_amount,
+            status=PaymentStatusChoices.DRAFTING,
+        )
+
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        data = {
+            'payment_method_id': self.stripe_method.id,
+            'payment_id': str(other_payment.payment_id),
+        }
+
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_checkout_reserved_payment_wrong_event_rejected(self):
+        """Reserved payment tied to a different event must be rejected with 400."""
+        other_event = Event.objects.create(
+            title='Other Event',
+            display_code='OE2026',
+            display_identifier='OE2026CONF001',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=60),
+            end_datetime=timezone.now() + timedelta(days=62),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation,
+        )
+        order = self.create_order_with_items([(self.variant, 1)])
+
+        mismatched_payment = Payment.objects.create(
+            user=self.user,
+            event=other_event,  # wrong event
+            method=self.stripe_method,
+            base_amount=order.total_amount,
+            status=PaymentStatusChoices.DRAFTING,
+        )
+
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        data = {
+            'payment_method_id': self.stripe_method.id,
+            'payment_id': str(mismatched_payment.payment_id),
+        }
+
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_checkout_reserved_payment_nonexistent_rejected(self):
+        """Passing a payment_id that does not exist must return 400."""
+        import uuid
+        order = self.create_order_with_items([(self.variant, 1)])
+
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        data = {
+            'payment_method_id': self.stripe_method.id,
+            'payment_id': str(uuid.uuid4()),
+        }
+
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ------------------------------------------------------------------
+    # Bank transfer evidence negative tests
+    # ------------------------------------------------------------------
+
+    def test_checkout_evidence_payload_rejected_for_stripe_method(self):
+        """Evidence payload submitted against a Stripe payment method must be rejected."""
+        order = self.create_order_with_items([(self.variant, 1)])
+
+        dummy_file = SimpleUploadedFile('receipt.pdf', b'dummy content', content_type='application/pdf')
+
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        data = {
+            'payment_method_id': self.stripe_method.id,
+            'bank_transfer_evidence.evidence_file': dummy_file,
+            'bank_transfer_evidence.payer_name': 'Test User',
+            'bank_transfer_evidence.payer_account_last4': '1234',
+            'bank_transfer_evidence.amount_on_evidence': '20.00',
+        }
+
+        # Use multipart format because evidence_file is a file upload
+        with patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create') as mock_pi:
+            mock_pi.return_value = MagicMock(id='pi_evidence_test', client_secret='secret')
+            response = self.client.post(url, data, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_checkout_evidence_payload_missing_file_rejected(self):
+        """Partial evidence payload (no evidence_file) must be rejected with 400."""
+        order = self.create_order_with_items([(self.variant, 1)])
+
+        url = f'/api/products/orders/{order.order_id}/checkout/'
+        data = {
+            'payment_method_id': self.bank_method.id,
+            # Intentionally omit evidence_file — only text fields
+            'bank_transfer_evidence.payer_name': 'Test User',
+            'bank_transfer_evidence.payer_account_last4': '1234',
+            'bank_transfer_evidence.amount_on_evidence': '20.00',
+        }
+
+        response = self.client.post(url, data, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class OrderCompletionAPITestCase(TestCase):
     """Test order completion API endpoint (staff only)."""
-    
+
     def setUp(self):
         """Set up test data."""
         # Create users

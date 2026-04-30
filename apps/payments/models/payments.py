@@ -161,7 +161,7 @@ class Payment(PayableModel):
         '''
         Calculate the total refunded amount for this payment by summing all related refunds.
         '''
-        return self.refund_requests.filter(verification_status=VerificationStatus.VERIFIED).aggregate(total=models.Sum('amount'))['total']
+        return self.refund_requests.filter(verification_status=VerificationStatus.PROCESSED).aggregate(total=models.Sum('amount'))['total']
 
     @property
     def outstanding_bank_transfer_evidence(self) -> bool:
@@ -169,7 +169,7 @@ class Payment(PayableModel):
         Check if there is outstanding bank transfer evidence that has not been verified for this payment. Only applicable for bank transfer payments.
         '''
         if self.method and self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
-            return not self.bank_transfer_evidence.filter(verification_status='verified').exists()
+            return not self.bank_transfer_evidence.filter(verification_status=VerificationStatus.PROCESSED).exists()
         return False
 
     @property
