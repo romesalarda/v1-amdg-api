@@ -39,11 +39,13 @@ class OrderPaymentProcessor:
 
         event = order.attendee.event if order.attendee else None
         if not event:
-            logger.warning(
+            logger.error(
                 f"Order {order.order_reference_id} has no associated event. "
-                "Cannot determine settings."
+                "Cannot determine settings for post-payment processing."
             )
-            return
+            raise ValueError(
+                f"Order {order.order_reference_id} cannot be processed because attendee/event context is missing."
+            )
 
         event_settings = getattr(event, 'settings', None)
 

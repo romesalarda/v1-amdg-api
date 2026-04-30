@@ -1678,6 +1678,8 @@ class OrderCheckoutSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'payment_method_id': f'Payment method must belong to the same event as the order ({order_event.title}).'
             })
+
+        order_event_id = order_event.id
         
         # Store payment method for use in viewset
         attrs['payment_method'] = payment_method
@@ -1702,7 +1704,7 @@ class OrderCheckoutSerializer(serializers.Serializer):
                     'payment_id': 'Reserved payment does not belong to the current user.'
                 })
 
-            if reserved_payment.event_id != order.attendee.event_id:
+            if reserved_payment.event_id != order_event_id:
                 raise serializers.ValidationError({
                     'payment_id': 'Reserved payment does not match the order event.'
                 })

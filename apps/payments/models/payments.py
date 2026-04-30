@@ -161,7 +161,7 @@ class Payment(PayableModel):
         '''
         Calculate the total refunded amount for this payment by summing all related refunds.
         '''
-        return self.refund_requests.filter(verification_status=VerificationStatus.VERIFIED).aggregate(total=models.Sum('amount'))['total']
+        return self.refund_requests.filter(verification_status=VerificationStatus.PROCESSED).aggregate(total=models.Sum('amount'))['total']
 
     @property
     def outstanding_bank_transfer_evidence(self) -> bool:
@@ -169,7 +169,7 @@ class Payment(PayableModel):
         Check if there is outstanding bank transfer evidence that has not been verified for this payment. Only applicable for bank transfer payments.
         '''
         if self.method and self.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
-            return not self.bank_transfer_evidence.filter(verification_status='verified').exists()
+            return not self.bank_transfer_evidence.filter(verification_status=VerificationStatus.PROCESSED).exists()
         return False
 
     @property
@@ -205,9 +205,11 @@ class Payment(PayableModel):
                 and not self.bank_transfer_reference
             ):
                 #! must generate bank transfer reference only if payment method is bank transfer
-                # self.bank_transfer_reference = generate_alphanumeric_id(MAX_LENGTH_BANK_REF) # TODO: change this to make it somewhat obvious incase someone needs to type it instead of copy/paste
+                # Limit username and display_code slices so the base never reaches MAX_LENGTH_BANK_REF,
+                # leaving room for the unique suffix. With MAX_LENGTH_BANK_REF=15 this gives:
+                # max base = 4 + 3 = 7 chars → unique_part = 15 - 7 - 1 = 7 chars → total = 15 ✓
                 self.bank_transfer_reference = generate_human_readable_id(
-                    MAX_LENGTH_BANK_REF, '', str(self.user.username)[4:], str(self.event.display_code)[4:], separator=''
+                    MAX_LENGTH_BANK_REF, '', str(self.user.username)[4:8], str(self.event.display_code)[4:7], separator=''
                 )
 
             try:

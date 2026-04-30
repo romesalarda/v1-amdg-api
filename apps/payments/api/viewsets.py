@@ -1837,10 +1837,6 @@ class DonationViewSet(viewsets.ModelViewSet):
                 try:
                     stripe_metadata = payment.prepare_stripe_metadata()
                     stripe_account_id = payment_method.get_stripe_account_id() if hasattr(payment_method, 'get_stripe_account_id') else None
-                    if not stripe_account_id:
-                        raise ValidationError({
-                            'payment_method_id': 'This Stripe payment method is not linked to a connected account.'
-                        })
 
                     payment_intent = PaymentIntentService.create(
                         amount=donation.amount,

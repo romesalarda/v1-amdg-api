@@ -30,6 +30,8 @@ from apps.payments.services.stripe.webhooks import (
     verify_webhook_signature,
     process_webhook_event,
     PaymentIntentSucceededHandler,
+    PaymentIntentPaymentFailedHandler,
+    PaymentIntentCanceledHandler,
     ChargeRefundedHandler
 )
 from apps.payments.services.stripe.exceptions import (
@@ -804,3 +806,277 @@ class PaymentModelTestCase(TestCase):
         # Transition to same status should be no-op
         payment.transition_to(PaymentStatusChoices.PENDING)
         self.assertEqual(payment.status, PaymentStatusChoices.PENDING)
+
+
+class WebhookFailurePathTestCase(TestCase):
+    """
+    Integrity tests for webhook failure/cancellation paths.
+
+    Verifies that:
+    - payment_intent.payment_failed marks payment FAILED and leaves related Order untouched
+    - payment_intent.canceled marks payment CANCELLED and leaves related Order untouched
+    - Duplicate failed/canceled events are idempotent (already_processed returned)
+    - Unknown payment_intent_id is gracefully ignored (no crash, 'ignored' status)
+    - Duplicate payment_intent.succeeded with different event ID is also idempotent
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='wh_failpath_user',
+            email='wh_failpath@example.com',
+            password='pass12345',
+        )
+        self.event_type = EventType.objects.create(
+            title='Fail Path Event Type',
+            code='WHFP',
+            created_by=self.user,
+        )
+        self.organisation = Organisation.objects.create(
+            title='Fail Path Org',
+            created_by=self.user,
+        )
+        self.django_event = Event.objects.create(
+            title='Fail Path Event',
+            display_code='FPEV26',
+            display_identifier='FPEV26FAILPATH001',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation,
+        )
+        self.payment_method = PaymentMethod.objects.create(
+            event=self.django_event,
+            method_type=PaymentMethodTypeChoices.STRIPE,
+            title='Stripe',
+            is_active=True,
+            created_by=self.user,
+        )
+        self.order = Order.objects.create(
+            customer=self.user,
+            status=OrderStatusChoices.PENDING,
+            total_amount=Money(50, 'GBP'),
+            created_by=self.user,
+        )
+        self.payment = Payment.objects.create(
+            user=self.user,
+            event=self.django_event,
+            method=self.payment_method,
+            base_amount=Money(50, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+            stripe_payment_intent='pi_failpath001',
+        )
+
+    # ------------------------------------------------------------------
+    # payment_intent.payment_failed
+    # ------------------------------------------------------------------
+
+    def _make_failed_event(self, event_id='evt_failed_001', pi_id='pi_failpath001'):
+        mock_event = Mock()
+        mock_event.id = event_id
+        mock_event.type = 'payment_intent.payment_failed'
+        mock_event.account = None
+        mock_event.data = Mock()
+        mock_event.data.object = Mock()
+        mock_event.data.object.id = pi_id
+        mock_event.data.object.last_payment_error = {'message': 'Your card was declined.'}
+        return mock_event
+
+    def _make_canceled_event(self, event_id='evt_canceled_001', pi_id='pi_failpath001'):
+        mock_event = Mock()
+        mock_event.id = event_id
+        mock_event.type = 'payment_intent.canceled'
+        mock_event.account = None
+        mock_event.data = Mock()
+        mock_event.data.object = Mock()
+        mock_event.data.object.id = pi_id
+        mock_event.data.object.cancellation_reason = 'requested_by_customer'
+        return mock_event
+
+    def test_payment_failed_handler_marks_payment_failed(self):
+        """payment_intent.payment_failed should set payment status to FAILED."""
+        handler = PaymentIntentPaymentFailedHandler(self._make_failed_event())
+        result = handler.handle()
+
+        self.assertEqual(result['status'], 'success')
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, PaymentStatusChoices.FAILED)
+
+    def test_payment_failed_does_not_advance_order(self):
+        """Order must remain in its original status after a payment failure."""
+        handler = PaymentIntentPaymentFailedHandler(self._make_failed_event())
+        handler.handle()
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, OrderStatusChoices.PENDING)
+
+    def test_payment_failed_history_action_created(self):
+        """A PaymentHistoryAction should be recorded for the failure."""
+        handler = PaymentIntentPaymentFailedHandler(self._make_failed_event())
+        handler.handle()
+
+        self.assertTrue(
+            PaymentHistoryAction.objects.filter(
+                payment=self.payment,
+                action='webhook_payment_failed',
+            ).exists()
+        )
+
+    def test_payment_failed_idempotency_same_event_id(self):
+        """Replaying the same failed event id should return already_processed."""
+        handler = PaymentIntentPaymentFailedHandler(self._make_failed_event())
+        first = handler.handle()
+        self.assertEqual(first['status'], 'success')
+
+        handler2 = PaymentIntentPaymentFailedHandler(self._make_failed_event())
+        second = handler2.handle()
+        self.assertEqual(second['status'], 'already_processed')
+
+    def test_payment_failed_idempotency_already_failed_status(self):
+        """If payment is already FAILED when the event arrives, return already_processed."""
+        self.payment.status = PaymentStatusChoices.FAILED
+        self.payment.save(update_fields=['status'])
+
+        handler = PaymentIntentPaymentFailedHandler(
+            self._make_failed_event(event_id='evt_failed_002')
+        )
+        result = handler.handle()
+        self.assertEqual(result['status'], 'already_processed')
+
+    # ------------------------------------------------------------------
+    # payment_intent.canceled
+    # ------------------------------------------------------------------
+
+    def test_payment_canceled_handler_marks_payment_cancelled(self):
+        """payment_intent.canceled should set payment status to CANCELLED."""
+        handler = PaymentIntentCanceledHandler(self._make_canceled_event())
+        result = handler.handle()
+
+        self.assertEqual(result['status'], 'success')
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, PaymentStatusChoices.CANCELLED)
+
+    def test_payment_canceled_does_not_advance_order(self):
+        """Order must remain in its original status after a payment cancellation."""
+        handler = PaymentIntentCanceledHandler(self._make_canceled_event())
+        handler.handle()
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, OrderStatusChoices.PENDING)
+
+    def test_payment_canceled_history_action_created(self):
+        """A PaymentHistoryAction should be recorded for the cancellation."""
+        handler = PaymentIntentCanceledHandler(self._make_canceled_event())
+        handler.handle()
+
+        self.assertTrue(
+            PaymentHistoryAction.objects.filter(
+                payment=self.payment,
+                action='webhook_payment_canceled',
+            ).exists()
+        )
+
+    def test_payment_canceled_idempotency_same_event_id(self):
+        """Replaying the same canceled event id should return already_processed."""
+        handler = PaymentIntentCanceledHandler(self._make_canceled_event())
+        first = handler.handle()
+        self.assertEqual(first['status'], 'success')
+
+        handler2 = PaymentIntentCanceledHandler(self._make_canceled_event())
+        second = handler2.handle()
+        self.assertEqual(second['status'], 'already_processed')
+
+    def test_payment_canceled_idempotency_already_cancelled_status(self):
+        """If payment is already CANCELLED when the event arrives, return already_processed."""
+        self.payment.status = PaymentStatusChoices.CANCELLED
+        self.payment.save(update_fields=['status'])
+
+        handler = PaymentIntentCanceledHandler(
+            self._make_canceled_event(event_id='evt_canceled_002')
+        )
+        result = handler.handle()
+        self.assertEqual(result['status'], 'already_processed')
+
+    # ------------------------------------------------------------------
+    # Unknown payment_intent_id
+    # ------------------------------------------------------------------
+
+    def test_payment_failed_unknown_pi_id_is_ignored(self):
+        """Unknown PaymentIntent ID in a failed event must return 'ignored', not raise."""
+        handler = PaymentIntentPaymentFailedHandler(
+            self._make_failed_event(pi_id='pi_unknown_xyz')
+        )
+        result = handler.handle()
+        self.assertEqual(result['status'], 'ignored')
+
+    def test_payment_canceled_unknown_pi_id_is_ignored(self):
+        """Unknown PaymentIntent ID in a canceled event must return 'ignored', not raise."""
+        handler = PaymentIntentCanceledHandler(
+            self._make_canceled_event(pi_id='pi_unknown_xyz')
+        )
+        result = handler.handle()
+        self.assertEqual(result['status'], 'ignored')
+
+    def test_payment_succeeded_unknown_pi_id_is_ignored(self):
+        """Unknown PaymentIntent ID in a succeeded event must return 'ignored', not raise."""
+        mock_event = Mock()
+        mock_event.id = 'evt_succ_unknown'
+        mock_event.type = 'payment_intent.succeeded'
+        mock_event.account = None
+        mock_event.data = Mock()
+        mock_event.data.object = Mock()
+        mock_event.data.object.id = 'pi_unknown_xyz'
+        mock_event.data.object.latest_charge = None
+        mock_event.data.object.amount_received = 5000
+        mock_event.data.object.currency = 'gbp'
+
+        handler = PaymentIntentSucceededHandler(mock_event)
+        result = handler.handle()
+        self.assertEqual(result['status'], 'ignored')
+
+    # ------------------------------------------------------------------
+    # Duplicate succeeded with a *different* event ID (re-delivery scenario)
+    # ------------------------------------------------------------------
+
+    def test_payment_succeeded_duplicate_different_event_id_is_idempotent(self):
+        """
+        When Stripe re-delivers payment_intent.succeeded with a new event ID but the
+        payment is already COMPLETED, the handler must return 'already_processed'
+        without mutating the payment.
+        """
+        # First delivery
+        mock_event = Mock()
+        mock_event.id = 'evt_succ_first'
+        mock_event.type = 'payment_intent.succeeded'
+        mock_event.account = None
+        mock_event.data = Mock()
+        mock_event.data.object = Mock()
+        mock_event.data.object.id = 'pi_failpath001'
+        mock_event.data.object.latest_charge = 'ch_first'
+        mock_event.data.object.amount_received = 5000
+        mock_event.data.object.currency = 'gbp'
+
+        PaymentIntentSucceededHandler(mock_event).handle()
+
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, PaymentStatusChoices.COMPLETED)
+
+        # Second delivery — different Stripe event ID, same PaymentIntent
+        mock_event2 = Mock()
+        mock_event2.id = 'evt_succ_second'
+        mock_event2.type = 'payment_intent.succeeded'
+        mock_event2.account = None
+        mock_event2.data = Mock()
+        mock_event2.data.object = Mock()
+        mock_event2.data.object.id = 'pi_failpath001'
+        mock_event2.data.object.latest_charge = 'ch_first'
+        mock_event2.data.object.amount_received = 5000
+        mock_event2.data.object.currency = 'gbp'
+
+        result2 = PaymentIntentSucceededHandler(mock_event2).handle()
+        self.assertEqual(result2['status'], 'already_processed')
+
+        # Payment state must be unchanged
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, PaymentStatusChoices.COMPLETED)

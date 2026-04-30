@@ -18,7 +18,7 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from apps.payments.models import Payment, PaymentStatusChoices
+from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 from apps.bookings.services import (
     TicketCreatorService,
     BookingCheckoutFinalizer,
@@ -184,17 +184,28 @@ def _handle_donation_payment(payment: Payment, donation) -> None:
     """
     Handle payment completion for Donation targets.
 
-    Donations require admin verification before being marked VERIFIED/PROCESSED.
-    Payment completion alone does not auto-verify a donation — it only confirms
-    funds were received.
+    For Stripe (and other immediately-confirmed) payments the funds are confirmed
+    by the payment provider, so the donation is auto-verified.
+    Bank-transfer donations still require admin review before being marked verified
+    because the evidence must be checked manually.
     """
-    logger.info(
-        f"Payment completed for donation {donation.tracking_reference} "
-        f"(payment {payment.payment_reference}). Awaiting admin verification."
-    )
-    # Do NOT call donation.mark_verified() here.
-    # The Donation docstring is explicit: admin reviews and marks verified/rejected.
-    # Calling mark_verified() automatically contradicts that workflow.
+    from apps.common.models.verification import VerificationStatus
+
+    if payment.method and payment.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+        logger.info(
+            f"Bank-transfer payment completed for donation {donation.tracking_reference} "
+            f"(payment {payment.payment_reference}). Awaiting admin verification."
+        )
+        return
+
+    # Stripe / Cash / Free — payment provider already confirmed funds; auto-verify.
+    if donation.verification_status != VerificationStatus.VERIFIED:
+        donation.verification_status = VerificationStatus.VERIFIED
+        donation.save(update_fields=['verification_status'])
+        logger.info(
+            f"Auto-verified donation {donation.tracking_reference} "
+            f"after payment {payment.payment_reference} completed."
+        )
 
 
 # ---------------------------------------------------------------------------
