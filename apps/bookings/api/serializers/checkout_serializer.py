@@ -649,10 +649,15 @@ class BookingAttendeePrecheckSerializer(serializers.Serializer):
                     'booking_intent_id': 'This booking intent does not belong to the authenticated user.'
                 })
 
-        if len(attendees) != intent.intended_ticket_count:
+        if not attendees:
+            raise serializers.ValidationError({
+                'attendees': 'At least one attendee selection is required for precheck.'
+            })
+
+        if len(attendees) > intent.intended_ticket_count:
             raise serializers.ValidationError({
                 'attendees': (
-                    f'Expected {intent.intended_ticket_count} attendees based on booking intent, '
+                    f'Booking intent allows at most {intent.intended_ticket_count} attendees, '
                     f'but received {len(attendees)} selections.'
                 )
             })

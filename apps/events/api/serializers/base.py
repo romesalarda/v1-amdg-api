@@ -527,7 +527,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
 
         return obj.attendees.filter(
             booking__made_by=request.user,
-            status__in=[AttendeeStatus.REGISTERED, AttendeeStatus.CHECKED_IN],
+            status__in=[AttendeeStatus.REGISTERED, AttendeeStatus.CHECKED_IN], # TODO: remove this
             deleted_at__isnull=True,
         ).count()
 
