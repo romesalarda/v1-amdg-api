@@ -23,6 +23,7 @@ class BaseProductStatisticsSerializer(serializers.Serializer):
     Base serializer for all product statistics responses.
     Includes common metadata fields and format transformation support.
     """
+    currency = serializers.DictField(read_only=True)
     generated_at = serializers.DateTimeField(
         read_only=True,
         default=timezone.now,
@@ -40,6 +41,7 @@ class BaseProductStatisticsSerializer(serializers.Serializer):
         If format=echarts, apply appropriate ECharts transformation.
         """
         representation = super().to_representation(instance)
+        representation['currency'] = self.context.get('currency', {})
         
         # Check if ECharts format is requested
         request = self.context.get('request')

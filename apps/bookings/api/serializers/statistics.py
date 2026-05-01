@@ -14,8 +14,14 @@ from typing import Dict, List, Any
 
 class BaseStatisticsSerializer(serializers.Serializer):
     """Base serializer for statistics responses."""
+    currency = serializers.DictField(required=False)
     generated_at = serializers.DateTimeField(required=False)
     filters_applied = serializers.DictField(required=False)
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        representation['currency'] = self.context.get('currency', {})
+        return representation
 
 
 class DistributionItemSerializer(serializers.Serializer):

@@ -145,6 +145,21 @@ LIMIT_PARAM = OpenApiParameter(
 # STATISTICS VIEWSET
 # ============================================================================
 
+from apps.payments.models import Payment as PaymentModel
+
+CURRENCY_SIGNS = {
+    'GBP': '£',
+    'USD': '$',
+    'EUR': '€',
+    'NGN': '₦',
+    'KES': 'KSh',
+    'GHS': 'GH₵',
+    'ZAR': 'R',
+    'CAD': 'CA$',
+    'AUD': 'A$',
+    'JPY': '¥',
+}
+
 @extend_schema_view(
     list=extend_schema(
         summary="Available statistics endpoints",
@@ -175,6 +190,25 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
     serializer_class = BookingStatisticsOverviewSerializer  # Default serializer
     queryset = Booking.objects.none()  # Schema generation model hint
     
+    def _get_currency_metadata(self, event_id=None):
+        """Resolve response currency metadata for booking statistics."""
+        qs = PaymentModel.objects.exclude(base_amount_currency__isnull=True)
+        if event_id:
+            qs = qs.filter(event__event_id=event_id)
+        currency_code = qs.order_by().values_list('base_amount_currency', flat=True).first()
+        if not currency_code:
+            currency_code = PaymentModel._meta.get_field('base_amount').default_currency
+        return {
+            'code': currency_code,
+            'sign': CURRENCY_SIGNS.get(currency_code, currency_code),
+        }
+
+    def _get_serializer_context(self, request, filters):
+        return {
+            'request': request,
+            'currency': self._get_currency_metadata(event_id=filters.get('event_id')),
+        }
+
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
         from apps.utils.querying import get_event_or_url_safe_title
@@ -348,7 +382,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = BookingOverviewSerializer(data=data)
+        serializer = BookingOverviewSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -370,7 +404,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         data = self._format_response(data, request, chart_type='pie', title='Booking Status Distribution')
-        serializer = BookingStatusDistributionSerializer(data=data)
+        serializer = BookingStatusDistributionSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -400,7 +434,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         data = self._format_response(data, request, chart_type='line', title='Booking Trends')
-        serializer = BookingTrendsSerializer(data=data)
+        serializer = BookingTrendsSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -424,7 +458,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             limit=limit
         )
         data = self._add_filter_metadata(data, request)
-        serializer = BookingsByPackageSerializer(data=data)
+        serializer = BookingsByPackageSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -445,7 +479,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = AttendeesPerBookingSerializer(data=data)
+        serializer = AttendeesPerBookingSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -466,7 +500,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = BookingCompletionRateSerializer(data=data)
+        serializer = BookingCompletionRateSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -487,7 +521,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = BookingReferenceTypesSerializer(data=data)
+        serializer = BookingReferenceTypesSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -508,7 +542,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = BookingTimelineSerializer(data=data)
+        serializer = BookingTimelineSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -533,7 +567,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = TicketOverviewSerializer(data=data)
+        serializer = TicketOverviewSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -555,7 +589,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         data = self._format_response(data, request, chart_type='pie', title='Ticket Status Distribution')
-        serializer = TicketStatusDistributionSerializer(data=data)
+        serializer = TicketStatusDistributionSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -576,7 +610,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = TicketTypeDistributionSerializer(data=data)
+        serializer = TicketTypeDistributionSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -597,7 +631,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = TicketUsageStatsSerializer(data=data)
+        serializer = TicketUsageStatsSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -619,7 +653,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         data = self._format_response(data, request, chart_type='pie', title='Ticket Scope Distribution')
-        serializer = TicketScopeDistributionSerializer(data=data)
+        serializer = TicketScopeDistributionSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -643,7 +677,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             organization_id=filters.get('organization_id')
         )
         data = self._add_filter_metadata(data, request)
-        serializer = PackageOverviewSerializer(data=data)
+        serializer = PackageOverviewSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -667,7 +701,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             limit=limit
         )
         data = self._add_filter_metadata(data, request)
-        serializer = PackagePopularitySerializer(data=data)
+        serializer = PackagePopularitySerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -688,7 +722,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         data = self._format_response(data, request, chart_type='bar', title='Package Rule Distribution')
-        serializer = PackageRuleDistributionSerializer(data=data)
+        serializer = PackageRuleDistributionSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -708,7 +742,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             organization_id=filters.get('organization_id')
         )
         data = self._add_filter_metadata(data, request)
-        serializer = PackagePricingAnalysisSerializer(data=data)
+        serializer = PackagePricingAnalysisSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -733,7 +767,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = IntentOverviewSerializer(data=data)
+        serializer = IntentOverviewSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -754,7 +788,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = IntentConversionRateSerializer(data=data)
+        serializer = IntentConversionRateSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -784,7 +818,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         data = self._format_response(data, request, chart_type='line', title='Intent Trends')
-        serializer = IntentTrendsSerializer(data=data)
+        serializer = IntentTrendsSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -809,7 +843,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = BookingRevenueOverviewSerializer(data=data)
+        serializer = BookingRevenueOverviewSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -833,7 +867,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             limit=limit
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueByPackageSerializer(data=data)
+        serializer = RevenueByPackageSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -854,7 +888,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueByTicketTypeSerializer(data=data)
+        serializer = RevenueByTicketTypeSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -884,7 +918,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
         )
         data = self._add_filter_metadata(data, request)
         data = self._format_response(data, request, chart_type='line', title='Revenue Trends')
-        serializer = BookingRevenueTrendsSerializer(data=data)
+        serializer = BookingRevenueTrendsSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -905,7 +939,7 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = BookingRevenueBreakdownSerializer(data=data)
+        serializer = BookingRevenueBreakdownSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
     
@@ -930,6 +964,6 @@ class BookingStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = BookingStatisticsOverviewSerializer(data=data)
+        serializer = BookingStatisticsOverviewSerializer(data=data, context=self._get_serializer_context(request, filters))
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)

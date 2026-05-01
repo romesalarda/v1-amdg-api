@@ -174,6 +174,20 @@ STATUS_PARAM = OpenApiParameter(
 
 import uuid
 from rest_framework import exceptions
+from apps.products.models.orders import Order as ProductOrder
+
+CURRENCY_SIGNS = {
+    'GBP': '£',
+    'USD': '$',
+    'EUR': '€',
+    'NGN': '₦',
+    'KES': 'KSh',
+    'GHS': 'GH₵',
+    'ZAR': 'R',
+    'CAD': 'CA$',
+    'AUD': 'A$',
+    'JPY': '¥',
+}
 
 @extend_schema_view(
     list=extend_schema(
@@ -205,6 +219,25 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
     serializer_class = ProductOverviewStatisticsSerializer  # Default serializer
     queryset = Product.objects.none()  # Schema generation model hint
     
+    def _get_currency_metadata(self, event_id=None):
+        """Resolve response currency metadata for product statistics."""
+        qs = ProductOrder.objects.exclude(total_amount_currency__isnull=True)
+        if event_id:
+            qs = qs.filter(event__event_id=event_id)
+        currency_code = qs.order_by().values_list('total_amount_currency', flat=True).first()
+        if not currency_code:
+            currency_code = ProductOrder._meta.get_field('total_amount').default_currency
+        return {
+            'code': currency_code,
+            'sign': CURRENCY_SIGNS.get(currency_code, currency_code),
+        }
+
+    def _get_serializer_context(self, request, filters):
+        return {
+            'request': request,
+            'currency': self._get_currency_metadata(event_id=filters.get('event_id')),
+        }
+
     def _get_common_filters(self, request):
         """Extract common filter parameters from request."""
         filters = {
@@ -449,7 +482,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             category_id=filters.get('category_id'),
         )
         data = self._add_filter_metadata(data, request)
-        serializer = ProductOverviewSerializer(data, context={'request': request})
+        serializer = ProductOverviewSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -476,7 +509,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             verified=filters.get('verified'),
         )
         data = self._add_filter_metadata(data, request)
-        serializer = CategoryDistributionSerializer(data, context={'request': request})
+        serializer = CategoryDistributionSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -501,7 +534,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             category_id=filters.get('category_id'),
         )
         data = self._add_filter_metadata(data, request)
-        serializer = ProductStatusDistributionSerializer(data, context={'request': request})
+        serializer = ProductStatusDistributionSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -532,7 +565,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             group_by=filters.get('group_by', 'day'),
         )
         data = self._add_filter_metadata(data, request)
-        serializer = ProductTrendsSerializer(data, context={'request': request})
+        serializer = ProductTrendsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -562,7 +595,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = VariantStockOverviewSerializer(data, context={'request': request})
+        serializer = VariantStockOverviewSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -592,7 +625,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = SizeDistributionSerializer(data, context={'request': request})
+        serializer = SizeDistributionSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -622,7 +655,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = ColorDistributionSerializer(data, context={'request': request})
+        serializer = ColorDistributionSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -652,7 +685,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = StockLevelsSerializer(data, context={'request': request})
+        serializer = StockLevelsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -680,7 +713,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = OrderStatusDistributionSerializer(data, context={'request': request})
+        serializer = OrderStatusDistributionSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -714,7 +747,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = OrderTrendsSerializer(data, context={'request': request})
+        serializer = OrderTrendsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -746,7 +779,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = OrdersByProductSerializer(data, context={'request': request})
+        serializer = OrdersByProductSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -774,7 +807,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = OrdersByCategorySerializer(data, context={'request': request})
+        serializer = OrdersByCategorySerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -802,7 +835,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = ProductRevenueOverviewSerializer(data, context={'request': request})
+        serializer = ProductRevenueOverviewSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -834,7 +867,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueByProductSerializer(data, context={'request': request})
+        serializer = RevenueByProductSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -862,7 +895,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = RevenueByCategorySerializer(data, context={'request': request})
+        serializer = RevenueByCategorySerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -892,7 +925,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = ProductRevenueTrendsSerializer(data, context={'request': request})
+        serializer = ProductRevenueTrendsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -920,7 +953,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = ProductRevenueBreakdownSerializer(data, context={'request': request})
+        serializer = ProductRevenueBreakdownSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -949,5 +982,5 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
             include_deleted=filters.get('include_deleted', False)
         )
         data = self._add_filter_metadata(data, request)
-        serializer = ProductOverviewStatisticsSerializer(data, context={'request': request})
+        serializer = ProductOverviewStatisticsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
