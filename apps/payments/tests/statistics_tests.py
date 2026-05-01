@@ -1152,6 +1152,16 @@ class PaymentStatisticsAPITests(PaymentStatisticsBaseTestCase):
         self.assertIn('total', response.data)
         self.assertIn('distribution', response.data)
 
+    def test_payment_statistics_include_top_level_currency_metadata(self):
+        """Test that payment statistics responses include top-level currency metadata."""
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get('/api/payments/statistics/revenue-overview/')
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        self.assertIn('currency', response.data)
+        self.assertEqual(response.data['currency']['code'], 'GBP')
+        self.assertEqual(response.data['currency']['sign'], '£')
+
     def test_payment_trends_hour_grouping_endpoint(self):
         """Test payment trends endpoint supports hour grouping."""
         self.client.force_authenticate(user=self.regular_user)

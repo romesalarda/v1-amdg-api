@@ -442,7 +442,7 @@ class EventViewSet(viewsets.ModelViewSet):
         # Query all bookings where user is owner or attendee
         base_queryset = Booking.objects.filter(
             event=event,
-        ).filter(
+        ).filter( # only include bookings that have users
             Q(made_by=request.user) | Q(attendees__user=request.user)
         ).select_related(
             'event',

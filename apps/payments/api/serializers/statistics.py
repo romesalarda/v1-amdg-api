@@ -16,6 +16,7 @@ class BasePaymentStatisticsSerializer(serializers.Serializer):
     Base serializer for all payment statistics responses.
     Includes common metadata fields.
     """
+    currency = serializers.DictField(read_only=True)
     generated_at = serializers.DateTimeField(read_only=True, default=timezone.now)
     filters_applied = serializers.DictField(read_only=True, required=False)
     
@@ -25,6 +26,7 @@ class BasePaymentStatisticsSerializer(serializers.Serializer):
         If format=echarts, apply appropriate ECharts transformation.
         """
         representation = super().to_representation(instance)
+        representation['currency'] = self.context.get('currency', {})
         
         # Check if ECharts format is requested
         request = self.context.get('request')
@@ -337,7 +339,7 @@ class TopDonorsSerializer(BasePaymentStatisticsSerializer):
             data=distribution,
             title='Top Donors',
             x_axis_label='Donor',
-            y_axis_label='Total Donated (£)',
+            y_axis_label='Total Donated',
             orientation='horizontal'
         )
 
@@ -366,7 +368,7 @@ class PaymentRevenueOverviewSerializer(BasePaymentStatisticsSerializer):
             data=distribution,
             title='Revenue Overview',
             x_axis_label='Category',
-            y_axis_label='Amount (£)'
+            y_axis_label='Amount'
         )
 
 
@@ -390,7 +392,7 @@ class PaymentRevenueTrendsSerializer(BasePaymentStatisticsSerializer):
             data=chart_data,
             title='Revenue Trends',
             x_axis_label='Date',
-            y_axis_label='Revenue (£)',
+            y_axis_label='Revenue',
             smooth=True
         )
 
@@ -423,7 +425,7 @@ class RevenueByMethodSerializer(BasePaymentStatisticsSerializer):
         return formatters.format_pie_chart(
             data=distribution,
             title='Revenue by Payment Method',
-            subtitle=f"Total: £{instance.get('total_revenue', 0):.2f}"
+            subtitle=f"Total: {instance.get('total_revenue', 0):.2f}"
         )
 
 
@@ -449,7 +451,7 @@ class PaymentRevenueBreakdownSerializer(BasePaymentStatisticsSerializer):
             data=distribution,
             title='Revenue Breakdown',
             x_axis_label='Category',
-            y_axis_label='Amount (£)'
+            y_axis_label='Amount'
         )
 
 

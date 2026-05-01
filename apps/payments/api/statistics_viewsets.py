@@ -124,6 +124,17 @@ LIMIT_PARAM = OpenApiParameter(
 )
 
 
+CURRENCY_SIGNS = {
+    'GBP': '£',
+    'USD': '$',
+    'EUR': 'EUR',
+    'NGN': '₦',
+    'KES': 'KSh',
+    'GHS': 'GH₵',
+    'ZAR': 'R',
+}
+
+
 # ============================================================================
 # STATISTICS VIEWSET
 # ============================================================================
@@ -277,6 +288,27 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         
         data['filters_applied'] = filters_applied
         data['generated_at'] = timezone.now()
+
+    def _get_currency_metadata(self, event_id=None):
+        """Resolve response currency metadata for payment statistics."""
+        queryset = Payment.objects.exclude(base_amount_currency__isnull=True)
+        if event_id:
+            queryset = queryset.filter(event__event_id=event_id)
+
+        currency_code = queryset.order_by().values_list('base_amount_currency', flat=True).first()
+        if not currency_code:
+            currency_code = Payment._meta.get_field('base_amount').default_currency
+
+        return {
+            'code': currency_code,
+            'sign': CURRENCY_SIGNS.get(currency_code, currency_code),
+        }
+
+    def _get_serializer_context(self, request, filters):
+        return {
+            'request': request,
+            'currency': self._get_currency_metadata(event_id=filters.get('event_id')),
+        }
     
     def list(self, request):
         """List all available statistics endpoints."""
@@ -374,7 +406,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = PaymentOverviewStatsSerializer(data, context={'request': request})
+        serializer = PaymentOverviewStatsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     # ========================================================================
@@ -400,7 +432,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = PaymentStatusDistributionSerializer(data, context={'request': request})
+        serializer = PaymentStatusDistributionSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -422,7 +454,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = PaymentMethodDistributionSerializer(data, context={'request': request})
+        serializer = PaymentMethodDistributionSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -450,7 +482,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = PaymentTrendsSerializer(data, context={'request': request})
+        serializer = PaymentTrendsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -472,7 +504,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = PaymentOverviewSerializer(data, context={'request': request})
+        serializer = PaymentOverviewSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     # ========================================================================
@@ -497,7 +529,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = DiscountUsageSerializer(data, context={'request': request})
+        serializer = DiscountUsageSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -518,7 +550,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = DiscountRuleEffectivenessSerializer(data, context={'request': request})
+        serializer = DiscountRuleEffectivenessSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -540,7 +572,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = TopDiscountsSerializer(data, context={'request': request})
+        serializer = TopDiscountsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     # ========================================================================
@@ -565,7 +597,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = RefundRequestStatsSerializer(data, context={'request': request})
+        serializer = RefundRequestStatsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -592,7 +624,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = RefundTrendsSerializer(data, context={'request': request})
+        serializer = RefundTrendsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -613,7 +645,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = RefundProcessingTimesSerializer(data, context={'request': request})
+        serializer = RefundProcessingTimesSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     # ========================================================================
@@ -638,7 +670,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = DonationStatsSerializer(data, context={'request': request})
+        serializer = DonationStatsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -665,7 +697,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = DonationTrendsSerializer(data, context={'request': request})
+        serializer = DonationTrendsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
@@ -687,7 +719,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = TopDonorsSerializer(data, context={'request': request})
+        serializer = TopDonorsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     # ========================================================================
@@ -696,7 +728,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
     
     @extend_schema(
         summary="Revenue overview",
-        description="Revenue overview statistics. CRITICAL: Only COMPLETED payments count toward revenue.",
+        description="Revenue overview statistics. CRITICAL: Uses COMPLETED and PARTIALLY_REFUNDED payments, with processed refunds deducted.",
         parameters=[EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
         responses={200: PaymentRevenueOverviewSerializer},
         tags=["Payment Statistics"],
@@ -728,12 +760,12 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = PaymentRevenueOverviewSerializer(data, context={'request': request})
+        serializer = PaymentRevenueOverviewSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
         summary="Revenue trends",
-        description="Revenue trends over time. CRITICAL: Only COMPLETED payments count toward revenue.",
+        description="Revenue trends over time. CRITICAL: Uses COMPLETED and PARTIALLY_REFUNDED payments, with processed refunds deducted.",
         parameters=[
             EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM,
             GROUP_BY_PARAM, DATE_FROM_PARAM, DATE_TO_PARAM
@@ -756,12 +788,12 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = PaymentRevenueTrendsSerializer(data, context={'request': request})
+        serializer = PaymentRevenueTrendsSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
         summary="Revenue by payment method",
-        description="Revenue breakdown by payment method. CRITICAL: Only COMPLETED payments count toward revenue.",
+        description="Revenue breakdown by payment method. CRITICAL: Uses COMPLETED and PARTIALLY_REFUNDED payments, with processed refunds deducted.",
         parameters=[EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
         responses={200: RevenueByMethodSerializer},
         tags=["Payment Statistics"],
@@ -778,12 +810,12 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = RevenueByMethodSerializer(data, context={'request': request})
+        serializer = RevenueByMethodSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
     
     @extend_schema(
         summary="Revenue breakdown",
-        description="Detailed revenue breakdown including gross, refunded, and net revenue. CRITICAL: Only COMPLETED payments count toward revenue.",
+        description="Detailed revenue breakdown including gross, refunded, and net revenue. CRITICAL: Uses COMPLETED and PARTIALLY_REFUNDED payments, with processed refunds deducted.",
         parameters=[EVENT_ID_PARAM, FORMAT_PARAM, INCLUDE_DELETED_PARAM],
         responses={200: PaymentRevenueBreakdownSerializer},
         tags=["Payment Statistics"],
@@ -800,7 +832,7 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
         
-        serializer = PaymentRevenueBreakdownSerializer(data, context={'request': request})
+        serializer = PaymentRevenueBreakdownSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)
 
     @extend_schema(
@@ -821,5 +853,5 @@ class PaymentStatisticsViewSet(viewsets.GenericViewSet):
         )
         self._add_filter_metadata(data, request)
 
-        serializer = SponsorPackagePaymentStatusSerializer(data, context={'request': request})
+        serializer = SponsorPackagePaymentStatusSerializer(data, context=self._get_serializer_context(request, filters))
         return Response(serializer.data)

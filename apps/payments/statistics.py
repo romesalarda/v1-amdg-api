@@ -13,7 +13,7 @@ Functions are designed to be:
 NOTE: Payment model does NOT support soft-delete. Only Order model has soft-delete support.
 The include_deleted parameter only affects Order-related statistics.
 """
-from django.db.models import Count, Q, Avg, Sum, F, Value, CharField, Case, When, DecimalField
+from django.db.models import Count, Q, Avg, Sum, F, Value, CharField, Case, When, DecimalField, ExpressionWrapper, OuterRef, Subquery
 from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, TruncHour, Coalesce
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
@@ -27,6 +27,7 @@ from apps.payments.models.discounts import Discount, DiscountRule
 from apps.payments.models.refunds import RefundRequest
 from apps.payments.models.donations import Donation
 from apps.payments.models.credit import CreditExpense, CreditExpenseTypeChoices
+from apps.common.models.verification import VerificationStatus
 from apps.products.models.orders import Order
 from apps.organisations.models import EventSponsorPackage
 
@@ -100,6 +101,55 @@ def _format_money_value(money_obj) -> Optional[float]:
 def _calculate_percentage(part: int, total: int) -> float:
     """Calculate percentage with division by zero protection."""
     return round((part / total * 100), 2) if total > 0 else 0.0
+
+
+REVENUE_ELIGIBLE_STATUSES = [
+    PaymentStatusChoices.COMPLETED,
+    PaymentStatusChoices.PARTIALLY_REFUNDED,
+]
+
+
+def _get_revenue_queryset(event_id: Optional[str] = None, include_deleted: bool = False):
+    """
+    Get revenue payment queryset.
+
+    Revenue is based on payments that still have collectible value:
+    COMPLETED and PARTIALLY_REFUNDED.
+    """
+    return _get_base_queryset(event_id, include_deleted).filter(
+        status__in=REVENUE_ELIGIBLE_STATUSES,
+    )
+
+
+def _with_effective_payment_amount(queryset):
+    """
+    Annotate per-payment refunded and effective amount.
+
+    Mirrors Payment.final_amount logic at query level:
+    effective_amount = base_amount - sum(processed_refunds)
+    """
+    processed_refund_subquery = RefundRequest.objects.filter(
+        payment=OuterRef('pk'),
+        verification_status=VerificationStatus.PROCESSED,
+    ).values('payment').annotate(
+        total=Sum('amount')
+    ).values('total')[:1]
+
+    return queryset.annotate(
+        processed_refunded_amount=Coalesce(
+            Subquery(
+                processed_refund_subquery,
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            ),
+            Value(Decimal('0.00')),
+            output_field=DecimalField(max_digits=14, decimal_places=2),
+        )
+    ).annotate(
+        effective_amount=ExpressionWrapper(
+            F('base_amount') - F('processed_refunded_amount'),
+            output_field=DecimalField(max_digits=14, decimal_places=2),
+        )
+    )
 
 
 # ============================================================================
@@ -281,9 +331,12 @@ def calculate_payment_overview(
     # Status breakdown
     status_breakdown = {}
     for status_choice in PaymentStatusChoices:
-        count = queryset.filter(status=status_choice.value).count()
+        status_qs = queryset.filter(status=status_choice.value)
+        count = status_qs.count()
+        status_amount = status_qs.aggregate(total=Sum('base_amount'))['total']
         status_breakdown[status_choice.value] = {
             'count': count,
+            'amount': _format_money_value(status_amount),
             'label': status_choice.label,
             'percentage': _calculate_percentage(count, total_payments)
         }
@@ -806,7 +859,8 @@ def calculate_revenue_overview(
     """
     Calculate revenue overview statistics.
     
-    CRITICAL: Only COMPLETED payments count toward revenue.
+    CRITICAL: Revenue uses COMPLETED + PARTIALLY_REFUNDED payments.
+    Processed refunds are deducted per payment (final/current amount).
     
     Args:
         event_id: Optional event UUID to filter payments
@@ -815,32 +869,23 @@ def calculate_revenue_overview(
     Returns:
         Dictionary with revenue overview data
     """
-    queryset = _get_base_queryset(event_id, include_deleted)
+    queryset = _get_revenue_queryset(event_id, include_deleted)
+    annotated_queryset = _with_effective_payment_amount(queryset)
 
-    # Only count COMPLETED payments for revenue
-    completed_payments = queryset.filter(status=PaymentStatusChoices.COMPLETED)
-
-    total_completed = completed_payments.count()
-    total_revenue = completed_payments.aggregate(total=Sum('base_amount'))['total']
-    average_payment = completed_payments.aggregate(avg=Avg('base_amount'))['avg']
-
-    # Calculate refunded amount (from REFUNDED status payments)
-    refunded_payments = queryset.filter(status=PaymentStatusChoices.REFUNDED)
-    total_refunded = refunded_payments.aggregate(total=Sum('base_amount'))['total']
-
-    # Net revenue = completed - refunded
-    net_revenue = (
-        _format_money_value(total_revenue) or 0
-    ) - (
-        _format_money_value(total_refunded) or 0
-    )
+    total_completed = queryset.count()
+    total_revenue = queryset.aggregate(total=Sum('base_amount'))['total']
+    average_payment = annotated_queryset.aggregate(avg=Avg('effective_amount'))['avg']
+    total_refunded = annotated_queryset.aggregate(total=Sum('processed_refunded_amount'))['total']
+    net_revenue = _format_money_value(
+        annotated_queryset.aggregate(total=Sum('effective_amount'))['total']
+    ) or 0
 
     return {
         'total_revenue': _format_money_value(total_revenue),
         'total_completed_payments': total_completed,
         'average_payment': _format_money_value(average_payment),
         'total_refunded': _format_money_value(total_refunded),
-        'refunded_payment_count': refunded_payments.count(),
+        'refunded_payment_count': annotated_queryset.filter(processed_refunded_amount__gt=0).count(),
         'net_revenue': net_revenue
     }
 
@@ -917,7 +962,8 @@ def calculate_revenue_trends(
     """
     Calculate revenue trends over time.
     
-    CRITICAL: Only COMPLETED payments count toward revenue.
+    CRITICAL: Revenue uses COMPLETED + PARTIALLY_REFUNDED payments
+    with processed refunds deducted from each payment.
     
     Args:
         event_id: Optional event UUID to filter payments
@@ -929,10 +975,9 @@ def calculate_revenue_trends(
     Returns:
         Dictionary with revenue trend data
     """
-    queryset = _get_base_queryset(event_id, include_deleted)
-    
-    # Only count COMPLETED payments
-    queryset = queryset.filter(status=PaymentStatusChoices.COMPLETED)
+    queryset = _with_effective_payment_amount(
+        _get_revenue_queryset(event_id, include_deleted)
+    )
     
     # Apply date filtering
     if date_from:
@@ -951,7 +996,7 @@ def calculate_revenue_trends(
         queryset = queryset.annotate(period=TruncDate('created_at'))
     
     trends = queryset.values('period').annotate(
-        revenue=Sum('base_amount'),
+        revenue=Sum('effective_amount'),
         count=Count('id')
     ).order_by('period')
     
@@ -978,7 +1023,8 @@ def calculate_revenue_by_method(
     """
     Calculate revenue breakdown by payment method.
     
-    CRITICAL: Only COMPLETED payments count toward revenue.
+    CRITICAL: Revenue uses COMPLETED + PARTIALLY_REFUNDED payments
+    with processed refunds deducted from each payment.
     
     Args:
         event_id: Optional event UUID to filter payments
@@ -987,12 +1033,11 @@ def calculate_revenue_by_method(
     Returns:
         Dictionary with revenue by method data
     """
-    queryset = _get_base_queryset(event_id, include_deleted)
-    
-    # Only count COMPLETED payments
-    queryset = queryset.filter(status=PaymentStatusChoices.COMPLETED)
-    
-    total_revenue = queryset.aggregate(total=Sum('base_amount'))['total']
+    queryset = _with_effective_payment_amount(
+        _get_revenue_queryset(event_id, include_deleted)
+    )
+
+    total_revenue = queryset.aggregate(total=Sum('effective_amount'))['total']
     total_revenue_float = _format_money_value(total_revenue) or 0
     
     # Group by payment method
@@ -1002,7 +1047,7 @@ def calculate_revenue_by_method(
         'method__title',
         'method__method_type'
     ).annotate(
-        revenue=Sum('base_amount'),
+        revenue=Sum('effective_amount'),
         count=Count('id')
     ).order_by('-revenue')
     
@@ -1021,7 +1066,7 @@ def calculate_revenue_by_method(
     without_method_revenue = queryset.filter(
         method__isnull=True
     ).aggregate(
-        revenue=Sum('base_amount'),
+        revenue=Sum('effective_amount'),
         count=Count('id')
     )
     
@@ -1040,7 +1085,8 @@ def calculate_revenue_breakdown(
     """
     Calculate comprehensive revenue breakdown.
     
-    CRITICAL: Only COMPLETED payments count toward revenue.
+    CRITICAL: Revenue uses COMPLETED + PARTIALLY_REFUNDED payments
+    with processed refunds deducted from each payment.
     
     Args:
         event_id: Optional event UUID to filter payments
@@ -1049,31 +1095,31 @@ def calculate_revenue_breakdown(
     Returns:
         Dictionary with revenue breakdown data
     """
-    queryset = _get_base_queryset(event_id, include_deleted)
-    
-    # Gross revenue (completed payments)
-    completed_payments = queryset.filter(status=PaymentStatusChoices.COMPLETED)
-    gross_revenue = completed_payments.aggregate(total=Sum('base_amount'))['total']
+    queryset = _get_revenue_queryset(event_id, include_deleted)
+    annotated_queryset = _with_effective_payment_amount(queryset)
+
+    # Gross revenue (before refunds) for revenue-eligible payments
+    gross_revenue = queryset.aggregate(total=Sum('base_amount'))['total']
     gross_revenue_float = _format_money_value(gross_revenue) or 0
-    
-    # Refunded amount
-    refunded_payments = queryset.filter(status=PaymentStatusChoices.REFUNDED)
-    refunded_amount = refunded_payments.aggregate(total=Sum('base_amount'))['total']
+
+    # Refunded amount from processed refunds applied to revenue-eligible payments
+    refunded_amount = annotated_queryset.aggregate(total=Sum('processed_refunded_amount'))['total']
     refunded_amount_float = _format_money_value(refunded_amount) or 0
     
     # Pending refund amount
     pending_refund_payments = queryset.filter(status=PaymentStatusChoices.PENDING_REFUND)
     pending_refund_amount = pending_refund_payments.aggregate(total=Sum('base_amount'))['total']
     pending_refund_amount_float = _format_money_value(pending_refund_amount) or 0
-    
-    # Net revenue
-    net_revenue = gross_revenue_float - refunded_amount_float
+
+    net_revenue = _format_money_value(
+        annotated_queryset.aggregate(total=Sum('effective_amount'))['total']
+    ) or 0
     
     return {
         'gross_revenue': gross_revenue_float,
-        'completed_payment_count': completed_payments.count(),
+        'completed_payment_count': queryset.count(),
         'refunded_amount': refunded_amount_float,
-        'refunded_payment_count': refunded_payments.count(),
+        'refunded_payment_count': annotated_queryset.filter(processed_refunded_amount__gt=0).count(),
         'pending_refund_amount': pending_refund_amount_float,
         'pending_refund_count': pending_refund_payments.count(),
         'net_revenue': net_revenue
