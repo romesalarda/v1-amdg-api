@@ -13,7 +13,7 @@ from apps.bookings.models import Booking, Ticket, TicketStatusChoices
 from apps.common.models import VerificationStatus
 from apps.payments.models import PaymentStatusChoices, RefundAssociation, RefundRequest
 from apps.payments.models.donations import Donation
-from apps.products.models import Order, OrderItem, OrderStatusChoices
+from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices
 from apps.organisations.models import EventSponsor
 
 logger = logging.getLogger(__name__)
@@ -109,8 +109,28 @@ class AttendeeRefundService:
     def _transition_order_to_pending_refund(cls, order: Order) -> bool:
         if order.status in {OrderStatusChoices.PENDING_REFUND, OrderStatusChoices.REFUNDED, OrderStatusChoices.CANCELLED}:
             return False
-        if order.status in {OrderStatusChoices.PROCESSING, OrderStatusChoices.COMPLETED}:
+        if order.status in {OrderStatusChoices.PROCESSING, OrderStatusChoices.COMPLETED, OrderStatusChoices.PARTIALLY_REFUNDED}:
             order.transition_to(OrderStatusChoices.PENDING_REFUND)
+            return True
+        return False
+
+    @classmethod
+    def _transition_order_to_partially_refunded(cls, order: Order) -> bool:
+        """Transition order to PARTIALLY_REFUNDED after a partial refund is processed.
+        Falls back gracefully from PENDING_REFUND. If the order was already PARTIALLY_REFUNDED
+        it stays there (idempotent). Returns True if a transition was made.
+        """
+        if order.status == OrderStatusChoices.PARTIALLY_REFUNDED:
+            return False
+        if order.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
+            return False
+        if order.status == OrderStatusChoices.PENDING_REFUND:
+            order.transition_to(OrderStatusChoices.PARTIALLY_REFUNDED)
+            return True
+        # Order never entered pending_refund yet (e.g. completed) — move it through
+        if order.status in {OrderStatusChoices.COMPLETED, OrderStatusChoices.PROCESSING}:
+            order.transition_to(OrderStatusChoices.PENDING_REFUND)
+            order.transition_to(OrderStatusChoices.PARTIALLY_REFUNDED)
             return True
         return False
 
@@ -700,7 +720,7 @@ class AttendeeRefundService:
                         target.transition_to(OrderStatusChoices.REFUNDED)
                         finalized_orders += 1
                     else:
-                        cls._transition_order_to_pending_refund(target)
+                        cls._transition_order_to_partially_refunded(target)
                 continue
 
             if isinstance(target, OrderItem):
@@ -728,12 +748,22 @@ class AttendeeRefundService:
                 if not order_items:
                     continue
 
-                is_fully_refunded = all(
-                    cls._get_order_item_refunded_quantity(refund_request.payment, item) >= item.quantity
-                    for item in order_items
-                )
+                fully_refunded_items = []
+                is_fully_refunded = True
+                for item in order_items:
+                    if cls._get_order_item_refunded_quantity(refund_request.payment, item) >= item.quantity:
+                        if item.status not in {OrderItemStatusChoices.REFUNDED, OrderItemStatusChoices.CANCELLED}:
+                            fully_refunded_items.append(item)
+                    else:
+                        is_fully_refunded = False
+
+                if fully_refunded_items:
+                    OrderItem.objects.filter(id__in=[i.id for i in fully_refunded_items]).update(
+                        status=OrderItemStatusChoices.REFUNDED
+                    )
+
                 if not is_fully_refunded:
-                    cls._transition_order_to_pending_refund(order)
+                    cls._transition_order_to_partially_refunded(order)
                     continue
 
                 if order.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
@@ -764,7 +794,7 @@ class AttendeeRefundService:
                         order.transition_to(OrderStatusChoices.REFUNDED)
                         finalized_orders += 1
                     else:
-                        cls._transition_order_to_pending_refund(order)
+                        cls._transition_order_to_partially_refunded(order)
 
         if affected_order_ids:
             for order in Order.objects.filter(id__in=affected_order_ids).prefetch_related("order_items"):
@@ -774,7 +804,18 @@ class AttendeeRefundService:
                     order.transition_to(OrderStatusChoices.REFUNDED)
                     finalized_orders += 1
                 else:
-                    cls._transition_order_to_pending_refund(order)
+                    # Mark individually-refunded items before the order-level partial transition
+                    # (so the PARTIALLY_REFUNDED cascade only rolls back unrefunded items)
+                    items_to_mark = [
+                        item for item in order.order_items.all()
+                        if cls._get_order_item_refunded_quantity(refund_request.payment, item) >= item.quantity
+                        and item.status not in {OrderItemStatusChoices.REFUNDED, OrderItemStatusChoices.CANCELLED}
+                    ]
+                    if items_to_mark:
+                        OrderItem.objects.filter(id__in=[i.id for i in items_to_mark]).update(
+                            status=OrderItemStatusChoices.REFUNDED
+                        )
+                    cls._transition_order_to_partially_refunded(order)
 
         metadata["process_finalized_at"] = refund_request.processed_at.isoformat() if refund_request.processed_at else None
         metadata["process_finalized_ticket_count"] = finalized_tickets

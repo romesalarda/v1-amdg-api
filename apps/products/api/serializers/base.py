@@ -31,7 +31,7 @@ import pytz
 
 from apps.products.models import (
     Product, ProductVariant, ProductSizeChoices,
-    Order, OrderItem, OrderStatusChoices, OPEN_ORDER_STATUSES,
+    Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices, OPEN_ORDER_STATUSES,
     ProductCategory, EventProductCategory
 )
 from apps.events.models import Event
@@ -1215,9 +1215,9 @@ class OrderItemSerializer(serializers.ModelSerializer):
         model = OrderItem
         fields = (
             'id', 'product_variant', 'product_variant_details',
-            'quantity', 'unit_price', 'total_price'
+            'quantity', 'unit_price', 'total_price', 'status',
         )
-        read_only_fields = ('id', 'unit_price', 'total_price')
+        read_only_fields = ('id', 'unit_price', 'total_price', 'status')
     
     def get_unit_price(self, obj) -> str:
         return str(obj.unit_price)

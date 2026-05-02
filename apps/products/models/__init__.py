@@ -1,5 +1,5 @@
 from .product import Product, ProductVariant, ProductSizeChoices
-from .orders import Order, OrderItem, OrderStatusChoices, OPEN_ORDER_STATUSES
+from .orders import Order, OrderItem, OrderStatusChoices, OPEN_ORDER_STATUSES, OrderItemStatusChoices
 from .category import ProductCategory, EventProductCategory
 
 __all__ = [
@@ -11,5 +11,6 @@ __all__ = [
     'OrderStatusChoices',
     'OPEN_ORDER_STATUSES',
     'ProductCategory',
+    'OrderItemStatusChoices',
     'EventProductCategory',
 ]

@@ -23,13 +23,31 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+ORDER_ITEM_STATUS_TRANSITIONS = {
+    'pending': ['completed', 'cancelled'],
+    'completed': ['pending_refund', 'refunded', 'cancelled'],
+    'cancelled': [],
+    'pending_refund': ['completed', 'refunded', 'cancelled'],
+    'refunded': [],
+}
+
+
+class OrderItemStatusChoices(models.TextChoices):
+    PENDING = 'pending', 'Pending'          # awaiting order completion
+    COMPLETED = 'completed', 'Completed'    # fulfilled; order reached completed
+    CANCELLED = 'cancelled', 'Cancelled'    # cancelled with the order
+    PENDING_REFUND = 'pending_refund', 'Pending Refund'  # refund in-flight
+    REFUNDED = 'refunded', 'Refunded'       # fully refunded
+
+
 ORDER_STATUS_TRANSITIONS = {
     'draft': ['pending', 'cancelled'],
     'pending': ['processing', 'cancelled'],
     'processing': ['completed', 'pending_refund', 'refunded', 'cancelled'],
     'completed': ['pending_refund', 'refunded', 'cancelled'],
     'cancelled': [],
-    'pending_refund': ['refunded', 'cancelled'],
+    'pending_refund': ['partially_refunded', 'refunded', 'completed', 'cancelled'],
+    'partially_refunded': ['pending_refund', 'refunded'],
     'refunded': [],
 }
 
@@ -40,7 +58,8 @@ class OrderStatusChoices(models.TextChoices):
     COMPLETED = 'completed', 'Completed' # successfully completed
     CANCELLED = 'cancelled', 'Cancelled' # cancelled by user or admin
     PENDING_REFUND = 'pending_refund', 'Pending Refund' # refund requested, awaiting processing
-    REFUNDED = 'refunded', 'Refunded' # refunded to user
+    PARTIALLY_REFUNDED = 'partially_refunded', 'Partially Refunded' # one or more items refunded, order still active
+    REFUNDED = 'refunded', 'Refunded' # fully refunded to user
 
 
 OPEN_ORDER_STATUSES = (
@@ -206,7 +225,7 @@ class Order(SoftDeleteModel): # no admin model
         old_status = self.status
         self.status = new_status
         
-        # Restore stock when cancelling or refunding an order
+        # Restore stock only on full cancellation or full refund (not partial)
         if new_status in [OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED]:
             for item in self.order_items.all():
                 if item.product_variant:
@@ -218,6 +237,34 @@ class Order(SoftDeleteModel): # no admin model
                         logger.warning(f"Reason: {str(e)}")
         
         self.save()
+        self._cascade_item_status(new_status)
+
+    def _cascade_item_status(self, new_order_status: str):
+        """Update OrderItem.status to reflect the new Order status."""
+        P = OrderItemStatusChoices.PENDING
+        COM = OrderItemStatusChoices.COMPLETED
+        CAN = OrderItemStatusChoices.CANCELLED
+        PR = OrderItemStatusChoices.PENDING_REFUND
+        R = OrderItemStatusChoices.REFUNDED
+
+        if new_order_status == OrderStatusChoices.COMPLETED:
+            self.order_items.filter(status=P).update(status=COM)
+
+        elif new_order_status == OrderStatusChoices.CANCELLED:
+            self.order_items.exclude(status__in=[CAN, R]).update(status=CAN)
+
+        elif new_order_status == OrderStatusChoices.PENDING_REFUND:
+            # Items that are active (completed) enter in-flight state
+            self.order_items.filter(status=COM).update(status=PR)
+
+        elif new_order_status == OrderStatusChoices.PARTIALLY_REFUNDED:
+            # Items still in pending_refund were NOT refunded this round — return to completed
+            # Items already marked refunded by the service are left untouched
+            self.order_items.filter(status=PR).update(status=COM)
+
+        elif new_order_status == OrderStatusChoices.REFUNDED:
+            # All remaining active/in-flight items are now fully refunded
+            self.order_items.exclude(status__in=[R, CAN]).update(status=R)
 
     def get_total_amount(self) -> Money:
         '''
@@ -446,6 +493,12 @@ class OrderItem(models.Model): # no admin model
         help_text='PackageProduct this item was created from, if part of a booking package'
     )
 
+    status = models.CharField(
+        max_length=20,
+        choices=OrderItemStatusChoices.choices,
+        default=OrderItemStatusChoices.PENDING,
+    )
+
     quantity = models.PositiveIntegerField(validators=[validators.MinValueValidator(1)])
     unit_price = MoneyField(max_digits=10, decimal_places=2, default_currency='GBP') # price per unit at time of order
     total_price = MoneyField(max_digits=10, decimal_places=2, default_currency='GBP') # unit_price * quantity
@@ -464,6 +517,17 @@ class OrderItem(models.Model): # no admin model
         if self.total_price.amount != self.unit_price.amount * self.quantity:
             raise exceptions.ValidationError("Total price must equal unit price multiplied by quantity.")
         
+    def can_transition_to(self, new_status: str) -> bool:
+        return new_status in ORDER_ITEM_STATUS_TRANSITIONS.get(self.status, [])
+
+    def transition_to(self, new_status: str):
+        if not self.can_transition_to(new_status):
+            raise exceptions.ValidationError(
+                f"Cannot transition OrderItem from {self.status} to {new_status}."
+            )
+        self.status = new_status
+        self.save(update_fields=['status'])
+
     def set_unit_price(self, new_unit_price: Money): # needs testing
         '''
         Sets a new unit price and updates the total price accordingly.
