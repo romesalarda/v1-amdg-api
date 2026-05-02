@@ -2252,6 +2252,7 @@ class EventViewSet(viewsets.ModelViewSet):
         if resource_type:
             resources = resources.filter(resource_type=resource_type)
 
+        resources = resources.exclude(tag__in=['LANDING_PHOTO_MAIN', 'LANDING_PHOTO_SECONDARY', 'QUESTION_UPLOAD'])
         # paginate
         paginated = self.paginate_queryset(resources)
         if paginated is not None:

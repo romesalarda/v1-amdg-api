@@ -219,6 +219,7 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     def filter_search(self, queryset, name, value):
         """Search across name, email, phone, and display ID."""
+        # TODO: ensure can search with first name and last name together (currently searches them separately and combines with OR)
         return queryset.filter(
             Q(first_name__icontains=value) |
             Q(last_name__icontains=value) |
