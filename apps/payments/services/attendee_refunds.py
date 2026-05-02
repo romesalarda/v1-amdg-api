@@ -310,6 +310,7 @@ class AttendeeRefundService:
     @classmethod
     @transaction.atomic
     def attach_associations(cls, refund_request: RefundRequest) -> None:
+        print("Attaching associations for refund request", refund_request.id)
         metadata = refund_request.metadata or {}
         refund_scope = metadata.get("refund_scope")
         if refund_scope == "targeted_order_items":
@@ -321,8 +322,10 @@ class AttendeeRefundService:
                 RefundAssociation.objects.filter(refund_request=refund_request).values_list("target_type_id", "target_id")
             )
             currency = refund_request.amount.currency
+            print("Attaching targeted order item associations", selected_items, existing_keys)
 
             for item_data in selected_items:
+                # TODO: warning multiple items could be returned although unlikely
                 order_item = (
                     OrderItem.objects
                     .select_related("order")
@@ -352,6 +355,8 @@ class AttendeeRefundService:
                         "unit_price": item_data.get("unit_price"),
                     },
                 )
+                order_item.order.transition_to(OrderStatusChoices.PENDING_REFUND)
+
             return
 
         if refund_scope == "targeted_booking_products":

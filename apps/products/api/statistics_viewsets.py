@@ -223,7 +223,7 @@ class ProductStatisticsViewSet(viewsets.GenericViewSet):
         """Resolve response currency metadata for product statistics."""
         qs = ProductOrder.objects.exclude(total_amount_currency__isnull=True)
         if event_id:
-            qs = qs.filter(event__event_id=event_id)
+            qs = qs.filter(payment__event__event_id=event_id)
         currency_code = qs.order_by().values_list('total_amount_currency', flat=True).first()
         if not currency_code:
             currency_code = ProductOrder._meta.get_field('total_amount').default_currency

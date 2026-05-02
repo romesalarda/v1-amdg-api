@@ -85,9 +85,7 @@ class Attendee(SoftDeleteModel):
             self.attendee_display_id = display.generate_human_readable_id(20, "ATT", self.event.display_code[:5])
 
         self.first_name = self.first_name.strip().title()
-        self.last_name = self.last_name.strip().title()
-        
-        self.clean()
+        self.last_name = self.last_name.strip().title()        
         super().save(*args, **kwargs)
     
     def __str__(self):

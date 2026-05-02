@@ -56,6 +56,8 @@ ALLOWED_STATUS_TRANSITIONS = {
     PaymentStatusChoices.PARTIALLY_REFUNDED: [
         PaymentStatusChoices.REFUNDED, # full refund completed
         PaymentStatusChoices.PARTIALLY_REFUNDED, # additional partial refund
+        PaymentStatusChoices.PENDING_REFUND, # pending additional refund
+        PaymentStatusChoices.COMPLETED, # refund cancelled, back to completed
     ],
 }
 
@@ -209,8 +211,8 @@ class Payment(PayableModel):
                 # leaving room for the unique suffix. With MAX_LENGTH_BANK_REF=15 this gives:
                 # max base = 4 + 3 = 7 chars → unique_part = 15 - 7 - 1 = 7 chars → total = 15 ✓
                 self.bank_transfer_reference = generate_human_readable_id(
-                    MAX_LENGTH_BANK_REF, '', str(self.user.username)[4:8], str(self.event.display_code)[4:7], separator=''
-                )
+                    MAX_LENGTH_BANK_REF, 'BK', str(self.user.username)[4:8], str(self.event.display_code)[4:7], separator=''
+                ).upper().replace('-', '').replace(' ', '').replace('_', '').replace('.', '')
 
             try:
                 with transaction.atomic():

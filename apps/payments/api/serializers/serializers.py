@@ -1221,6 +1221,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         reason_code = attrs.get('reason_code', 'unspecified')
         refund_context = {
             'is_booking_payment': AttendeeRefundService.is_booking_payment(payment),
+            'is_general_payment': payment.target is None,
             'selected_attendee_ids': attendee_ids,
             'breakdown': None,
             'refund_scope': 'legacy',
@@ -1252,7 +1253,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 'attendee_ids': "attendee_ids is only valid for booking-linked payments."
             })
 
-        if not refund_context['is_booking_payment'] and amount < payment.base_amount and not is_targeted_order_refund:
+        if not refund_context['is_booking_payment'] and amount < payment.base_amount and not is_targeted_order_refund and not refund_context["is_general_payment"]:
             raise serializers.ValidationError({
                 'refund_items': "refund_items is required for partial refunds on order-linked payments."
             })
@@ -1297,6 +1298,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
 
         elif is_targeted_order_refund:
             breakdown = AttendeeRefundService.calculate_targeted_order_item_breakdown(payment, refund_items)
+            print("Calculated targeted order item breakdown", breakdown)
             refund_context['selected_refund_items'] = breakdown.get('items', [])
             refund_context['breakdown'] = breakdown
             refund_context['refund_scope'] = 'targeted_order_items'

@@ -1260,7 +1260,7 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         payment = serializer.validated_data.get('payment')
         
         # Check if user owns the payment or is admin
-        if not (user.is_superuser or user.is_staff) and payment.user != user:
+        if not (user.is_superuser or user.is_staff) and payment.user != user: # TODO: this should be implemented in object perms
             # Check if user is admin for the event
             from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
             is_event_admin = EventRoleAssignment.objects.filter(
@@ -1272,6 +1272,7 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             if not is_event_admin:
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You can only create refund requests for your own payments.")
+            
         refund_request = serializer.save()
         payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
 
