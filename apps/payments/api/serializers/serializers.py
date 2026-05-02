@@ -1157,8 +1157,9 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         required=False,
         allow_empty=True,
         help_text=(
-            "Optional granular refund targets. For booking-linked partial refunds, use items with: "
-            "attendee_id (required), quantity (required), and one of order_item_id or unique variant/package selector."
+            "Optional granular refund targets. Supported only for booking/order payment targets. "
+            "Booking-item scope requires attendee_id + quantity + (order_item_id OR unique variant/package selector). "
+            "Order-item scope requires order_item_id + quantity."
         ),
     )
     reason_code = serializers.CharField(
@@ -1207,6 +1208,17 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Reason must not exceed 1000 characters.")
         return value
     
+    def _quantized_amount(self, value) -> Decimal:
+        return Decimal(str(value)).quantize(Decimal('0.01'))
+
+    def _assert_breakdown_amount_matches(self, requested_amount, breakdown_total, error_prefix: str) -> None:
+        requested = self._quantized_amount(requested_amount)
+        expected = self._quantized_amount(breakdown_total)
+        if requested != expected:
+            raise serializers.ValidationError({
+                'amount': f"{error_prefix} ({expected})."
+            })
+
     def validate(self, attrs):
         """Cross-field validation for refund request."""
         payment = attrs.get('payment')
@@ -1219,41 +1231,58 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         override_used_ticket_block = attrs.get('override_used_ticket_block', False)
         override_reason = attrs.get('override_reason')
         reason_code = attrs.get('reason_code', 'unspecified')
+        target_kind = AttendeeRefundService.assert_supported_payment_target(payment)
+
         refund_context = {
-            'is_booking_payment': AttendeeRefundService.is_booking_payment(payment),
-            'is_general_payment': payment.target is None,
+            'target_kind': target_kind,
+            'is_booking_payment': target_kind == AttendeeRefundService.TARGET_KIND_BOOKING,
             'selected_attendee_ids': attendee_ids,
             'breakdown': None,
             'refund_scope': 'legacy',
             'selected_refund_items': [],
         }
-        
-        # Ensure amount doesn't exceed payment
+
+        is_booking_payment = refund_context['is_booking_payment']
+        is_order_payment = target_kind == AttendeeRefundService.TARGET_KIND_ORDER
+        is_full_refund_only_target = AttendeeRefundService.is_full_refund_only_target_kind(target_kind)
+
         if amount > payment.base_amount:
             raise serializers.ValidationError({
                 'amount': f"Refund amount cannot exceed payment amount ({payment.base_amount})."
             })
 
-        is_targeted_booking_refund = refund_context['is_booking_payment'] and bool(refund_items)
-        is_targeted_order_refund = (not refund_context['is_booking_payment']) and bool(refund_items)
+        is_targeted_booking_refund = is_booking_payment and bool(refund_items)
+        is_targeted_order_refund = is_order_payment and bool(refund_items)
 
-        # Partial booking refunds must explicitly select attendees when not using granular targets.
-        if refund_context['is_booking_payment'] and amount < payment.base_amount and not attendee_ids and not is_targeted_booking_refund:
+        if not AttendeeRefundService.supports_itemized_refunds(payment) and refund_items:
             raise serializers.ValidationError({
-                'attendee_ids': "attendee_ids is required for partial refunds on booking payments."
+                'refund_items': "refund_items is only supported for booking or order payment targets."
             })
 
-        if refund_context['is_booking_payment'] and refund_items and attendee_ids:
-            raise serializers.ValidationError({
-                'refund_items': "Use either attendee_ids or refund_items for booking refunds, not both."
-            })
-
-        if not refund_context['is_booking_payment'] and attendee_ids:
+        if not is_booking_payment and attendee_ids:
             raise serializers.ValidationError({
                 'attendee_ids': "attendee_ids is only valid for booking-linked payments."
             })
 
-        if not refund_context['is_booking_payment'] and amount < payment.base_amount and not is_targeted_order_refund and not refund_context["is_general_payment"]:
+        if is_full_refund_only_target and amount < payment.base_amount:
+            raise serializers.ValidationError({
+                'amount': (
+                    f"Partial refunds are not supported for payment target type '{target_kind}'. "
+                    "Only full refunds are supported."
+                )
+            })
+
+        if is_booking_payment and amount < payment.base_amount and not attendee_ids and not is_targeted_booking_refund:
+            raise serializers.ValidationError({
+                'attendee_ids': "attendee_ids is required for partial refunds on booking payments."
+            })
+
+        if is_booking_payment and refund_items and attendee_ids:
+            raise serializers.ValidationError({
+                'refund_items': "Use either attendee_ids or refund_items for booking refunds, not both."
+            })
+
+        if is_order_payment and amount < payment.base_amount and not is_targeted_order_refund:
             raise serializers.ValidationError({
                 'refund_items': "refund_items is required for partial refunds on order-linked payments."
             })
@@ -1278,43 +1307,30 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                     )
                 })
 
-        if refund_context['is_booking_payment'] and is_targeted_booking_refund:
+        if is_booking_payment and is_targeted_booking_refund:
             breakdown = AttendeeRefundService.calculate_targeted_booking_product_breakdown(payment, refund_items)
             refund_context['selected_attendee_ids'] = breakdown.get('selected_attendee_ids', [])
             refund_context['selected_refund_items'] = breakdown.get('items', [])
             refund_context['breakdown'] = breakdown
             refund_context['refund_scope'] = 'targeted_booking_products'
-
-            breakdown_total = breakdown['total']
-            breakdown_total_amount = Decimal(str(getattr(breakdown_total, 'amount', breakdown_total))).quantize(Decimal('0.01'))
-            requested_amount = Decimal(str(amount.amount)).quantize(Decimal('0.01'))
-
-            if requested_amount != breakdown_total_amount:
-                raise serializers.ValidationError({
-                    'amount': (
-                        f"Targeted booking refund amount must match selected item total ({breakdown_total_amount})."
-                    )
-                })
+            self._assert_breakdown_amount_matches(
+                amount.amount,
+                breakdown.get('total', 0),
+                'Targeted booking refund amount must match selected item total',
+            )
 
         elif is_targeted_order_refund:
             breakdown = AttendeeRefundService.calculate_targeted_order_item_breakdown(payment, refund_items)
-            print("Calculated targeted order item breakdown", breakdown)
             refund_context['selected_refund_items'] = breakdown.get('items', [])
             refund_context['breakdown'] = breakdown
             refund_context['refund_scope'] = 'targeted_order_items'
+            self._assert_breakdown_amount_matches(
+                amount.amount,
+                breakdown.get('total', 0),
+                'Targeted order refund amount must match selected item total',
+            )
 
-            breakdown_total = breakdown['total']
-            breakdown_total_amount = Decimal(str(getattr(breakdown_total, 'amount', breakdown_total))).quantize(Decimal('0.01'))
-            requested_amount = Decimal(str(amount.amount)).quantize(Decimal('0.01'))
-
-            if requested_amount != breakdown_total_amount:
-                raise serializers.ValidationError({
-                    'amount': (
-                        f"Targeted order refund amount must match selected item total ({breakdown_total_amount})."
-                    )
-                })
-
-        elif refund_context['is_booking_payment']:
+        elif is_booking_payment:
             if not attendee_ids and amount == payment.base_amount:
                 attendee_ids = list(
                     payment.target.attendees.filter(deleted_at__isnull=True).values_list('attendee_id', flat=True)
@@ -1336,19 +1352,23 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
             refund_context['breakdown'] = breakdown
             refund_context['refund_scope'] = 'attendee_entities'
 
-            # Explicitly enforce amount integrity for partial booking refunds.
-            breakdown_total = breakdown['total']
-            breakdown_total_amount = Decimal(str(getattr(breakdown_total, 'amount', breakdown_total))).quantize(Decimal('0.01'))
-            requested_amount = Decimal(str(amount.amount)).quantize(Decimal('0.01'))
+            if amount < payment.base_amount:
+                self._assert_breakdown_amount_matches(
+                    amount.amount,
+                    breakdown.get('total', 0),
+                    'Partial booking refund amount must match selected attendee entity total',
+                )
 
-            if amount < payment.base_amount and requested_amount != breakdown_total_amount:
-                raise serializers.ValidationError({
-                    'amount': (
-                        f"Partial booking refund amount must match selected attendee entity total ({breakdown_total_amount})."
-                    )
-                })
-        
-        # Check refund policy if exists
+        else:
+            breakdown = AttendeeRefundService.calculate_full_target_breakdown(payment)
+            refund_context['breakdown'] = breakdown
+            refund_context['refund_scope'] = 'full_target'
+            self._assert_breakdown_amount_matches(
+                amount.amount,
+                breakdown.get('total', 0),
+                'Full refund amount must match payment amount',
+            )
+
         if hasattr(payment.event, 'refund_policy'):
             policy = payment.event.refund_policy
             if not policy.is_refundable(timezone.now()):
@@ -1364,7 +1384,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
             'requested_by_id': actor.id if actor else None,
             'requested_by_username': actor.username if actor else None,
         }
-        
+
         return attrs
     
     def create(self, validated_data):
@@ -1388,6 +1408,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 'requested_by_username': refund_context.get('requested_by_username'),
                 'override_used_ticket_block': refund_context.get('override_used_ticket_block', False),
                 'override_reason': refund_context.get('override_reason'),
+                'target_kind': refund_context.get('target_kind'),
                 'refund_scope': refund_context.get('refund_scope', 'legacy'),
                 'frozen_breakdown': refund_context.get('breakdown'),
             }

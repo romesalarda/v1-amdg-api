@@ -5,12 +5,16 @@ from typing import Any, Dict, List
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import transaction
+
 from djmoney.money import Money
 
 from apps.attendee.models import Attendee
 from apps.bookings.models import Booking, Ticket, TicketStatusChoices
+from apps.common.models import VerificationStatus
 from apps.payments.models import PaymentStatusChoices, RefundAssociation, RefundRequest
+from apps.payments.models.donations import Donation
 from apps.products.models import Order, OrderItem, OrderStatusChoices
+from apps.organisations.models import EventSponsor
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +22,133 @@ logger = logging.getLogger(__name__)
 class AttendeeRefundService:
     """Orchestrates attendee-scoped refund validation and side effects."""
 
+    TARGET_KIND_BOOKING = "booking"
+    TARGET_KIND_ORDER = "order"
+    TARGET_KIND_TICKET = "ticket"
+    TARGET_KIND_DONATION = "donation"
+    TARGET_KIND_SPONSORSHIP = "sponsorship"
+    TARGET_KIND_NONE = "none"
+    TARGET_KIND_UNSUPPORTED = "unsupported"
+
+    FULL_REFUND_ONLY_TARGET_KINDS = {
+        TARGET_KIND_DONATION,
+        TARGET_KIND_SPONSORSHIP,
+        TARGET_KIND_TICKET,
+        TARGET_KIND_NONE,
+    }
+
+    ITEMIZED_REFUND_TARGET_KINDS = {
+        TARGET_KIND_BOOKING,
+        TARGET_KIND_ORDER,
+    }
+
+    @classmethod
+    def get_payment_target_kind(cls, payment) -> str:
+        target = getattr(payment, "target", None)
+        if target is None:
+            return cls.TARGET_KIND_NONE
+        if isinstance(target, Booking):
+            return cls.TARGET_KIND_BOOKING
+        if isinstance(target, Order):
+            return cls.TARGET_KIND_ORDER
+        if isinstance(target, Ticket):
+            return cls.TARGET_KIND_TICKET
+        if isinstance(target, Donation):
+            return cls.TARGET_KIND_DONATION
+        if isinstance(target, EventSponsor):
+            return cls.TARGET_KIND_SPONSORSHIP
+        return cls.TARGET_KIND_UNSUPPORTED
+
+    @classmethod
+    def assert_supported_payment_target(cls, payment) -> str:
+        target_kind = cls.get_payment_target_kind(payment)
+        if target_kind == cls.TARGET_KIND_UNSUPPORTED:
+            raise ValidationError("Refunds are not supported for this payment target type.")
+        return target_kind
+
+    @classmethod
+    def is_full_refund_only_target_kind(cls, target_kind: str) -> bool:
+        return target_kind in cls.FULL_REFUND_ONLY_TARGET_KINDS
+
+    @classmethod
+    def supports_itemized_refunds(cls, payment) -> bool:
+        return cls.get_payment_target_kind(payment) in cls.ITEMIZED_REFUND_TARGET_KINDS
+
+    @classmethod
+    def calculate_full_target_breakdown(cls, payment) -> Dict[str, Any]:
+        """Build frozen context for full refunds that are target-level only."""
+        target_kind = cls.assert_supported_payment_target(payment)
+        if target_kind not in {
+            cls.TARGET_KIND_ORDER,
+            cls.TARGET_KIND_DONATION,
+            cls.TARGET_KIND_SPONSORSHIP,
+            cls.TARGET_KIND_TICKET,
+            cls.TARGET_KIND_NONE,
+        }:
+            raise ValidationError("Full-target refund context is not available for this payment type.")
+
+        total = Decimal(str(payment.base_amount.amount)).quantize(Decimal("0.01"))
+        return {
+            "scope": "full_target",
+            "target_kind": target_kind,
+            "total": float(total),
+            "total_currency": payment.base_amount.currency.code,
+            "items": [],
+            "entity_counts": {
+                "tickets": 0,
+                "orders": 0,
+                "items": 0,
+            },
+        }
+
     @classmethod
     def is_booking_payment(cls, payment) -> bool:
-        target = getattr(payment, "target", None)
-        return isinstance(target, Booking)
+        return cls.get_payment_target_kind(payment) == cls.TARGET_KIND_BOOKING
+
+    @classmethod
+    def _transition_order_to_pending_refund(cls, order: Order) -> bool:
+        if order.status in {OrderStatusChoices.PENDING_REFUND, OrderStatusChoices.REFUNDED, OrderStatusChoices.CANCELLED}:
+            return False
+        if order.status in {OrderStatusChoices.PROCESSING, OrderStatusChoices.COMPLETED}:
+            order.transition_to(OrderStatusChoices.PENDING_REFUND)
+            return True
+        return False
+
+    @classmethod
+    def _normalize_quantity(cls, raw_value, default: int) -> int:
+        try:
+            quantity = int(raw_value)
+        except (TypeError, ValueError):
+            quantity = default
+        return quantity if quantity > 0 else default
+
+    @classmethod
+    def _get_order_item_refunded_quantity(cls, payment, order_item: OrderItem) -> int:
+        associations = RefundAssociation.objects.filter(
+            refund_request__payment=payment,
+            target_type=ContentType.objects.get_for_model(OrderItem),
+            target_id=str(order_item.pk),
+        ).exclude(
+            refund_request__verification_status=VerificationStatus.REJECTED,
+        )
+
+        refunded_quantity = 0
+        for association in associations:
+            metadata = association.metadata if isinstance(association.metadata, dict) else {}
+            refunded_quantity += cls._normalize_quantity(metadata.get("quantity"), order_item.quantity)
+
+        return refunded_quantity
+
+    @classmethod
+    def _is_order_fully_refunded(cls, payment, order: Order) -> bool:
+        order_items = list(order.order_items.all())
+        if not order_items:
+            return False
+
+        return all(
+            cls._get_order_item_refunded_quantity(payment, order_item) >= order_item.quantity
+            for order_item in order_items
+        )
 
     @classmethod
     def resolve_booking_attendees(cls, payment, attendee_ids: List[str]) -> List[Attendee]:
@@ -174,6 +301,19 @@ class AttendeeRefundService:
                     f"({order_item.quantity}) for order item {order_item.id}."
                 )
 
+            already_refunded_quantity = cls._get_order_item_refunded_quantity(payment, order_item)
+            remaining_quantity = max(order_item.quantity - already_refunded_quantity, 0)
+            if remaining_quantity <= 0:
+                raise ValidationError(
+                    f"Order item {order_item.id} is already fully refunded."
+                )
+
+            if requested_quantity > remaining_quantity:
+                raise ValidationError(
+                    f"Requested quantity ({requested_quantity}) exceeds remaining refundable quantity "
+                    f"({remaining_quantity}) for order item {order_item.id}."
+                )
+
             line_total = (order_item.unit_price.amount * Decimal(requested_quantity)).quantize(Decimal("0.01"))
             total += line_total
 
@@ -197,6 +337,8 @@ class AttendeeRefundService:
                     "unit_price": str(order_item.unit_price.amount),
                     "amount": str(line_total),
                     "currency": currency.code,
+                    "already_refunded_quantity": already_refunded_quantity,
+                    "remaining_quantity": remaining_quantity,
                 }
             )
 
@@ -211,6 +353,8 @@ class AttendeeRefundService:
                     "unit_price": str(order_item.unit_price.amount),
                     "amount": str(line_total),
                     "currency": currency.code,
+                    "already_refunded_quantity": already_refunded_quantity,
+                    "remaining_quantity": remaining_quantity,
                 }
             )
             selected_attendee_ids.append(attendee_id)
@@ -245,8 +389,9 @@ class AttendeeRefundService:
     @classmethod
     def calculate_targeted_order_item_breakdown(cls, payment, refund_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Calculate and validate targeted order-item refund selections for non-booking payments."""
-        if cls.is_booking_payment(payment):
-            raise ValidationError("Use booking-targeted breakdown for booking-linked payments.")
+        target_kind = cls.assert_supported_payment_target(payment)
+        if target_kind != cls.TARGET_KIND_ORDER:
+            raise ValidationError("Targeted order-item refunds are only supported for order-linked payments.")
 
         if not refund_items:
             raise ValidationError("refund_items is required for targeted order refunds.")
@@ -281,6 +426,19 @@ class AttendeeRefundService:
                     f"({order_item.quantity}) for order item {order_item.id}."
                 )
 
+            already_refunded_quantity = cls._get_order_item_refunded_quantity(payment, order_item)
+            remaining_quantity = max(order_item.quantity - already_refunded_quantity, 0)
+            if remaining_quantity <= 0:
+                raise ValidationError(
+                    f"Order item {order_item.id} is already fully refunded."
+                )
+
+            if requested_quantity > remaining_quantity:
+                raise ValidationError(
+                    f"Requested quantity ({requested_quantity}) exceeds remaining refundable quantity "
+                    f"({remaining_quantity}) for order item {order_item.id}."
+                )
+
             line_total = (order_item.unit_price.amount * Decimal(requested_quantity)).quantize(Decimal("0.01"))
             total += line_total
 
@@ -292,6 +450,8 @@ class AttendeeRefundService:
                     "unit_price": str(order_item.unit_price.amount),
                     "amount": str(line_total),
                     "currency": currency.code,
+                    "already_refunded_quantity": already_refunded_quantity,
+                    "remaining_quantity": remaining_quantity,
                 }
             )
 
@@ -310,9 +470,30 @@ class AttendeeRefundService:
     @classmethod
     @transaction.atomic
     def attach_associations(cls, refund_request: RefundRequest) -> None:
-        print("Attaching associations for refund request", refund_request.id)
         metadata = refund_request.metadata or {}
         refund_scope = metadata.get("refund_scope")
+        target_kind = cls.assert_supported_payment_target(refund_request.payment)
+
+        if refund_scope == "full_target" and refund_request.payment.target is not None:
+            target_obj = refund_request.payment.target
+            ct_id = ContentType.objects.get_for_model(target_obj).id
+            key = (ct_id, str(target_obj.pk))
+            existing_keys = set(
+                RefundAssociation.objects.filter(refund_request=refund_request).values_list("target_type_id", "target_id")
+            )
+            if key not in existing_keys:
+                refund_request.associate_with(
+                    target_obj,
+                    amount=Money(refund_request.amount.amount, refund_request.amount.currency),
+                    metadata={
+                        "entity": target_kind,
+                        "scope": "full_target",
+                    },
+                )
+            if isinstance(target_obj, Order):
+                cls._transition_order_to_pending_refund(target_obj)
+            return
+
         if refund_scope == "targeted_order_items":
             selected_items = (metadata.get("frozen_breakdown") or {}).get("items") or []
             if not selected_items:
@@ -322,10 +503,8 @@ class AttendeeRefundService:
                 RefundAssociation.objects.filter(refund_request=refund_request).values_list("target_type_id", "target_id")
             )
             currency = refund_request.amount.currency
-            print("Attaching targeted order item associations", selected_items, existing_keys)
 
             for item_data in selected_items:
-                # TODO: warning multiple items could be returned although unlikely
                 order_item = (
                     OrderItem.objects
                     .select_related("order")
@@ -350,18 +529,19 @@ class AttendeeRefundService:
                     metadata={
                         "entity": "order_item",
                         "scope": "targeted_order_items",
+                        "attendee_id": item_data.get("attendee_id"),
                         "order_id": item_data.get("order_id"),
                         "quantity": item_data.get("quantity"),
                         "unit_price": item_data.get("unit_price"),
                     },
                 )
-                order_item.order.transition_to(OrderStatusChoices.PENDING_REFUND)
+                cls._transition_order_to_pending_refund(order_item.order)
 
             return
 
         if refund_scope == "targeted_booking_products":
-            order_summaries = (metadata.get("frozen_breakdown") or {}).get("orders") or []
-            if not order_summaries:
+            selected_items = (metadata.get("frozen_breakdown") or {}).get("items") or []
+            if not selected_items:
                 return
 
             existing_keys = set(
@@ -369,32 +549,40 @@ class AttendeeRefundService:
             )
             currency = refund_request.amount.currency
 
-            for order_data in order_summaries:
-                order = Order.objects.filter(
-                    payment=refund_request.payment,
-                    order_id=order_data.get("order_id"),
-                ).select_related("attendee").first()
-                if not order:
+            for item_data in selected_items:
+                order_item = (
+                    OrderItem.objects
+                    .select_related("order", "order__attendee", "product_variant", "package_product")
+                    .filter(order__payment=refund_request.payment, id=item_data.get("order_item_id"))
+                    .first()
+                )
+                if not order_item:
                     continue
-                ct_id = ContentType.objects.get_for_model(order).id
-                key = (ct_id, str(order.pk))
+
+                ct_id = ContentType.objects.get_for_model(order_item).id
+                key = (ct_id, str(order_item.pk))
                 if key in existing_keys:
                     continue
 
-                amount = Decimal(str(order_data.get("amount") or "0")).quantize(Decimal("0.01"))
+                amount = Decimal(str(item_data.get("amount") or "0")).quantize(Decimal("0.01"))
                 if amount <= 0:
                     continue
 
                 refund_request.associate_with(
-                    order,
+                    order_item,
                     amount=Money(amount, currency),
                     metadata={
-                        "attendee_id": order_data.get("attendee_id"),
-                        "entity": "order",
+                        "attendee_id": item_data.get("attendee_id"),
+                        "entity": "order_item",
                         "scope": "targeted_booking_products",
-                        "targeted_items": order_data.get("items") or [],
+                        "order_id": item_data.get("order_id"),
+                        "quantity": item_data.get("quantity"),
+                        "unit_price": item_data.get("unit_price"),
+                        "variant_id": item_data.get("variant_id"),
+                        "package_product_id": item_data.get("package_product_id"),
                     },
                 )
+                cls._transition_order_to_pending_refund(order_item.order)
             return
 
         attendee_ids = metadata.get("selected_attendee_ids") or []
@@ -439,6 +627,7 @@ class AttendeeRefundService:
                     "entity": "order",
                 },
             )
+            cls._transition_order_to_pending_refund(order)
 
     @classmethod
     @transaction.atomic
@@ -449,15 +638,13 @@ class AttendeeRefundService:
         refund_scope = metadata.get("refund_scope")
         is_targeted_scope = refund_scope in {"targeted_booking_products", "targeted_order_items"}
 
-        blocked_orders = 0
+        blocked_order_ids = set()
         for association in refund_request.associations.select_related("target_type"):
             target = association.target_object
-            if isinstance(target, Order) and target.status in {
-                OrderStatusChoices.PROCESSING,
-                OrderStatusChoices.COMPLETED,
-            }:
-                target.transition_to(OrderStatusChoices.PENDING_REFUND)
-                blocked_orders += 1
+            if isinstance(target, Order) and cls._transition_order_to_pending_refund(target):
+                blocked_order_ids.add(target.id)
+            if isinstance(target, OrderItem) and cls._transition_order_to_pending_refund(target.order):
+                blocked_order_ids.add(target.order_id)
 
         attendee_ids = metadata.get("selected_attendee_ids") or []
         if attendee_ids and not is_targeted_scope:
@@ -466,9 +653,10 @@ class AttendeeRefundService:
                 attendee__attendee_id__in=attendee_ids,
             )
             for order in selected_orders:
-                if order.status in {OrderStatusChoices.PROCESSING, OrderStatusChoices.COMPLETED}:
-                    order.transition_to(OrderStatusChoices.PENDING_REFUND)
-                    blocked_orders += 1
+                if cls._transition_order_to_pending_refund(order):
+                    blocked_order_ids.add(order.id)
+
+        blocked_orders = len(blocked_order_ids)
 
         metadata["verify_blocked_at"] = refund_request.verified_updated_at.isoformat() if refund_request.verified_updated_at else None
         metadata["verify_blocked_order_count"] = blocked_orders
@@ -485,6 +673,7 @@ class AttendeeRefundService:
         refund_scope = metadata.get("refund_scope")
         is_targeted_scope = refund_scope in {"targeted_booking_products", "targeted_order_items"}
         order_item_refund_quantities: Dict[int, int] = {}
+        affected_order_ids = set()
 
         for association in refund_request.associations.select_related("target_type"):
             target = association.target_object
@@ -498,14 +687,24 @@ class AttendeeRefundService:
                 continue
 
             if isinstance(target, Order):
-                if target.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
-                    continue
-                if target.status != OrderStatusChoices.REFUNDED:
-                    target.transition_to(OrderStatusChoices.REFUNDED)
-                    finalized_orders += 1
+                affected_order_ids.add(target.id)
+                if target.status not in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
+                    if refund_scope == "full_target" and refund_request.is_full:
+                        target.transition_to(OrderStatusChoices.REFUNDED)
+                        finalized_orders += 1
+                    elif association.amount.amount >= target.total_amount.amount:
+                        # Order-level association covering the full order amount
+                        target.transition_to(OrderStatusChoices.REFUNDED)
+                        finalized_orders += 1
+                    elif cls._is_order_fully_refunded(refund_request.payment, target):
+                        target.transition_to(OrderStatusChoices.REFUNDED)
+                        finalized_orders += 1
+                    else:
+                        cls._transition_order_to_pending_refund(target)
                 continue
 
             if isinstance(target, OrderItem):
+                affected_order_ids.add(target.order_id)
                 quantity = association.metadata.get("quantity") if isinstance(association.metadata, dict) else None
                 try:
                     refunded_qty = int(quantity)
@@ -515,23 +714,26 @@ class AttendeeRefundService:
                     refunded_qty = target.quantity
                 order_item_refund_quantities[target.id] = order_item_refund_quantities.get(target.id, 0) + refunded_qty
 
-        if refund_scope == "targeted_order_items" and order_item_refund_quantities:
+        if refund_scope in {"targeted_order_items", "targeted_booking_products"} and order_item_refund_quantities:
             order_ids = list(
                 OrderItem.objects
                 .filter(id__in=order_item_refund_quantities.keys())
                 .values_list("order_id", flat=True)
                 .distinct()
             )
+            affected_order_ids.update(order_ids)
+
             for order in Order.objects.filter(id__in=order_ids).prefetch_related("order_items"):
                 order_items = list(order.order_items.all())
                 if not order_items:
                     continue
 
                 is_fully_refunded = all(
-                    order_item_refund_quantities.get(item.id, 0) >= item.quantity
+                    cls._get_order_item_refunded_quantity(refund_request.payment, item) >= item.quantity
                     for item in order_items
                 )
                 if not is_fully_refunded:
+                    cls._transition_order_to_pending_refund(order)
                     continue
 
                 if order.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
@@ -558,8 +760,21 @@ class AttendeeRefundService:
             )
             for order in selected_orders:
                 if order.status not in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
+                    if cls._is_order_fully_refunded(refund_request.payment, order):
+                        order.transition_to(OrderStatusChoices.REFUNDED)
+                        finalized_orders += 1
+                    else:
+                        cls._transition_order_to_pending_refund(order)
+
+        if affected_order_ids:
+            for order in Order.objects.filter(id__in=affected_order_ids).prefetch_related("order_items"):
+                if order.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
+                    continue
+                if cls._is_order_fully_refunded(refund_request.payment, order):
                     order.transition_to(OrderStatusChoices.REFUNDED)
                     finalized_orders += 1
+                else:
+                    cls._transition_order_to_pending_refund(order)
 
         metadata["process_finalized_at"] = refund_request.processed_at.isoformat() if refund_request.processed_at else None
         metadata["process_finalized_ticket_count"] = finalized_tickets

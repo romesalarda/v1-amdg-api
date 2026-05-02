@@ -1011,7 +1011,14 @@ class RefundRequestAPITestCase(APITestCase):
             status=OrderStatusChoices.DRAFT,
             payment=payment,
         )
-        order.recalculate_total_amount()
+        # Add an order item matching the total so Order.clean() passes on subsequent saves.
+        OrderItem.objects.create(
+            order=order,
+            product_variant=None,
+            quantity=1,
+            unit_price=Money(amount, 'GBP'),
+            total_price=Money(amount, 'GBP'),
+        )
         order.transition_to(OrderStatusChoices.PENDING)
         order.transition_to(OrderStatusChoices.PROCESSING)
         order.transition_to(OrderStatusChoices.COMPLETED)
@@ -1033,6 +1040,9 @@ class RefundRequestAPITestCase(APITestCase):
             status=OrderStatusChoices.COMPLETED,
             payment=payment,
         )
+        payment.target_type = ContentType.objects.get_for_model(Order)
+        payment.target_id = str(order.pk)
+        payment.save(update_fields=['target_type', 'target_id'])
         item_one = OrderItem.objects.create(
             order=order,
             product_variant=None,
@@ -1209,7 +1219,7 @@ class RefundRequestAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         refund = RefundRequest.objects.get(payment=payment)
         self.assertEqual(refund.amount, Money('85.00', 'GBP'))
-        self.assertEqual((refund.metadata or {}).get('refund_scope'), 'legacy')
+        self.assertEqual((refund.metadata or {}).get('refund_scope'), 'full_target')
 
     def test_partial_order_refund_requires_refund_items(self):
         """Order partial refunds must provide refund_items for granular targeting."""

@@ -25,6 +25,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import transaction
 from django.db.models import Q, Prefetch
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
@@ -1273,34 +1274,37 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You can only create refund requests for your own payments.")
             
-        refund_request = serializer.save()
-        payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
+        with transaction.atomic():
+            refund_request = serializer.save()
+            payment.transition_to(PaymentStatusChoices.PENDING_REFUND)
 
-        PaymentHistoryAction.objects.create(
-            payment=payment,
-            action='REFUND_REQUESTED',
-            description=(
-                f"Refund requested with {refund_request.amount} for payment "
-                f"{payment.payment_reference} by {user.username}"
-            ),
-            metadata={
-                'requested_by_id': user.id,
-                'requested_by_username': user.username,
-                'bank_reference': payment.bank_transfer_reference,
-                'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
-            },
-            notes="Refund request created and payment marked as pending refund.",
-            performed_by=user
-        )
+            PaymentHistoryAction.objects.create(
+                payment=payment,
+                action='REFUND_REQUESTED',
+                description=(
+                    f"Refund requested with {refund_request.amount} for payment "
+                    f"{payment.payment_reference} by {user.username}"
+                ),
+                metadata={
+                    'requested_by_id': user.id,
+                    'requested_by_username': user.username,
+                    'bank_reference': payment.bank_transfer_reference,
+                    'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+                    'target_kind': (refund_request.metadata or {}).get('target_kind'),
+                    'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                },
+                notes="Refund request created and payment marked as pending refund.",
+                performed_by=user
+            )
 
-        logger.info(
-            "Refund request created",
-            extra={
-                'payment_reference': payment.payment_reference,
-                'refund_tracking_reference': refund_request.tracking_reference,
-                'requested_by': user.username,
-            }
-        )
+            logger.info(
+                "Refund request created",
+                extra={
+                    'payment_reference': payment.payment_reference,
+                    'refund_tracking_reference': refund_request.tracking_reference,
+                    'requested_by': user.username,
+                }
+            )
     
     @extend_schema(
         summary="Verify refund request",
@@ -1320,25 +1324,28 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        refund_request.mark_verified(request.user)
-        blocked_summary = AttendeeRefundService.apply_verify_block(refund_request)
-        verify_status = AttendeeRefundService.determine_payment_status_after_verify(refund_request)
-        refund_request.payment.transition_to(verify_status)
+        with transaction.atomic():
+            refund_request.mark_verified(request.user)
+            blocked_summary = AttendeeRefundService.apply_verify_block(refund_request)
+            verify_status = AttendeeRefundService.determine_payment_status_after_verify(refund_request)
+            refund_request.payment.transition_to(verify_status)
 
-        PaymentHistoryAction.objects.create(
-            payment=refund_request.payment,
-            action='REFUND_VERIFIED',
-            description=f'Refund verified with {refund_request.amount} for payment {refund_request.payment.payment_reference}',
-            metadata={
-                'verified_by_id': request.user.id,
-                'requested_by': request.user.username,
-                'bank_reference': refund_request.payment.bank_transfer_reference,
-                'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
-                'blocked_orders': blocked_summary.get('blocked_orders', 0),
-            },
-            notes="Refund request marked as verified and payment marked as pending refund.",
-            performed_by=request.user
-        )
+            PaymentHistoryAction.objects.create(
+                payment=refund_request.payment,
+                action='REFUND_VERIFIED',
+                description=f'Refund verified with {refund_request.amount} for payment {refund_request.payment.payment_reference}',
+                metadata={
+                    'verified_by_id': request.user.id,
+                    'requested_by': request.user.username,
+                    'bank_reference': refund_request.payment.bank_transfer_reference,
+                    'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+                    'target_kind': (refund_request.metadata or {}).get('target_kind'),
+                    'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                    'blocked_orders': blocked_summary.get('blocked_orders', 0),
+                },
+                notes="Refund request marked as verified and payment marked as pending refund.",
+                performed_by=request.user
+            )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
         return Response(serializer.data)
@@ -1361,31 +1368,34 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        refund_request.mark_processed(request.user)
-        finalized_summary = AttendeeRefundService.apply_process_finalize(refund_request)
-        target_status = AttendeeRefundService.determine_payment_status_after_process(refund_request)
-        refund_request.payment.transition_to(target_status)
+        with transaction.atomic():
+            refund_request.mark_processed(request.user)
+            finalized_summary = AttendeeRefundService.apply_process_finalize(refund_request)
+            target_status = AttendeeRefundService.determine_payment_status_after_process(refund_request)
+            refund_request.payment.transition_to(target_status)
 
-        action_name = 'REFUND_FULLY_PROCESSED' if refund_request.is_full else 'REFUND_PARTIALLY_PROCESSED'
+            action_name = 'REFUND_FULLY_PROCESSED' if refund_request.is_full else 'REFUND_PARTIALLY_PROCESSED'
 
-        PaymentHistoryAction.objects.create(
-                payment=refund_request.payment,
-                action=action_name,
-                description=(
-                    f"Refund processed with {refund_request.amount} for payment "
-                    f"{refund_request.payment.payment_reference}"
-                ),
-                metadata={
-                    'processed_by_id': request.user.id,
-                    'requested_by': request.user.username,
-                    'bank_reference': refund_request.payment.bank_transfer_reference,
-                    'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
-                    'finalized_tickets': finalized_summary.get('finalized_tickets', 0),
-                    'finalized_orders': finalized_summary.get('finalized_orders', 0),
-                },
-                notes="Refund request marked as processed and entities invalidated for selected attendees.",
-                performed_by=request.user
-            )
+            PaymentHistoryAction.objects.create(
+                    payment=refund_request.payment,
+                    action=action_name,
+                    description=(
+                        f"Refund processed with {refund_request.amount} for payment "
+                        f"{refund_request.payment.payment_reference}"
+                    ),
+                    metadata={
+                        'processed_by_id': request.user.id,
+                        'requested_by': request.user.username,
+                        'bank_reference': refund_request.payment.bank_transfer_reference,
+                        'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+                        'target_kind': (refund_request.metadata or {}).get('target_kind'),
+                        'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                        'finalized_tickets': finalized_summary.get('finalized_tickets', 0),
+                        'finalized_orders': finalized_summary.get('finalized_orders', 0),
+                    },
+                    notes="Refund request marked as processed and entities invalidated for selected attendees.",
+                    performed_by=request.user
+                )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
         return Response(serializer.data)
@@ -1408,23 +1418,25 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        refund_request.mark_rejected(request.user)
-        refund_request.payment.transition_to(PaymentStatusChoices.COMPLETED)  
-        # TODO: need to restore the payment to the previous amount if this was a partial refund. 
-        # TODO Currently we just leave the payment amount as-is which is not ideal but avoids complications with the payment history and audit trail. We can address this in a future improvement where we add more explicit support for partial refunds in the payment model and history.  
-        # look at previous refund requested and undo
-        PaymentHistoryAction.objects.create(
-            payment=refund_request.payment,
-            action='REFUND_REJECTED',
-            description=f'Refund rejected with {refund_request.amount} for payment {refund_request.payment.payment_reference}',
-            metadata={
-                'rejected_by_id': request.user.id,
-                'requested_by': request.user.username,
-                'bank_reference': refund_request.payment.bank_transfer_reference,
-            },
-            notes="Refund request marked as rejected and payment marked as completed.",
-            performed_by=request.user
-        )
+        with transaction.atomic():
+            refund_request.mark_rejected(request.user)
+            refund_request.payment.transition_to(PaymentStatusChoices.COMPLETED)
+            # TODO: need to restore the payment to the previous amount if this was a partial refund.
+            # TODO Currently we just leave the payment amount as-is which is not ideal but avoids complications with the payment history and audit trail. We can address this in a future improvement where we add more explicit support for partial refunds in the payment model and history.
+            PaymentHistoryAction.objects.create(
+                payment=refund_request.payment,
+                action='REFUND_REJECTED',
+                description=f'Refund rejected with {refund_request.amount} for payment {refund_request.payment.payment_reference}',
+                metadata={
+                    'rejected_by_id': request.user.id,
+                    'requested_by': request.user.username,
+                    'bank_reference': refund_request.payment.bank_transfer_reference,
+                    'target_kind': (refund_request.metadata or {}).get('target_kind'),
+                    'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                },
+                notes="Refund request marked as rejected and payment marked as completed.",
+                performed_by=request.user
+            )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
         return Response(serializer.data)
