@@ -1,6 +1,12 @@
 from django_filters import rest_framework as filters
 from django.db.models import Q
+from django.db import connection, DatabaseError
 from django.contrib.contenttypes.models import ContentType
+
+try:
+    from django.contrib.postgres.search import TrigramSimilarity
+except Exception:  # pragma: no cover - optional postgres feature
+    TrigramSimilarity = None
 from apps.events.models import (
     Event, EventType, EventAuthorization, EventPermission,
     EventPermissionAssignment, EventRole, EventRoleAssignment,
@@ -384,25 +390,140 @@ class EventTypeFilterSet(filters.FilterSet):
 
 
 class EventFilterSet(filters.FilterSet):
-    title = filters.CharFilter(lookup_expr='icontains')
+    """
+    Fine-grained event filtering with clean URL parameters.
+
+    Query examples:
+        ?status=OPEN&status=PUBLISHED
+        ?organisation_name=amdg
+        ?area=12&chapter=3
+        ?venue_name=cathedral&venue_city=london
+        ?search=summer retreat
+        ?fuzzy_search=broghton conf&fuzzy_threshold=0.2
+    """
+
+    title = filters.CharFilter(field_name='title', lookup_expr='icontains')
+    display_code = filters.CharFilter(field_name='display_code', lookup_expr='icontains')
+    display_identifier = filters.CharFilter(field_name='display_identifier', lookup_expr='icontains')
     status = filters.MultipleChoiceFilter(choices=Event._meta.get_field('status').choices)
-    start_date_after = filters.DateFilter(field_name='start_datetime', lookup_expr='gte')
-    start_date_before = filters.DateFilter(field_name='start_datetime', lookup_expr='lte')
-    end_date_after = filters.DateFilter(field_name='end_datetime', lookup_expr='gte')
-    end_date_before = filters.DateFilter(field_name='end_datetime', lookup_expr='lte')
+
+    event_type = filters.NumberFilter(field_name='event_type__id')
+    event_type_code = filters.CharFilter(field_name='event_type__code', lookup_expr='icontains')
+    event_type_title = filters.CharFilter(field_name='event_type__title', lookup_expr='icontains')
+
+    organisation = filters.NumberFilter(field_name='organisation__id')
+    organisation_name = filters.CharFilter(field_name='organisation__title', lookup_expr='icontains')
+
+    location = filters.NumberFilter(field_name='location__id')
+    area = filters.NumberFilter(field_name='location__id')
+    area_name = filters.CharFilter(field_name='location__area_name', lookup_expr='icontains')
+    chapter = filters.NumberFilter(field_name='location__chapter__id')
+    chapter_name = filters.CharFilter(field_name='location__chapter__chapter_name', lookup_expr='icontains')
+
+    venue = filters.NumberFilter(field_name='event_venues__venue__id')
+    venue_name = filters.CharFilter(field_name='event_venues__venue__poi__name', lookup_expr='icontains')
+    venue_address = filters.CharFilter(field_name='event_venues__venue__poi__address', lookup_expr='icontains')
+    venue_city = filters.CharFilter(field_name='event_venues__venue__poi__city', lookup_expr='icontains')
+    venue_postcode = filters.CharFilter(field_name='event_venues__venue__poi__postcode', lookup_expr='icontains')
+
+    theme = filters.CharFilter(field_name='theme', lookup_expr='icontains')
+    anchor_verse = filters.CharFilter(field_name='anchor_verse', lookup_expr='icontains')
+
+    start_after = filters.DateTimeFilter(field_name='start_datetime', lookup_expr='gte')
+    start_before = filters.DateTimeFilter(field_name='start_datetime', lookup_expr='lte')
+    end_after = filters.DateTimeFilter(field_name='end_datetime', lookup_expr='gte')
+    end_before = filters.DateTimeFilter(field_name='end_datetime', lookup_expr='lte')
+
     search = filters.CharFilter(method='filter_search')
+    fuzzy_search = filters.CharFilter(method='filter_fuzzy_search')
+    fuzzy_threshold = filters.NumberFilter(method='filter_fuzzy_threshold')
     
     class Meta:
         model = Event
-        fields = ['status', 'event_type', 'organisation', 'created_by']
+        fields = [
+            'title', 'display_code', 'display_identifier',
+            'status',
+            'event_type', 'event_type_code', 'event_type_title',
+            'organisation', 'organisation_name',
+            'location', 'area', 'area_name', 'chapter', 'chapter_name',
+            'venue', 'venue_name', 'venue_address', 'venue_city', 'venue_postcode',
+            'theme', 'anchor_verse',
+            'start_after', 'start_before', 'end_after', 'end_before',
+            'search', 'fuzzy_search', 'fuzzy_threshold',
+            'created_by',
+        ]
     
     def filter_search(self, queryset, name, value):
+        if not value:
+            return queryset
+
         return queryset.filter(
             Q(title__icontains=value) |
+            Q(short_description__icontains=value) |
+            Q(long_description__icontains=value) |
+            Q(display_code__icontains=value) |
             Q(display_identifier__icontains=value) |
-            Q(description__icontains=value) |
-            Q(venue__icontains=value)
-        )
+            Q(theme__icontains=value) |
+            Q(anchor_verse__icontains=value) |
+            Q(organisation__title__icontains=value) |
+            Q(event_type__title__icontains=value) |
+            Q(event_type__code__icontains=value) |
+            Q(location__area_name__icontains=value) |
+            Q(location__chapter__chapter_name__icontains=value) |
+            Q(event_venues__venue__poi__name__icontains=value) |
+            Q(event_venues__venue__poi__address__icontains=value) |
+            Q(event_venues__venue__poi__city__icontains=value) |
+            Q(event_venues__venue__poi__postcode__icontains=value)
+        ).distinct()
+
+    def filter_fuzzy_threshold(self, queryset, name, value):
+        # Threshold is consumed by filter_fuzzy_search when present.
+        return queryset
+
+    def filter_fuzzy_search(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        # Fallback to icontains search for non-Postgres backends.
+        if connection.vendor != 'postgresql' or TrigramSimilarity is None:
+            return self.filter_search(queryset, name, value)
+
+        raw_threshold = self.data.get('fuzzy_threshold')
+        try:
+            threshold = float(raw_threshold) if raw_threshold not in (None, '') else 0.2
+        except (TypeError, ValueError):
+            threshold = 0.2
+
+        threshold = max(0.0, min(1.0, threshold))
+
+        try:
+            return (
+                queryset.annotate(
+                    similarity=(
+                        TrigramSimilarity('title', value) +
+                        TrigramSimilarity('short_description', value) +
+                        TrigramSimilarity('long_description', value) +
+                        TrigramSimilarity('display_code', value) +
+                        TrigramSimilarity('display_identifier', value) +
+                        TrigramSimilarity('theme', value) +
+                        TrigramSimilarity('anchor_verse', value) +
+                        TrigramSimilarity('organisation__title', value) +
+                        TrigramSimilarity('event_type__title', value) +
+                        TrigramSimilarity('event_type__code', value) +
+                        TrigramSimilarity('location__area_name', value) +
+                        TrigramSimilarity('location__chapter__chapter_name', value) +
+                        TrigramSimilarity('event_venues__venue__poi__name', value) +
+                        TrigramSimilarity('event_venues__venue__poi__address', value) +
+                        TrigramSimilarity('event_venues__venue__poi__city', value)
+                    )
+                )
+                .filter(similarity__gte=threshold)
+                .order_by('-similarity', '-start_datetime')
+                .distinct()
+            )
+        except DatabaseError:
+            # If pg_trgm isn't enabled in the database, gracefully fallback.
+            return self.filter_search(queryset, name, value)
 
 
 class EventAuthorizationFilterSet(filters.FilterSet):

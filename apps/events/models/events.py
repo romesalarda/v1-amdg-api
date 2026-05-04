@@ -15,6 +15,7 @@ import uuid
 
 from apps.common.models import SoftDeleteModel, AvailabilityWindow, Resource
 from apps.common.mixins import LandingImageMixin, HasAvailabilityMixin
+from apps.locations.models import AreaLocation
 
 User = get_user_model()
 
@@ -139,6 +140,15 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         help_text=_("The organisation hosting this event."),
         null=True,
         )
+    
+    location = models.ForeignKey(
+        AreaLocation,
+        on_delete=models.SET_NULL,
+        related_name='events',
+        verbose_name=_("Event Location"),
+        help_text=_("The location where the event is taking place."),
+        null=True,
+    )
     
     last_opened = models.DateTimeField(blank=True, null=True, help_text=_("The last time this event was opened for registration."))
     last_closed = models.DateTimeField(blank=True, null=True, help_text=_("The last time this event was closed for registration."))

@@ -56,6 +56,7 @@ from apps.payments.models import PaymentStatusChoices
 
 from apps.events.services import OutstandingPaymentsService
 from apps.events.api.filtersets import (
+    EventFilterSet,
     EventAuthorizationFilterSet,
     EventQuestionAnswerFilterSet,
     EventQuestionFilterSet,
@@ -161,14 +162,37 @@ class EventTypeViewSet(viewsets.ModelViewSet):
             "Retrieve a paginated list of all events with comprehensive filtering and search capabilities. "
             "Results include event details, status, type, organization, dates, and registration information. "
             "Non-staff users only see published and active events, while staff can view all events including drafts. "
-            "Supports filtering by status, event type, organization, and text search across titles and descriptions."
+            "Supports filtering by status, event type, organization, area/chapter location, venue details, "
+            "date windows, thematic fields, and both standard and fuzzy text search. "
+            "All query parameter names are flat (no double-underscore notation)."
         ),
         tags=["Events"],
         parameters=[
             OpenApiParameter(name='status', type=OpenApiTypes.STR, description='Filter by status (DRAFT, PUBLISHED, OPEN, etc.)'),
             OpenApiParameter(name='event_type', type=OpenApiTypes.INT, description='Filter by event type ID'),
+            OpenApiParameter(name='event_type_code', type=OpenApiTypes.STR, description='Filter by event type code'),
+            OpenApiParameter(name='event_type_title', type=OpenApiTypes.STR, description='Filter by event type title'),
             OpenApiParameter(name='organisation', type=OpenApiTypes.INT, description='Filter by organisation ID'),
-            OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Search by title or description'),
+            OpenApiParameter(name='organisation_name', type=OpenApiTypes.STR, description='Filter by organisation name'),
+            OpenApiParameter(name='location', type=OpenApiTypes.INT, description='Filter by location (area) ID'),
+            OpenApiParameter(name='area', type=OpenApiTypes.INT, description='Filter by area ID (alias of location)'),
+            OpenApiParameter(name='area_name', type=OpenApiTypes.STR, description='Filter by area name'),
+            OpenApiParameter(name='chapter', type=OpenApiTypes.INT, description='Filter by chapter ID through event location'),
+            OpenApiParameter(name='chapter_name', type=OpenApiTypes.STR, description='Filter by chapter name through event location'),
+            OpenApiParameter(name='venue', type=OpenApiTypes.INT, description='Filter by venue ID through event venues'),
+            OpenApiParameter(name='venue_name', type=OpenApiTypes.STR, description='Filter by venue POI name'),
+            OpenApiParameter(name='venue_address', type=OpenApiTypes.STR, description='Filter by venue POI address'),
+            OpenApiParameter(name='venue_city', type=OpenApiTypes.STR, description='Filter by venue city'),
+            OpenApiParameter(name='venue_postcode', type=OpenApiTypes.STR, description='Filter by venue postcode'),
+            OpenApiParameter(name='theme', type=OpenApiTypes.STR, description='Filter by event theme'),
+            OpenApiParameter(name='anchor_verse', type=OpenApiTypes.STR, description='Filter by anchor verse'),
+            OpenApiParameter(name='start_after', type=OpenApiTypes.DATETIME, description='Filter by start datetime greater than or equal'),
+            OpenApiParameter(name='start_before', type=OpenApiTypes.DATETIME, description='Filter by start datetime less than or equal'),
+            OpenApiParameter(name='end_after', type=OpenApiTypes.DATETIME, description='Filter by end datetime greater than or equal'),
+            OpenApiParameter(name='end_before', type=OpenApiTypes.DATETIME, description='Filter by end datetime less than or equal'),
+            OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Standard text search across event, organisation, location, and venue fields'),
+            OpenApiParameter(name='fuzzy_search', type=OpenApiTypes.STR, description='Postgres trigram fuzzy search (falls back to standard search if unavailable)'),
+            OpenApiParameter(name='fuzzy_threshold', type=OpenApiTypes.FLOAT, description='Optional fuzzy similarity threshold between 0.0 and 1.0 (default: 0.2)'),
         ]
     ),
     retrieve=extend_schema(
@@ -243,7 +267,7 @@ class EventViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['status', 'event_type', 'organisation']
+    filterset_class = EventFilterSet
     search_fields = ['title', 'short_description', 'long_description', 'display_code']
     ordering_fields = ['title', 'start_datetime', 'created_at']
     ordering = ['-start_datetime']
@@ -254,22 +278,6 @@ class EventViewSet(viewsets.ModelViewSet):
             'event_type', 'organisation', 'created_by'
         ).prefetch_related('settings')
       
-        # # return events that the user is involved in
-        # if self.request.user.is_authenticated:
-        #     queryset = queryset.filter(
-        #         Q(created_by=self.request.user) |
-        #         Q(staff_members__user=self.request.user)
-        #     ).distinct()
-        # else:
-        #     print(queryset)
-        #     queryset = queryset.filter(status__in=[
-        #         EventStatusChoices.PUBLISHED,
-        #         EventStatusChoices.OPEN,
-        #         EventStatusChoices.POSTPONED,
-        #         EventStatusChoices.IN_PROGRESS,
-        #         EventStatusChoices.COMPLETED
-        #     ])
-
         # users that are involved in events should be able to see there own events, otherwise, show only public facing statuses to non staff users
         if self.request.user.is_authenticated and not self.request.user.is_staff:
             queryset = queryset.filter(
