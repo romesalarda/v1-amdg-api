@@ -233,7 +233,8 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
                         'tracking_reference': self.tracking_reference,
                         'payment_reference': self.payment.payment_reference,
                     },
-                    refund_reference=self.tracking_reference
+                    refund_reference=self.tracking_reference,
+                    stripe_account_id=self.payment.method.get_stripe_account_id()
                 )
                 
                 # Store Stripe refund ID

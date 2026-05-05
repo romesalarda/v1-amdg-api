@@ -31,7 +31,7 @@ import pytz
 
 from apps.products.models import (
     Product, ProductVariant, ProductSizeChoices,
-    Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices, OPEN_ORDER_STATUSES,
+    Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices, OPEN_ORDER_STATUSES, 
     ProductCategory, EventProductCategory
 )
 from apps.events.models import Event
@@ -1320,7 +1320,7 @@ class OrderListSerializer(serializers.ModelSerializer):
         return RefundAssociation.objects.filter(
             target_id = obj.pk,
             target_type = ContentType.objects.get_for_model(Order)
-        ).exists()
+        ).exists() or obj.status == OrderItemStatusChoices.REFUNDED
 
     
     

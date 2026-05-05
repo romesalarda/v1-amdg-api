@@ -224,9 +224,16 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     def filter_search(self, queryset, name, value):
         """Search across name, email, phone, and display ID."""
-        # TODO: ensure can search with first name and last name together (currently searches them separately and combines with OR)
+        base = queryset.filter(
+                    Q(first_name__icontains=value) |
+                    Q(last_name__icontains=value) |
+                    Q(email__icontains=value) |
+                    Q(phone_number__icontains=value) |
+                    Q(attendee_display_id__icontains=value)
+                )
+        print(f"Base search for '{value}' found {base.count()} attendees.")
         if TrigramSimilarity:
-            queryset = queryset.annotate(
+            qs = queryset.all().annotate(
                 similarity=
                     TrigramSimilarity('first_name', Value(value, output_field=TextField())) + 
                     TrigramSimilarity('last_name', Value(value, output_field=TextField())) + 
@@ -234,17 +241,15 @@ class AttendeeFilterSet(django_filters.FilterSet):
                     TrigramSimilarity('phone_number', Value(value, output_field=TextField())) + 
                     TrigramSimilarity('attendee_display_id', Value(value, output_field=TextField()))
             ).filter(similarity__gt=0.02).order_by('-similarity')
+            print(f"Trigram search for '{value}' found {qs.count()} attendees.")
+            if not qs.exists():
+                print("Trigram search found no attendees, falling back to base search.")
+                return base
+            print(qs)
+            return qs   
         
-        if not queryset.exists():
-            return queryset.filter(
-                Q(first_name__icontains=value) |
-                Q(last_name__icontains=value) |
-                Q(email__icontains=value) |
-                Q(phone_number__icontains=value) |
-                Q(attendee_display_id__icontains=value)
-            )
-        return queryset
-    
+        return base
+
     def filter_full_name(self, queryset, name, value):
         """Search by full name (first + last)."""
         return queryset.filter(

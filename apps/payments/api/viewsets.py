@@ -1325,7 +1325,11 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
         
         with transaction.atomic():
-            refund_request.mark_verified(request.user)
+            try:
+                refund_request.mark_verified(request.user)
+            except ValidationError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            
             blocked_summary = AttendeeRefundService.apply_verify_block(refund_request)
             verify_status = AttendeeRefundService.determine_payment_status_after_verify(refund_request)
             refund_request.payment.transition_to(verify_status)
