@@ -29,7 +29,7 @@ from apps.payments.models import (
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
 from apps.bookings.models import Booking, BookingPackage, TicketType, Ticket, TicketScopeChoices, TicketStatusChoices
-from apps.products.models import Order, OrderItem, OrderStatusChoices
+from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices
 from apps.organisations.models import EventSponsor, EventSponsorPackage
 from apps.attendee.models import Attendee, AttendeeRelationship
 
@@ -880,7 +880,7 @@ class RefundRequestAPITestCase(APITestCase):
             start_datetime=timezone.now() + timezone.timedelta(days=30),
             end_datetime=timezone.now() + timezone.timedelta(days=32),
             status=EventStatusChoices.OPEN,
-            organisation=self.organisation
+            organisation=self.organisation,
         )
         
         self.payment_method = PaymentMethod.objects.create(
@@ -1147,6 +1147,136 @@ class RefundRequestAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         refund.refresh_from_db()
         self.assertEqual(refund.verification_status, VerificationStatus.REJECTED)
+
+    def test_reject_refund_restores_order_and_payment_to_completed(self):
+        """Rejecting a pending order refund restores both order and payment to completed."""
+        payment, order, item_one, item_two = self._create_order_payment_fixture()
+        OrderItem.objects.filter(id__in=[item_one.id, item_two.id]).update(status=OrderItemStatusChoices.COMPLETED)
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '25.00',
+                'amount_currency': 'GBP',
+                'reason': 'Refunding one order item pending review.',
+                'refund_items': [
+                    {
+                        'order_item_id': item_one.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatusChoices.PENDING_REFUND)
+        self.assertEqual(order.status, OrderStatusChoices.PENDING_REFUND)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        self.client.force_authenticate(user=self.admin_user)
+        reject_response = self.client.post(
+            reverse('payments:refundrequest-reject', kwargs={'refund_id': refund.refund_id})
+        )
+        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+
+        refund.refresh_from_db()
+        payment.refresh_from_db()
+        order.refresh_from_db()
+
+        self.assertEqual(refund.verification_status, VerificationStatus.REJECTED)
+        self.assertEqual(payment.status, PaymentStatusChoices.COMPLETED)
+        self.assertEqual(order.status, OrderStatusChoices.COMPLETED)
+
+    def test_reject_refund_restores_order_and_payment_to_partially_refunded(self):
+        """Rejecting a new refund on partially-refunded payment returns entities to partially-refunded state."""
+        payment, order, item_one, item_two = self._create_order_payment_fixture()
+        OrderItem.objects.filter(id=item_one.id).update(status=OrderItemStatusChoices.REFUNDED)
+        OrderItem.objects.filter(id=item_two.id).update(status=OrderItemStatusChoices.COMPLETED)
+        order.transition_to(OrderStatusChoices.PENDING_REFUND)
+        order.transition_to(OrderStatusChoices.PARTIALLY_REFUNDED)
+        payment.transition_to(PaymentStatusChoices.PARTIALLY_REFUNDED)
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '30.00',
+                'amount_currency': 'GBP',
+                'reason': 'Additional partial refund request for remaining item.',
+                'refund_items': [
+                    {
+                        'order_item_id': item_two.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatusChoices.PENDING_REFUND)
+        self.assertEqual(order.status, OrderStatusChoices.PENDING_REFUND)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        self.client.force_authenticate(user=self.admin_user)
+        reject_response = self.client.post(
+            reverse('payments:refundrequest-reject', kwargs={'refund_id': refund.refund_id})
+        )
+        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatusChoices.PARTIALLY_REFUNDED)
+        self.assertEqual(order.status, OrderStatusChoices.PARTIALLY_REFUNDED)
+
+    def test_reject_refund_fallback_restores_when_snapshot_missing(self):
+        """Reject rollback falls back safely when rollback snapshot metadata is absent."""
+        payment, order, item_one, item_two = self._create_order_payment_fixture()
+        OrderItem.objects.filter(id__in=[item_one.id, item_two.id]).update(status=OrderItemStatusChoices.COMPLETED)
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '25.00',
+                'amount_currency': 'GBP',
+                'reason': 'Refund request used to validate snapshot fallback path.',
+                'refund_items': [
+                    {
+                        'order_item_id': item_one.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        metadata = refund.metadata or {}
+        metadata.pop('rollback_snapshot', None)
+        refund.metadata = metadata
+        refund.save(update_fields=['metadata'])
+
+        self.client.force_authenticate(user=self.admin_user)
+        reject_response = self.client.post(
+            reverse('payments:refundrequest-reject', kwargs={'refund_id': refund.refund_id})
+        )
+        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatusChoices.COMPLETED)
+        self.assertEqual(order.status, OrderStatusChoices.COMPLETED)
     
     def test_filter_refunds_by_status(self):
         """Test filtering refunds by verification status."""

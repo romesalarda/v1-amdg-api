@@ -1420,9 +1420,20 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         
         with transaction.atomic():
             refund_request.mark_rejected(request.user)
-            refund_request.payment.transition_to(PaymentStatusChoices.COMPLETED)
-            # TODO: need to restore the payment to the previous amount if this was a partial refund.
-            # TODO Currently we just leave the payment amount as-is which is not ideal but avoids complications with the payment history and audit trail. We can address this in a future improvement where we add more explicit support for partial refunds in the payment model and history.
+
+            rollback_summary = AttendeeRefundService.apply_reject_rollback(refund_request)
+            restored_payment_status = rollback_summary.get('restored_payment_status', PaymentStatusChoices.COMPLETED)
+            try:
+                refund_request.payment.transition_to(restored_payment_status)
+            except DjangoValidationError:
+                # Defensive fallback for legacy data without rollback snapshots.
+                fallback_status = PaymentStatusChoices.COMPLETED
+                if restored_payment_status == PaymentStatusChoices.COMPLETED:
+                    fallback_status = PaymentStatusChoices.PARTIALLY_REFUNDED
+                if refund_request.payment.status != fallback_status:
+                    refund_request.payment.transition_to(fallback_status)
+                restored_payment_status = fallback_status
+
             PaymentHistoryAction.objects.create(
                 payment=refund_request.payment,
                 action='REFUND_REJECTED',
@@ -1433,8 +1444,12 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                     'bank_reference': refund_request.payment.bank_transfer_reference,
                     'target_kind': (refund_request.metadata or {}).get('target_kind'),
                     'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                    'restored_payment_status': restored_payment_status,
+                    'restored_orders': rollback_summary.get('restored_orders', 0),
+                    'skipped_orders': rollback_summary.get('skipped_orders', 0),
+                    'failed_order_ids': rollback_summary.get('failed_order_ids', []),
                 },
-                notes="Refund request marked as rejected and payment marked as completed.",
+                notes="Refund request marked as rejected and linked entities restored to pre-refund state where possible.",
                 performed_by=request.user
             )
         

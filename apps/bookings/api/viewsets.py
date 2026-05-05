@@ -495,6 +495,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     product_rows.append({
                         'package_product_id': package_product.id,
                         'variant_id': str(variant.variant_id),
+                        'product_id': str(variant.product.product_id),
                         'quantity': int(prod_selection['quantity']),
                     })
 

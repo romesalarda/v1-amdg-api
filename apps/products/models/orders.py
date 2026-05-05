@@ -42,7 +42,7 @@ class OrderItemStatusChoices(models.TextChoices):
 
 ORDER_STATUS_TRANSITIONS = {
     'draft': ['pending', 'cancelled'],
-    'pending': ['processing', 'cancelled'],
+    'pending': ['processing', 'cancelled', 'pending_refund'],
     'processing': ['completed', 'pending_refund', 'refunded', 'cancelled'],
     'completed': ['pending_refund', 'refunded', 'cancelled'],
     'cancelled': [],

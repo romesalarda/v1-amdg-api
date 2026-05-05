@@ -148,6 +148,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         verbose_name=_("Event Location"),
         help_text=_("The location where the event is taking place."),
         null=True,
+        blank=True
     )
     
     last_opened = models.DateTimeField(blank=True, null=True, help_text=_("The last time this event was opened for registration."))
@@ -173,7 +174,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         ]
         
     def save(self, *args, **kwargs):
-        self.full_clean()
         if self.title:
             self.title = self.title.strip()
             self.url_safe_title = slugify(f"{self.title}-{str(self.event_id)[:8]}")[:200]
