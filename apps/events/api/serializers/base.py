@@ -291,7 +291,8 @@ class EventDetailSerializer(serializers.ModelSerializer):
     
     # New fields for availability, resources, and landing images
     availability_windows = AvailabilityWindowSerializer(many=True, read_only=True)
-    resources = ResourceSerializer(many=True, read_only=True)
+    # resources = ResourceSerializer(many=True, read_only=True)
+    resources = serializers.SerializerMethodField(read_only=True)
     landing_images = ResourceSerializer(many=True, read_only=True)
     main_landing_image = ResourceSerializer(read_only=True)
     is_deleted = serializers.SerializerMethodField()
@@ -341,6 +342,11 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'end_datetime': {'default': None},
             'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
         }
+
+
+    @extend_schema_field(ResourceSerializer(many=True))
+    def get_resources(self, obj):
+        return ResourceSerializer(obj.resources.exclude(tag__in=Resource.EXCLUDE_TAGS + ["LANDING_PHOTO_SECONDARY", "LANDING_PHOTO_MAIN"]), many=True).data
 
     @extend_schema_field(EventOutstandingTaskSerializer(many=True))
     def get_outstanding_tasks(self, obj):
