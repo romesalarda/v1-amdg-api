@@ -1281,7 +1281,7 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             PaymentHistoryAction.objects.create(
                 payment=payment,
                 action='REFUND_REQUESTED',
-                description=(
+                description=( # TODO: more descriptive into what was refunded (tickets, whole payment, etc.)
                     f"Refund requested with {refund_request.amount} for payment "
                     f"{payment.payment_reference} by {user.username}"
                 ),
