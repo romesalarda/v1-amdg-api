@@ -111,6 +111,13 @@ class AttendeeRefundService:
     def _transition_order_to_pending_refund(cls, order: Order) -> bool:
         if order.status in {OrderStatusChoices.PENDING_REFUND, OrderStatusChoices.REFUNDED, OrderStatusChoices.CANCELLED}:
             return False
+        if order.status == OrderStatusChoices.DRAFT:
+            order.transition_to(OrderStatusChoices.PENDING)
+            order.transition_to(OrderStatusChoices.PENDING_REFUND)
+            return True
+        if order.status == OrderStatusChoices.PENDING:
+            order.transition_to(OrderStatusChoices.PENDING_REFUND)
+            return True
         if order.status in {OrderStatusChoices.PROCESSING, OrderStatusChoices.COMPLETED, OrderStatusChoices.PARTIALLY_REFUNDED, OrderStatusChoices.PENDING}:
             order.transition_to(OrderStatusChoices.PENDING_REFUND)
             return True
@@ -180,11 +187,47 @@ class AttendeeRefundService:
         if order.status == OrderStatusChoices.PENDING_REFUND:
             order.transition_to(OrderStatusChoices.PARTIALLY_REFUNDED)
             return True
+        if order.status == OrderStatusChoices.DRAFT:
+            order.transition_to(OrderStatusChoices.PENDING)
+            order.transition_to(OrderStatusChoices.PENDING_REFUND)
+            order.transition_to(OrderStatusChoices.PARTIALLY_REFUNDED)
+            return True
+        if order.status == OrderStatusChoices.PENDING:
+            order.transition_to(OrderStatusChoices.PENDING_REFUND)
+            order.transition_to(OrderStatusChoices.PARTIALLY_REFUNDED)
+            return True
         # Order never entered pending_refund yet (e.g. completed) — move it through
         if order.status in {OrderStatusChoices.COMPLETED, OrderStatusChoices.PROCESSING}:
             order.transition_to(OrderStatusChoices.PENDING_REFUND)
             order.transition_to(OrderStatusChoices.PARTIALLY_REFUNDED)
             return True
+        return False
+
+    @classmethod
+    def _transition_order_to_refunded(cls, order: Order, *, restore_stock: bool = True) -> bool:
+        if order.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
+            return False
+
+        if order.status == OrderStatusChoices.DRAFT:
+            order.transition_to(OrderStatusChoices.PENDING)
+            order.transition_to(OrderStatusChoices.PROCESSING)
+            order.transition_to(OrderStatusChoices.REFUNDED, restore_stock=restore_stock)
+            return True
+
+        if order.status == OrderStatusChoices.PENDING:
+            order.transition_to(OrderStatusChoices.PROCESSING)
+            order.transition_to(OrderStatusChoices.REFUNDED, restore_stock=restore_stock)
+            return True
+
+        if order.status in {
+            OrderStatusChoices.PROCESSING,
+            OrderStatusChoices.COMPLETED,
+            OrderStatusChoices.PENDING_REFUND,
+            OrderStatusChoices.PARTIALLY_REFUNDED,
+        }:
+            order.transition_to(OrderStatusChoices.REFUNDED, restore_stock=restore_stock)
+            return True
+
         return False
 
     @classmethod
@@ -297,8 +340,7 @@ class AttendeeRefundService:
         if is_fully_refunded:
             if order.status not in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
                 # Itemized flows restore stock per refunded quantity. Skip order-level stock restoration.
-                order.transition_to(OrderStatusChoices.REFUNDED, restore_stock=False)
-                return True
+                return cls._transition_order_to_refunded(order, restore_stock=False)
             return False
 
         cls._transition_order_to_partially_refunded(order)
@@ -861,15 +903,15 @@ class AttendeeRefundService:
                 affected_order_ids.add(target.id)
                 if target.status not in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
                     if refund_scope == "full_target" and refund_request.is_full:
-                        target.transition_to(OrderStatusChoices.REFUNDED)
-                        finalized_orders += 1
+                        if cls._transition_order_to_refunded(target):
+                            finalized_orders += 1
                     elif association.amount.amount >= target.total_amount.amount:
                         # Order-level association covering the full order amount
-                        target.transition_to(OrderStatusChoices.REFUNDED)
-                        finalized_orders += 1
+                        if cls._transition_order_to_refunded(target):
+                            finalized_orders += 1
                     elif cls._is_order_fully_refunded(refund_request.payment, target):
-                        target.transition_to(OrderStatusChoices.REFUNDED)
-                        finalized_orders += 1
+                        if cls._transition_order_to_refunded(target):
+                            finalized_orders += 1
                     else:
                         cls._transition_order_to_partially_refunded(target)
                 continue
@@ -921,8 +963,8 @@ class AttendeeRefundService:
             for order in selected_orders:
                 if order.status not in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
                     if cls._is_order_fully_refunded(refund_request.payment, order):
-                        order.transition_to(OrderStatusChoices.REFUNDED)
-                        finalized_orders += 1
+                        if cls._transition_order_to_refunded(order):
+                            finalized_orders += 1
                     else:
                         cls._transition_order_to_partially_refunded(order)
 
@@ -936,8 +978,8 @@ class AttendeeRefundService:
                     continue
 
                 if cls._is_order_fully_refunded(refund_request.payment, order):
-                    order.transition_to(OrderStatusChoices.REFUNDED)
-                    finalized_orders += 1
+                    if cls._transition_order_to_refunded(order):
+                        finalized_orders += 1
                 else:
                     cls._transition_order_to_partially_refunded(order)
 
@@ -963,6 +1005,17 @@ class AttendeeRefundService:
     def determine_payment_status_after_process(cls, refund_request: RefundRequest) -> str:
         if refund_request.is_full:
             return PaymentStatusChoices.REFUNDED
+
+        processed_total = Decimal("0.00")
+        for processed_request in refund_request.payment.refund_requests.filter(
+            verification_status=VerificationStatus.PROCESSED
+        ):
+            processed_total += Decimal(str(processed_request.amount.amount))
+
+        payment_total = Decimal(str(refund_request.payment.base_amount.amount))
+        if processed_total.quantize(Decimal("0.01")) >= payment_total.quantize(Decimal("0.01")):
+            return PaymentStatusChoices.REFUNDED
+
         return PaymentStatusChoices.PARTIALLY_REFUNDED
 
     @classmethod
