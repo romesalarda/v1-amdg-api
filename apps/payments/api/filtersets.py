@@ -32,6 +32,7 @@ from apps.payments.models import (
     Donation, PaymentHistoryAction,
     CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
 )
+from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 
 
@@ -1146,4 +1147,66 @@ class PaymentHistoryActionFilterSet(filters.FilterSet):
         return queryset.filter(
             Q(description__icontains=value) |
             Q(notes__icontains=value)
+        )
+
+
+class StockAuditLogFilterSet(filters.FilterSet):
+    """Filterset for StockAuditLog model."""
+
+    event_id = filters.UUIDFilter(
+        method='filter_event_id',
+        help_text='Filter by event UUID inferred from payment association'
+    )
+    payment_id = filters.UUIDFilter(
+        field_name='payment_id',
+        help_text='Filter by payment UUID'
+    )
+    order_id = filters.UUIDFilter(
+        field_name='order_id',
+        help_text='Filter by order UUID'
+    )
+    change_reason = filters.MultipleChoiceFilter(
+        field_name='change_reason',
+        choices=StockAuditLog.ChangeReasonChoices.choices,
+        help_text='Filter by stock change reason(s)'
+    )
+    actor = filters.NumberFilter(
+        field_name='actor__id',
+        help_text='Filter by actor user ID'
+    )
+    created_after = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='gte',
+        help_text='Filter logs created after this timestamp'
+    )
+    created_before = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='lte',
+        help_text='Filter logs created before this timestamp'
+    )
+    search = filters.CharFilter(
+        method='filter_search',
+        help_text='Search stock logs by notes or webhook event ID'
+    )
+
+    class Meta:
+        model = StockAuditLog
+        fields = []
+
+    def filter_event_id(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        payment_ids = Payment.objects.filter(
+            event__event_id=value
+        ).values_list('payment_id', flat=True)
+        return queryset.filter(payment_id__in=payment_ids)
+
+    def filter_search(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        return queryset.filter(
+            Q(notes__icontains=value) |
+            Q(webhook_event_id__icontains=value)
         )

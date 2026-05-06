@@ -29,7 +29,16 @@ from apps.payments.models import (
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
 from apps.bookings.models import Booking, BookingPackage, TicketType, Ticket, TicketScopeChoices, TicketStatusChoices
-from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices
+from apps.products.models import (
+    Order,
+    OrderItem,
+    OrderStatusChoices,
+    OrderItemStatusChoices,
+    Product,
+    ProductVariant,
+    ProductSizeChoices,
+    StockAuditLog,
+)
 from apps.organisations.models import EventSponsor, EventSponsorPackage
 from apps.attendee.models import Attendee, AttendeeRelationship
 
@@ -140,6 +149,21 @@ class PaymentAPITestCase(APITestCase):
             total_amount=Money(25, 'GBP'),
             status='draft',
         )
+
+        self.audit_product = Product.objects.create(
+            title='Audit Hoodie',
+            event=self.event,
+            base_amount=Money(30, 'GBP'),
+            added_by=self.admin_user,
+            verified=True,
+        )
+        self.audit_variant = ProductVariant.objects.create(
+            product=self.audit_product,
+            size=ProductSizeChoices.MEDIUM,
+            color='#111111',
+            stock_quantity=25,
+            added_by=self.admin_user,
+        )
         
         self.client = APIClient()
     
@@ -187,6 +211,123 @@ class PaymentAPITestCase(APITestCase):
         self.assertNotIn('target_details', response.data)
         self.assertNotIn('target_model', response.data)
 
+    def test_stock_audit_list_requires_event_scope(self):
+        """Stock audit list should be empty unless event scope is provided."""
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=25,
+            new_quantity=24,
+            change_amount=-1,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=self.payment.payment_id,
+            actor=self.regular_user,
+        )
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:stockauditlog-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'], [])
+
+    def test_stock_audit_list_returns_only_owner_logs_for_event(self):
+        """Regular users should only see stock logs tied to their own payments in event scope."""
+        other_payment = Payment.objects.create(
+            user=self.other_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(55, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+        )
+
+        own_log = StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=25,
+            new_quantity=23,
+            change_amount=-2,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=self.payment.payment_id,
+            actor=self.regular_user,
+        )
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=23,
+            new_quantity=21,
+            change_amount=-2,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=other_payment.payment_id,
+            actor=self.other_user,
+        )
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:stockauditlog-list')
+        response = self.client.get(url, {'event_id': str(self.event.event_id)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['id'], str(own_log.id))
+        self.assertEqual(response.data['results'][0]['payment_id'], str(self.payment.payment_id))
+
+    def test_stock_audit_list_infers_event_and_payment_fields(self):
+        """Serializer should expose inferred event and payment metadata via payment_id."""
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=25,
+            new_quantity=24,
+            change_amount=-1,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=self.payment.payment_id,
+            actor=self.regular_user,
+        )
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:stockauditlog-list')
+        response = self.client.get(url, {'event_id': str(self.event.event_id)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+
+        payload = response.data['results'][0]
+        self.assertEqual(payload['event_id'], str(self.event.event_id))
+        self.assertEqual(payload['event_title'], self.event.title)
+        self.assertEqual(payload['payment_reference'], self.payment.payment_reference)
+
+    def test_stock_audit_admin_can_see_all_event_logs(self):
+        """Admins can see all stock logs for the selected event scope."""
+        other_payment = Payment.objects.create(
+            user=self.other_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(60, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+        )
+
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=25,
+            new_quantity=24,
+            change_amount=-1,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=self.payment.payment_id,
+            actor=self.regular_user,
+        )
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=24,
+            new_quantity=22,
+            change_amount=-2,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=other_payment.payment_id,
+            actor=self.other_user,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:stockauditlog-list')
+        response = self.client.get(url, {'event_id': str(self.event.event_id)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 2)
+
     def test_admin_cancel_payment_cancels_linked_orders(self):
         """Cancelling a pending payment should cancel linked pending orders for stock safety."""
         pending_payment = Payment.objects.create(
@@ -204,10 +345,18 @@ class PaymentAPITestCase(APITestCase):
             payment=pending_payment,
         )
 
+        OrderItem.objects.create(
+            order=linked_order,
+            product_variant=self.audit_variant,
+            quantity=1,
+            unit_price=Money(75, 'GBP'),
+            total_price=Money(75, 'GBP'),
+            status=OrderItemStatusChoices.PENDING,
+        )
+
         self.client.force_authenticate(user=self.admin_user)
         url = reverse('payments:payment-cancel', kwargs={'payment_id': pending_payment.payment_id})
         response = self.client.post(url)
-
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         pending_payment.refresh_from_db()
         linked_order.refresh_from_db()

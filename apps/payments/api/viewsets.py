@@ -26,7 +26,7 @@ from rest_framework.pagination import PageNumberPagination
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, OuterRef, Subquery
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
@@ -48,6 +48,7 @@ from apps.payments.models import (
     Donation, PaymentHistoryAction,
     CreditExpense, BankTransferEvidence
 )
+from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 from .serializers import (
     PaymentListSerializer, PaymentDetailSerializer, PaymentCreateSerializer, PaymentUpdateSerializer,
@@ -58,14 +59,14 @@ from .serializers import (
     RefundAssociationSerializer, RefundAssociationCreateSerializer,
     RefundPolicySerializer, RefundPolicyCreateUpdateSerializer,
     DonationListSerializer, DonationDetailSerializer, DonationCreateSerializer,
-    PaymentHistoryActionSerializer,
+    PaymentHistoryActionSerializer, StockAuditLogSerializer,
     CreditExpenseListSerializer, CreditExpenseDetailSerializer, CreditExpenseCreateSerializer, CreditExpenseUpdateSerializer,
     BankTransferEvidenceListSerializer, BankTransferEvidenceDetailSerializer, BankTransferEvidenceCreateSerializer, BankTransferEvidenceUpdateSerializer
 )
 from .filtersets import (
     PaymentFilterSet, PaymentMethodFilterSet, DiscountFilterSet, DiscountRuleFilterSet,
     RefundRequestFilterSet, RefundPolicyFilterSet, DonationFilterSet, PaymentHistoryActionFilterSet,
-    CreditExpenseFilterSet, BankTransferEvidenceFilterSet
+    CreditExpenseFilterSet, BankTransferEvidenceFilterSet, StockAuditLogFilterSet
 )
 from .permissions import (
     IsAdministrativeStaff, IsAdministrativeStaffOnly, IsPaymentOwnerOrAdministrative,
@@ -2116,6 +2117,58 @@ class PaymentHistoryActionViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['description', 'notes', 'action']
     ordering_fields = ['timestamp', 'action']
     ordering = ['-timestamp']
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary='List stock audit logs',
+        description=(
+            'Retrieve stock audit logs. List access is event-scoped and requires event_id. '
+            'Regular users only see logs tied to their own payments.'
+        ),
+        tags=['Stock Audit'],
+    ),
+    retrieve=extend_schema(
+        summary='Retrieve stock audit log',
+        description='Get a single stock audit log entry with inferred payment and event metadata.',
+        tags=['Stock Audit'],
+    )
+)
+class StockAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only StockAuditLog endpoint with event-scoped list responses."""
+
+    queryset = StockAuditLog.objects.select_related('product_variant', 'product_variant__product', 'actor')
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = StockAuditLogSerializer
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = StockAuditLogFilterSet
+    search_fields = ['notes', 'webhook_event_id', 'change_reason']
+    ordering_fields = ['created_at', 'change_amount', 'new_quantity']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        payment_subquery = Payment.objects.filter(
+            payment_id=OuterRef('payment_id')
+        )
+
+        queryset = queryset.annotate(
+            payment_owner_id=Subquery(payment_subquery.values('user_id')[:1]),
+            payment_event_id=Subquery(payment_subquery.values('event__event_id')[:1]),
+            payment_event_title=Subquery(payment_subquery.values('event__title')[:1]),
+            payment_reference_annotated=Subquery(payment_subquery.values('payment_reference')[:1]),
+        )
+
+        if not user.is_staff and not user.is_superuser:
+            queryset = queryset.filter(payment_owner_id=user.id)
+
+        if self.action == 'list' and not self.request.query_params.get('event_id'):
+            return queryset.none()
+
+        return queryset
 
 
 class CreditExpenseViewSet(viewsets.ModelViewSet):

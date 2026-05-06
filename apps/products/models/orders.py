@@ -143,7 +143,6 @@ class Order(SoftDeleteModel): # no admin model
         ]
 
     def save(self, *args, **kwargs):
-        self.clean()
         if not self.order_reference_id:
             try:
                 ref = self.attendee.event.display_code if self.attendee and self.attendee.event else 'EVT'
