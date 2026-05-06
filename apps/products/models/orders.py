@@ -210,7 +210,7 @@ class Order(SoftDeleteModel): # no admin model
         allowed_transitions = ORDER_STATUS_TRANSITIONS.get(self.status, [])
         return new_status in allowed_transitions
     
-    def transition_to(self, new_status: str):
+    def transition_to(self, new_status: str, *, restore_stock: bool = True):
         '''
         Transitions the order to the specified new status if valid.
         Restores stock if transitioning to cancelled or refunded status.
@@ -225,7 +225,7 @@ class Order(SoftDeleteModel): # no admin model
         self.status = new_status
         
         # Restore stock only on full cancellation or full refund (not partial)
-        if new_status in [OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED]:
+        if restore_stock and new_status in [OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED]:
             for item in self.order_items.all():
                 if item.product_variant:
                     try:
@@ -522,7 +522,7 @@ class OrderItem(models.Model): # no admin model
         default=OrderItemStatusChoices.PENDING,
     )
 
-    quantity = models.PositiveIntegerField(validators=[validators.MinValueValidator(1)])
+    quantity = models.PositiveIntegerField(validators=[validators.MinValueValidator(0)])
     unit_price = MoneyField(max_digits=10, decimal_places=2, default_currency='GBP') # price per unit at time of order
     total_price = MoneyField(max_digits=10, decimal_places=2, default_currency='GBP') # unit_price * quantity
 
@@ -533,8 +533,13 @@ class OrderItem(models.Model): # no admin model
         return f"<OrderItem id={self.id} order_id={self.order.id} product_variant={self.product_variant} quantity={self.quantity} total_price={self.total_price}>"
     
     def clean(self):
-        if self.quantity <= 0:
-            raise exceptions.ValidationError("Quantity must be at least 1.")
+        if self.quantity < 0:
+            raise exceptions.ValidationError("Quantity cannot be negative.")
+        if self.quantity == 0 and self.status not in {
+            OrderItemStatusChoices.REFUNDED,
+            OrderItemStatusChoices.CANCELLED,
+        }:
+            raise exceptions.ValidationError("Quantity can only be zero for refunded or cancelled items.")
         if self.unit_price.amount < 0:
             raise exceptions.ValidationError("Unit price cannot be negative.")
         if self.total_price.amount != self.unit_price.amount * self.quantity:

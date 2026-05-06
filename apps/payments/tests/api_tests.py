@@ -1236,6 +1236,64 @@ class RefundRequestAPITestCase(APITestCase):
         order.recalculate_total_amount()
         order.refresh_from_db()
         return payment, order, item_one, item_two
+
+    def _create_stock_backed_order_payment_fixture(self):
+        product = Product.objects.create(
+            title=f'Refund Stock Product {timezone.now().timestamp()}',
+            event=self.event,
+            base_amount=Money('30.00', 'GBP'),
+            added_by=self.admin_user,
+            verified=True,
+            is_active=True,
+        )
+        variant = ProductVariant.objects.create(
+            product=product,
+            size=ProductSizeChoices.MEDIUM,
+            color='#222222',
+            stock_quantity=5,
+            added_by=self.admin_user,
+            verified=True,
+            is_active=True,
+        )
+
+        payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money('60.00', 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+        )
+        order = Order.objects.create(
+            customer=self.regular_user,
+            created_by=self.regular_user,
+            total_amount=Money('0.00', 'GBP'),
+            status=OrderStatusChoices.DRAFT,
+            payment=payment,
+        )
+        payment.target_type = ContentType.objects.get_for_model(Order)
+        payment.target_id = str(order.pk)
+        payment.save(update_fields=['target_type', 'target_id'])
+
+        order_item = OrderItem.objects.create(
+            order=order,
+            product_variant=variant,
+            quantity=2,
+            unit_price=Money('30.00', 'GBP'),
+            total_price=Money('60.00', 'GBP'),
+            status=OrderItemStatusChoices.COMPLETED,
+        )
+        variant.decrement_stock(
+            2,
+            reason='initial_order_deduction',
+            actor=self.regular_user,
+            order_id=order.order_id,
+            payment_id=payment.payment_id,
+            order_item_id=order_item.id,
+            notes='Seed fixture reserved stock for refund flow test.',
+        )
+
+        order.recalculate_total_amount()
+        return payment, order, order_item, variant
     
     def test_create_refund_request(self):
         """User can request refund for their payment."""
@@ -1600,6 +1658,97 @@ class RefundRequestAPITestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('amount', response.data)
+
+    def test_itemized_refunds_update_stock_and_order_item_totals(self):
+        """Processing itemized partial/full refunds should restore stock and reduce order-item totals progressively."""
+        payment, order, order_item, variant = self._create_stock_backed_order_payment_fixture()
+        self.assertEqual(variant.stock_quantity, 3)
+
+        self.client.force_authenticate(user=self.regular_user)
+        first_refund_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '30.00',
+                'amount_currency': 'GBP',
+                'reason': 'Partial refund for one unit from the order item.',
+                'refund_items': [
+                    {
+                        'order_item_id': order_item.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(first_refund_response.status_code, status.HTTP_201_CREATED)
+
+        first_refund = RefundRequest.objects.filter(payment=payment).latest('requested_at')
+        self.client.force_authenticate(user=self.admin_user)
+        self.assertEqual(
+            self.client.post(reverse('payments:refundrequest-verify', kwargs={'refund_id': first_refund.refund_id})).status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(
+            self.client.post(reverse('payments:refundrequest-process', kwargs={'refund_id': first_refund.refund_id})).status_code,
+            status.HTTP_200_OK,
+        )
+
+        order_item.refresh_from_db()
+        order.refresh_from_db()
+        payment.refresh_from_db()
+        variant.refresh_from_db()
+
+        self.assertEqual(variant.stock_quantity, 4)
+        self.assertEqual(order_item.quantity, 1)
+        self.assertEqual(order_item.total_price, Money('30.00', 'GBP'))
+        self.assertEqual(order_item.status, OrderItemStatusChoices.COMPLETED)
+        self.assertEqual(order.total_amount, Money('30.00', 'GBP'))
+        self.assertEqual(order.status, OrderStatusChoices.PARTIALLY_REFUNDED)
+        self.assertEqual(payment.status, PaymentStatusChoices.PARTIALLY_REFUNDED)
+
+        self.client.force_authenticate(user=self.regular_user)
+        second_refund_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '30.00',
+                'amount_currency': 'GBP',
+                'reason': 'Final refund for remaining unit from the order item.',
+                'refund_items': [
+                    {
+                        'order_item_id': order_item.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(second_refund_response.status_code, status.HTTP_201_CREATED)
+
+        second_refund = RefundRequest.objects.filter(payment=payment).latest('requested_at')
+        self.client.force_authenticate(user=self.admin_user)
+        self.assertEqual(
+            self.client.post(reverse('payments:refundrequest-verify', kwargs={'refund_id': second_refund.refund_id})).status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(
+            self.client.post(reverse('payments:refundrequest-process', kwargs={'refund_id': second_refund.refund_id})).status_code,
+            status.HTTP_200_OK,
+        )
+
+        order_item.refresh_from_db()
+        order.refresh_from_db()
+        payment.refresh_from_db()
+        variant.refresh_from_db()
+
+        self.assertEqual(variant.stock_quantity, 5)
+        self.assertEqual(order_item.quantity, 0)
+        self.assertEqual(order_item.total_price, Money('0.00', 'GBP'))
+        self.assertEqual(order_item.status, OrderItemStatusChoices.REFUNDED)
+        self.assertEqual(order.total_amount, Money('0.00', 'GBP'))
+        self.assertEqual(order.status, OrderStatusChoices.REFUNDED)
+        self.assertEqual(payment.status, PaymentStatusChoices.REFUNDED)
 
     def test_scenario_single_attendee_full_refund_invalidates_ticket_and_order(self):
         """Scenario 1: one attendee full refund invalidates linked ticket and order."""

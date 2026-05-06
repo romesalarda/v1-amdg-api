@@ -202,7 +202,10 @@ class AttendeeRefundService:
             target_type=ContentType.objects.get_for_model(OrderItem),
             target_id=str(order_item.pk),
         ).exclude(
-            refund_request__verification_status=VerificationStatus.REJECTED,
+            refund_request__verification_status__in=[
+                VerificationStatus.REJECTED,
+                VerificationStatus.PROCESSED,
+            ],
         )
 
         refunded_quantity = 0
@@ -218,10 +221,88 @@ class AttendeeRefundService:
         if not order_items:
             return False
 
+        if all(
+            item.quantity <= 0 or item.status in {OrderItemStatusChoices.REFUNDED, OrderItemStatusChoices.CANCELLED}
+            for item in order_items
+        ):
+            return True
+
         return all(
             cls._get_order_item_refunded_quantity(payment, order_item) >= order_item.quantity
             for order_item in order_items
         )
+
+    @classmethod
+    def _apply_order_item_refund_quantity_and_stock(
+        cls,
+        refund_request: RefundRequest,
+        order_item: OrderItem,
+        requested_refund_qty: int,
+    ) -> int:
+        """Apply processed refund side-effects directly to order-item quantity, totals, and stock."""
+        original_quantity = int(order_item.quantity)
+        if original_quantity <= 0:
+            return 0
+
+        refund_quantity = min(max(int(requested_refund_qty or 0), 0), original_quantity)
+        if refund_quantity <= 0:
+            return 0
+
+        if order_item.product_variant:
+            reason = "partial_refund_restoration" if refund_quantity < original_quantity else "refund_restoration"
+            order_item.product_variant.increment_stock(
+                refund_quantity,
+                reason=reason,
+                actor=refund_request.processed_by,
+                order_id=order_item.order.order_id,
+                payment_id=refund_request.payment.payment_id,
+                order_item_id=order_item.id,
+                notes=(
+                    f"Applied processed refund {refund_request.tracking_reference} "
+                    f"for quantity {refund_quantity}."
+                ),
+            )
+
+        remaining_quantity = max(original_quantity - refund_quantity, 0)
+        new_total = (order_item.unit_price.amount * Decimal(remaining_quantity)).quantize(Decimal("0.01"))
+
+        order_item.quantity = remaining_quantity
+        order_item.total_price = Money(new_total, order_item.total_price.currency)
+        if remaining_quantity == 0:
+            order_item.status = OrderItemStatusChoices.REFUNDED
+
+        order_item.save(update_fields=["quantity", "total_price", "status"])
+        return refund_quantity
+
+    @classmethod
+    def _finalize_order_after_itemized_refunds(cls, order: Order) -> bool:
+        """Normalize order state after order-item quantities have been reduced by processed refunds."""
+        order.recalculate_total_amount()
+        order.refresh_from_db()
+
+        # Zero-quantity items are terminally refunded and must not be flipped back to completed.
+        order.order_items.filter(quantity=0).exclude(
+            status__in=[OrderItemStatusChoices.REFUNDED, OrderItemStatusChoices.CANCELLED]
+        ).update(status=OrderItemStatusChoices.REFUNDED)
+
+        order_items = list(order.order_items.all())
+        if not order_items:
+            return False
+
+        is_fully_refunded = all(
+            item.quantity == 0 or item.status in {OrderItemStatusChoices.REFUNDED, OrderItemStatusChoices.CANCELLED}
+            for item in order_items
+        )
+
+        if is_fully_refunded:
+            if order.status not in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
+                # Itemized flows restore stock per refunded quantity. Skip order-level stock restoration.
+                order.transition_to(OrderStatusChoices.REFUNDED, restore_stock=False)
+                return True
+            return False
+
+        cls._transition_order_to_partially_refunded(order)
+        return False
 
     @classmethod
     def resolve_booking_attendees(cls, payment, attendee_ids: List[str]) -> List[Attendee]:
@@ -802,7 +883,10 @@ class AttendeeRefundService:
                     refunded_qty = 0
                 if refunded_qty <= 0:
                     refunded_qty = target.quantity
-                order_item_refund_quantities[target.id] = order_item_refund_quantities.get(target.id, 0) + refunded_qty
+
+                applied_qty = cls._apply_order_item_refund_quantity_and_stock(refund_request, target, refunded_qty)
+                if applied_qty > 0:
+                    order_item_refund_quantities[target.id] = order_item_refund_quantities.get(target.id, 0) + applied_qty
 
         if refund_scope in {"targeted_order_items", "targeted_booking_products"} and order_item_refund_quantities:
             order_ids = list(
@@ -814,32 +898,8 @@ class AttendeeRefundService:
             affected_order_ids.update(order_ids)
 
             for order in Order.objects.filter(id__in=order_ids).prefetch_related("order_items"):
-                order_items = list(order.order_items.all())
-                if not order_items:
-                    continue
-
-                fully_refunded_items = []
-                is_fully_refunded = True
-                for item in order_items:
-                    if cls._get_order_item_refunded_quantity(refund_request.payment, item) >= item.quantity:
-                        if item.status not in {OrderItemStatusChoices.REFUNDED, OrderItemStatusChoices.CANCELLED}:
-                            fully_refunded_items.append(item)
-                    else:
-                        is_fully_refunded = False
-
-                if fully_refunded_items:
-                    OrderItem.objects.filter(id__in=[i.id for i in fully_refunded_items]).update(
-                        status=OrderItemStatusChoices.REFUNDED
-                    )
-
-                if not is_fully_refunded:
-                    cls._transition_order_to_partially_refunded(order)
-                    continue
-
-                if order.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
-                    continue
-                order.transition_to(OrderStatusChoices.REFUNDED)
-                finalized_orders += 1
+                if cls._finalize_order_after_itemized_refunds(order):
+                    finalized_orders += 1
 
         attendee_ids = metadata.get("selected_attendee_ids") or []
         if attendee_ids and not is_targeted_scope:
@@ -870,21 +930,15 @@ class AttendeeRefundService:
             for order in Order.objects.filter(id__in=affected_order_ids).prefetch_related("order_items"):
                 if order.status in {OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED}:
                     continue
+                if refund_scope in {"targeted_order_items", "targeted_booking_products"}:
+                    if cls._finalize_order_after_itemized_refunds(order):
+                        finalized_orders += 1
+                    continue
+
                 if cls._is_order_fully_refunded(refund_request.payment, order):
                     order.transition_to(OrderStatusChoices.REFUNDED)
                     finalized_orders += 1
                 else:
-                    # Mark individually-refunded items before the order-level partial transition
-                    # (so the PARTIALLY_REFUNDED cascade only rolls back unrefunded items)
-                    items_to_mark = [
-                        item for item in order.order_items.all()
-                        if cls._get_order_item_refunded_quantity(refund_request.payment, item) >= item.quantity
-                        and item.status not in {OrderItemStatusChoices.REFUNDED, OrderItemStatusChoices.CANCELLED}
-                    ]
-                    if items_to_mark:
-                        OrderItem.objects.filter(id__in=[i.id for i in items_to_mark]).update(
-                            status=OrderItemStatusChoices.REFUNDED
-                        )
                     cls._transition_order_to_partially_refunded(order)
 
         metadata["process_finalized_at"] = refund_request.processed_at.isoformat() if refund_request.processed_at else None

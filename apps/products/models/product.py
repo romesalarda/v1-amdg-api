@@ -1,5 +1,6 @@
 from django.db import models
-from django.core import validators, exceptions
+from django.core import validators
+from rest_framework import exceptions
 from django.contrib.auth import get_user_model
 
 from django.db.models import F
@@ -472,7 +473,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         '''
         from apps.attendee.models.attendee import Attendee
         if not isinstance(attendee, Attendee):
-            raise exceptions.ValidationError("The provided attendee is not a valid Attendee instance.")
+            raise exceptions.ValidationError({"message": "The provided attendee is not a valid Attendee instance.", "code": "invalid_attendee"})
         
         if desired_quantity <= 0:
             return False
@@ -481,12 +482,12 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         product_purchased = self.get_attendee_product_purchase_quantity(attendee)
         if product_purchased + desired_quantity > effective_limit:
             if raise_exception: 
-                raise exceptions.ValidationError("Purchase would exceed maximum allowed quantity per attendee for this product.")
+                raise exceptions.ValidationError({"message": f"Purchase quantity exceeds the maximum allowed per attendee. You have already purchased {product_purchased} of this product.", "code": "purchase_quantity_exceeded"})
             return False
         
         if not self.can_decrement_stock(desired_quantity):
             if raise_exception:
-                raise exceptions.ValidationError("Insufficient stock for the selected product variant.")
+                raise exceptions.ValidationError({"message": "Insufficient stock for the selected product variant.", "code": "insufficient_stock"})
             return False
         
         return True

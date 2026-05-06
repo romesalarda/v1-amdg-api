@@ -3599,6 +3599,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                         customer_email=request.user.email,
                         metadata=stripe_metadata,
                         description=payment.description,
+                        stripe_account_id=payment_method.get_stripe_account_id(),
                     )
                     
                     payment.stripe_payment_intent = payment_intent['id']
