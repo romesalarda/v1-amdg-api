@@ -378,7 +378,8 @@ class ProductListSerializer(ContextAwarePricingMixin, serializers.ModelSerialize
         model = Product
         fields = (
             'id', 'product_id', 'display_code', 'title', 'event', 'event_name',
-            'base_amount', 'base_amount_currency', 'percentage_modifier', 'final_price', 'verified',
+            'base_amount', 'base_amount_currency', 'percentage_modifier', 'max_purchase_quantity_per_order',
+            'final_price', 'verified',
             'is_active', 'variant_count', 'categories', 'main_image',
             'context_can_purchase', 'context_has_discount', 'context_final_price', 'context_discounts',
             'added_at', '_links'
@@ -580,6 +581,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         model = Product
         fields = (
             'title', 'description', 'event', 'base_amount', 'base_amount_currency', 'percentage_modifier',
+            'max_purchase_quantity_per_order',
             'verified', 'is_active', 'main_image', 'additional_images'
         )
     
@@ -600,6 +602,12 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Product title cannot be empty.")
         return value.strip()
+
+    def validate_max_purchase_quantity_per_order(self, value):
+        """Validate optional product-level max purchase quantity."""
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("Max purchase quantity must be at least 1.")
+        return value
     
     def validate_main_image(self, value):
         """Validate main image file."""
@@ -734,6 +742,7 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         model = Product
         fields = (
             'title', 'description', 'base_amount', 'base_amount_currency', 'percentage_modifier',
+            'max_purchase_quantity_per_order',
             'verified', 'is_active', 'main_image', 'additional_images'
         )
     
@@ -748,6 +757,12 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         if value and not value.strip():
             raise serializers.ValidationError("Product title cannot be empty.")
         return value.strip() if value else value
+
+    def validate_max_purchase_quantity_per_order(self, value):
+        """Validate optional product-level max purchase quantity."""
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("Max purchase quantity must be at least 1.")
+        return value
     
     def validate_main_image(self, value):
         """Validate main image file."""
@@ -913,8 +928,8 @@ class ProductVariantListSerializer(ContextAwarePricingMixin, serializers.ModelSe
 
         attendee = self._get_context_attendee()
         try:
-            purchased = int(obj.get_attendee_purchase_quantity(attendee))
-            remaining = int(obj.max_purchase_quantity_per_order) - purchased
+            purchased = int(obj.get_attendee_product_purchase_quantity(attendee))
+            remaining = int(obj.get_effective_max_purchase_quantity_per_attendee()) - purchased
             return max(remaining, 0)
         except Exception:
             return 0
@@ -1466,15 +1481,16 @@ class OrderCreateSerializer(serializers.ModelSerializer):
                             'items': f"Attendee cannot purchase variant {variant_id}."
                         })
                     
-                    # Check quantity availability
-                    if not variant.can_attendee_purchase_quantity(attendee, quantity):
-                        raise serializers.ValidationError({
-                            'items': f"Insufficient stock or exceeds purchase limit for variant {variant_id}."
-                        })
+                    # Check quantity availability with strict model validation.
+                    variant.can_attendee_purchase_quantity(attendee, quantity, raise_exception=True)
                 
                 except ProductVariant.DoesNotExist:
                     raise serializers.ValidationError({
                         'items': f"Variant {variant_id} does not exist."
+                    })
+                except DjangoValidationError as exc:
+                    raise serializers.ValidationError({
+                        'items': exc.messages
                     })
         
         return attrs

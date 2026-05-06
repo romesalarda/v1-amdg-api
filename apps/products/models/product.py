@@ -76,6 +76,7 @@ class Product(ProductMetaClass): # discounts, resources and availability all app
         on_delete=models.CASCADE,
         related_name='products'
     )
+    max_purchase_quantity_per_order = models.PositiveIntegerField(null=True, blank=True)
     
     categories = models.ManyToManyField(
         'products.ProductCategory',
@@ -107,6 +108,9 @@ class Product(ProductMetaClass): # discounts, resources and availability all app
 
         if existing_products.exists():
             raise exceptions.ValidationError("A product with this title already exists for the event.")
+
+        if self.max_purchase_quantity_per_order is not None and self.max_purchase_quantity_per_order <= 0:
+            raise exceptions.ValidationError("Product max purchase quantity per attendee must be at least 1.")
         
         self.title = self.title.strip().title()
 
@@ -193,6 +197,9 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
             raise exceptions.ValidationError("Stock quantity cannot be negative.")
         if not self.product:
             raise exceptions.ValidationError("ProductVariant must be associated with a Product.")
+
+        if self.max_purchase_quantity_per_order <= 0:
+            raise exceptions.ValidationError("Variant max purchase quantity per attendee must be at least 1.")
             
         # check unique constraint manually to provide better error message
         existing_variants = ProductVariant.objects.filter(
@@ -405,10 +412,39 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         result = OrderItem.objects.filter(
             order__attendee=attendee,
             product_variant=self,
-            order__status__in=['processing', 'completed', 'pending']  # only consider non-cancelled orders
+            order__status__in=['draft', 'pending', 'processing', 'completed']  # count open and fulfilled non-cancelled orders
         ).aggregate(total_quantity=Sum('quantity'))
         
         return result['total_quantity'] or 0
+
+    def get_attendee_product_purchase_quantity(self, attendee):
+        '''
+        Returns the total quantity of all variants of this product purchased by the attendee.
+        '''
+        from apps.attendee.models.attendee import Attendee
+        from apps.products.models.orders import OrderItem
+        from django.db.models import Sum
+
+        if not isinstance(attendee, Attendee):
+            raise exceptions.ValidationError("The provided attendee is not a valid Attendee instance.")
+
+        result = OrderItem.objects.filter(
+            order__attendee=attendee,
+            product_variant__product=self.product,
+            order__status__in=['draft', 'pending', 'processing', 'completed']
+        ).aggregate(total_quantity=Sum('quantity'))
+
+        return result['total_quantity'] or 0
+
+    def get_effective_max_purchase_quantity_per_attendee(self) -> int:
+        '''
+        Effective cap uses the stricter limit when product-level cap is set.
+        '''
+        product_limit = self.product.max_purchase_quantity_per_order
+        variant_limit = self.max_purchase_quantity_per_order
+        if product_limit is None:
+            return variant_limit
+        return min(product_limit, variant_limit)
 
     def can_attendee_purchase(self, attendee) -> bool:
         '''
@@ -441,10 +477,11 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         if desired_quantity <= 0:
             return False
         
-        already_purchased = self.get_attendee_purchase_quantity(attendee)
-        if already_purchased + desired_quantity > self.max_purchase_quantity_per_order:
+        effective_limit = self.get_effective_max_purchase_quantity_per_attendee()
+        product_purchased = self.get_attendee_product_purchase_quantity(attendee)
+        if product_purchased + desired_quantity > effective_limit:
             if raise_exception: 
-                raise exceptions.ValidationError("Purchase would exceed maximum allowed quantity per attendee for this product variant.")
+                raise exceptions.ValidationError("Purchase would exceed maximum allowed quantity per attendee for this product.")
             return False
         
         if not self.can_decrement_stock(desired_quantity):

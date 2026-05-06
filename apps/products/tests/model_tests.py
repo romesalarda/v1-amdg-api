@@ -1147,6 +1147,45 @@ class ProductVariantPurchaseTest(TestCase):
         # Initially should be 0
         quantity = self.variant.get_attendee_purchase_quantity(self.attendee)
         self.assertEqual(quantity, 0)
+
+    def test_get_attendee_product_purchase_quantity(self):
+        """Test attendee product quantity aggregation across variants."""
+        second_variant = ProductVariant.objects.create(
+            product=self.product,
+            size=ProductSizeChoices.LARGE,
+            color='#00FF00',
+            stock_quantity=10,
+            max_purchase_quantity_per_order=3,
+            added_by=self.user,
+            verified=True
+        )
+
+        order = Order.objects.create(
+            customer=self.user,
+            attendee=self.attendee,
+            created_by=self.user,
+            total_amount=Money(0, 'GBP'),
+            status=OrderStatusChoices.DRAFT,
+        )
+        order.add_order_item(self.variant, 1)
+        order.add_order_item(second_variant, 1)
+
+        quantity = self.variant.get_attendee_product_purchase_quantity(self.attendee)
+        self.assertEqual(quantity, 2)
+
+    def test_effective_max_purchase_quantity_uses_stricter_limit(self):
+        """Test product+variant effective cap uses stricter limit."""
+        self.product.max_purchase_quantity_per_order = 2
+        self.product.save()
+
+        self.assertEqual(self.variant.get_effective_max_purchase_quantity_per_attendee(), 2)
+
+    def test_effective_max_purchase_quantity_falls_back_to_variant_when_product_unset(self):
+        """Test product cap fallback when product-level cap is unset."""
+        self.product.max_purchase_quantity_per_order = None
+        self.product.save()
+
+        self.assertEqual(self.variant.get_effective_max_purchase_quantity_per_attendee(), 3)
         
     def test_can_attendee_purchase_quantity_when_eligible(self):
         """Test quantity check when attendee can purchase"""
@@ -1156,6 +1195,50 @@ class ProductVariantPurchaseTest(TestCase):
     def test_cannot_purchase_quantity_exceeding_max(self):
         """Test that quantity cannot exceed max_purchase_quantity_per_order"""
         result = self.variant.can_attendee_purchase_quantity(self.attendee, 5, raise_exception=False)
+        self.assertFalse(result)
+
+    def test_product_cap_is_enforced_across_variants(self):
+        """Test product-level cap across all variants for an attendee."""
+        self.product.max_purchase_quantity_per_order = 1
+        self.product.save()
+
+        second_variant = ProductVariant.objects.create(
+            product=self.product,
+            size=ProductSizeChoices.LARGE,
+            color='#00AA00',
+            stock_quantity=10,
+            max_purchase_quantity_per_order=3,
+            added_by=self.user,
+            verified=True
+        )
+
+        order = Order.objects.create(
+            customer=self.user,
+            attendee=self.attendee,
+            created_by=self.user,
+            total_amount=Money(0, 'GBP'),
+            status=OrderStatusChoices.DRAFT,
+        )
+        order.add_order_item(self.variant, 1)
+
+        result = second_variant.can_attendee_purchase_quantity(self.attendee, 1, raise_exception=False)
+        self.assertFalse(result)
+
+    def test_draft_orders_count_towards_purchase_limit(self):
+        """Test draft order quantities are counted towards attendee purchase cap."""
+        self.product.max_purchase_quantity_per_order = 2
+        self.product.save()
+
+        order = Order.objects.create(
+            customer=self.user,
+            attendee=self.attendee,
+            created_by=self.user,
+            total_amount=Money(0, 'GBP'),
+            status=OrderStatusChoices.DRAFT,
+        )
+        order.add_order_item(self.variant, 2)
+
+        result = self.variant.can_attendee_purchase_quantity(self.attendee, 1, raise_exception=False)
         self.assertFalse(result)
         
     def test_cannot_purchase_quantity_exceeding_max_raises_exception(self):
