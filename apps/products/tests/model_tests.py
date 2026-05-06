@@ -1315,6 +1315,7 @@ class OrderModelTest(TestCase):
         )
         
         with self.assertRaises(ValidationError):
+            order.clean()
             order.save()
             
     def test_order_total_amount_cannot_be_negative(self):
@@ -1327,8 +1328,8 @@ class OrderModelTest(TestCase):
             total_amount=Money(-50, 'GBP'),
             created_by=self.user
         )
-        
         with self.assertRaises(ValidationError):
+            order.clean()
             order.save()
             
     def test_order_event_property(self):
