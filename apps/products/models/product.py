@@ -233,7 +233,48 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
     def event(self):
         return self.product.event
 
-    def increment_stock(self, amount: int):
+    def _log_stock_change(
+        self,
+        *,
+        old_quantity: int,
+        new_quantity: int,
+        change_amount: int,
+        reason: str,
+        actor=None,
+        order_id=None,
+        payment_id=None,
+        order_item_id=None,
+        webhook_event_id=None,
+        notes=None,
+    ):
+        from apps.products.models.audit import StockAuditLog
+
+        StockAuditLog.objects.create(
+            product_variant=self,
+            old_quantity=old_quantity,
+            new_quantity=new_quantity,
+            change_amount=change_amount,
+            change_reason=reason,
+            actor=actor,
+            order_id=order_id,
+            payment_id=payment_id,
+            order_item_id=order_item_id,
+            webhook_event_id=webhook_event_id,
+            notes=notes,
+        )
+
+    def increment_stock(
+        self,
+        amount: int,
+        *,
+        reason: str = 'manual_adjustment',
+        actor=None,
+        order_id=None,
+        payment_id=None,
+        order_item_id=None,
+        webhook_event_id=None,
+        notes=None,
+    ):
         '''
         Atomically increments the stock quantity of the product variant.
         
@@ -243,6 +284,12 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         '''
         if amount <= 0:
             raise exceptions.ValidationError("Increment amount must be positive.")
+
+        current = type(self).objects.filter(pk=self.pk).values('stock_quantity').first()
+        if not current:
+            raise exceptions.ValidationError("Product variant not found.")
+
+        old_quantity = current['stock_quantity']
 
         updated = (type(self).objects.filter(pk=self.pk))
         if self.max_stock_quantity is not None: # enforce max stock if set
@@ -256,8 +303,34 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         if updated == 0:
             raise exceptions.ValidationError("Stock increment would exceed maximum capacity.")
 
+        new_quantity = old_quantity + amount
+        self._log_stock_change(
+            old_quantity=old_quantity,
+            new_quantity=new_quantity,
+            change_amount=amount,
+            reason=reason,
+            actor=actor,
+            order_id=order_id,
+            payment_id=payment_id,
+            order_item_id=order_item_id,
+            webhook_event_id=webhook_event_id,
+            notes=notes,
+        )
+        self.stock_quantity = new_quantity
 
-    def decrement_stock(self, amount: int):
+
+    def decrement_stock(
+        self,
+        amount: int,
+        *,
+        reason: str = 'manual_adjustment',
+        actor=None,
+        order_id=None,
+        payment_id=None,
+        order_item_id=None,
+        webhook_event_id=None,
+        notes=None,
+    ):
         '''
         Atomically decrements the stock quantity of the product variant.
         
@@ -267,6 +340,12 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         '''
         if amount <= 0:
             raise exceptions.ValidationError("Decrement amount must be positive.")
+
+        current = type(self).objects.filter(pk=self.pk).values('stock_quantity').first()
+        if not current:
+            raise exceptions.ValidationError("Product variant not found.")
+
+        old_quantity = current['stock_quantity']
 
         updated = (
             type(self).objects
@@ -281,6 +360,21 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
 
         if updated == 0:
             raise exceptions.ValidationError("Insufficient stock for the selected product variant.")
+
+        new_quantity = old_quantity - amount
+        self._log_stock_change(
+            old_quantity=old_quantity,
+            new_quantity=new_quantity,
+            change_amount=-amount,
+            reason=reason,
+            actor=actor,
+            order_id=order_id,
+            payment_id=payment_id,
+            order_item_id=order_item_id,
+            webhook_event_id=webhook_event_id,
+            notes=notes,
+        )
+        self.stock_quantity = new_quantity
 
 
     def can_decrement_stock(self, amount: int) -> bool:

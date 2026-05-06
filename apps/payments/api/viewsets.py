@@ -26,7 +26,7 @@ from rest_framework.pagination import PageNumberPagination
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, OuterRef, Subquery
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
@@ -48,6 +48,7 @@ from apps.payments.models import (
     Donation, PaymentHistoryAction,
     CreditExpense, BankTransferEvidence
 )
+from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 from .serializers import (
     PaymentListSerializer, PaymentDetailSerializer, PaymentCreateSerializer, PaymentUpdateSerializer,
@@ -58,14 +59,14 @@ from .serializers import (
     RefundAssociationSerializer, RefundAssociationCreateSerializer,
     RefundPolicySerializer, RefundPolicyCreateUpdateSerializer,
     DonationListSerializer, DonationDetailSerializer, DonationCreateSerializer,
-    PaymentHistoryActionSerializer,
+    PaymentHistoryActionSerializer, StockAuditLogSerializer,
     CreditExpenseListSerializer, CreditExpenseDetailSerializer, CreditExpenseCreateSerializer, CreditExpenseUpdateSerializer,
     BankTransferEvidenceListSerializer, BankTransferEvidenceDetailSerializer, BankTransferEvidenceCreateSerializer, BankTransferEvidenceUpdateSerializer
 )
 from .filtersets import (
     PaymentFilterSet, PaymentMethodFilterSet, DiscountFilterSet, DiscountRuleFilterSet,
     RefundRequestFilterSet, RefundPolicyFilterSet, DonationFilterSet, PaymentHistoryActionFilterSet,
-    CreditExpenseFilterSet, BankTransferEvidenceFilterSet
+    CreditExpenseFilterSet, BankTransferEvidenceFilterSet, StockAuditLogFilterSet
 )
 from .permissions import (
     IsAdministrativeStaff, IsAdministrativeStaffOnly, IsPaymentOwnerOrAdministrative,
@@ -319,16 +320,50 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 {'error': 'Can only cancel PENDING payments'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        payment.status = PaymentStatusChoices.CANCELLED
-        payment.save()
+
+        cancelled_order_ids = []
+        with transaction.atomic():
+            payment.status = PaymentStatusChoices.CANCELLED
+            payment.save()
+
+            try:
+                from apps.products.models import OrderStatusChoices
+
+                related_orders = list(payment.orders.select_for_update().all())
+                if payment.target and hasattr(payment.target, 'transition_to') and hasattr(payment.target, 'status'):
+                    if all(getattr(o, 'pk', None) != payment.target.pk for o in related_orders):
+                        related_orders.append(payment.target)
+
+                for order in related_orders:
+                    if order.status in [OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED]:
+                        continue
+
+                    if order.can_transition_to(OrderStatusChoices.CANCELLED):
+                        order.updated_by = request.user
+                        order.transition_to(OrderStatusChoices.CANCELLED)
+                        cancelled_order_ids.append(str(order.order_id))
+                    else:
+                        logger.warning(
+                            "Order %s linked to Payment %s could not transition to cancelled from %s",
+                            order.id,
+                            payment.id,
+                            order.status,
+                        )
+            except Exception as exc:
+                logger.exception("Failed to cancel related orders for payment %s", payment.id)
+                raise ValidationError(
+                    f"Payment cancellation aborted because linked order rollback failed: {str(exc)}"
+                )
         
         # Log action
         PaymentHistoryAction.objects.create(
             payment=payment,
             action='CANCELLED',
             description='Payment cancelled by administrator',
-            performed_by=request.user
+            performed_by=request.user,
+            metadata={
+                'cancelled_order_ids': cancelled_order_ids,
+            },
         )
         
         serializer = self.get_serializer(payment)
@@ -1281,7 +1316,7 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             PaymentHistoryAction.objects.create(
                 payment=payment,
                 action='REFUND_REQUESTED',
-                description=(
+                description=( # TODO: more descriptive into what was refunded (tickets, whole payment, etc.)
                     f"Refund requested with {refund_request.amount} for payment "
                     f"{payment.payment_reference} by {user.username}"
                 ),
@@ -1325,7 +1360,11 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
         
         with transaction.atomic():
-            refund_request.mark_verified(request.user)
+            try:
+                refund_request.mark_verified(request.user)
+            except ValidationError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            
             blocked_summary = AttendeeRefundService.apply_verify_block(refund_request)
             verify_status = AttendeeRefundService.determine_payment_status_after_verify(refund_request)
             refund_request.payment.transition_to(verify_status)
@@ -1420,9 +1459,20 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         
         with transaction.atomic():
             refund_request.mark_rejected(request.user)
-            refund_request.payment.transition_to(PaymentStatusChoices.COMPLETED)
-            # TODO: need to restore the payment to the previous amount if this was a partial refund.
-            # TODO Currently we just leave the payment amount as-is which is not ideal but avoids complications with the payment history and audit trail. We can address this in a future improvement where we add more explicit support for partial refunds in the payment model and history.
+
+            rollback_summary = AttendeeRefundService.apply_reject_rollback(refund_request)
+            restored_payment_status = rollback_summary.get('restored_payment_status', PaymentStatusChoices.COMPLETED)
+            try:
+                refund_request.payment.transition_to(restored_payment_status)
+            except DjangoValidationError:
+                # Defensive fallback for legacy data without rollback snapshots.
+                fallback_status = PaymentStatusChoices.COMPLETED
+                if restored_payment_status == PaymentStatusChoices.COMPLETED:
+                    fallback_status = PaymentStatusChoices.PARTIALLY_REFUNDED
+                if refund_request.payment.status != fallback_status:
+                    refund_request.payment.transition_to(fallback_status)
+                restored_payment_status = fallback_status
+
             PaymentHistoryAction.objects.create(
                 payment=refund_request.payment,
                 action='REFUND_REJECTED',
@@ -1433,8 +1483,12 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                     'bank_reference': refund_request.payment.bank_transfer_reference,
                     'target_kind': (refund_request.metadata or {}).get('target_kind'),
                     'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                    'restored_payment_status': restored_payment_status,
+                    'restored_orders': rollback_summary.get('restored_orders', 0),
+                    'skipped_orders': rollback_summary.get('skipped_orders', 0),
+                    'failed_order_ids': rollback_summary.get('failed_order_ids', []),
                 },
-                notes="Refund request marked as rejected and payment marked as completed.",
+                notes="Refund request marked as rejected and linked entities restored to pre-refund state where possible.",
                 performed_by=request.user
             )
         
@@ -2063,6 +2117,58 @@ class PaymentHistoryActionViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['description', 'notes', 'action']
     ordering_fields = ['timestamp', 'action']
     ordering = ['-timestamp']
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary='List stock audit logs',
+        description=(
+            'Retrieve stock audit logs. List access is event-scoped and requires event_id. '
+            'Regular users only see logs tied to their own payments.'
+        ),
+        tags=['Stock Audit'],
+    ),
+    retrieve=extend_schema(
+        summary='Retrieve stock audit log',
+        description='Get a single stock audit log entry with inferred payment and event metadata.',
+        tags=['Stock Audit'],
+    )
+)
+class StockAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only StockAuditLog endpoint with event-scoped list responses."""
+
+    queryset = StockAuditLog.objects.select_related('product_variant', 'product_variant__product', 'actor')
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = StockAuditLogSerializer
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = StockAuditLogFilterSet
+    search_fields = ['notes', 'webhook_event_id', 'change_reason']
+    ordering_fields = ['created_at', 'change_amount', 'new_quantity']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        payment_subquery = Payment.objects.filter(
+            payment_id=OuterRef('payment_id')
+        )
+
+        queryset = queryset.annotate(
+            payment_owner_id=Subquery(payment_subquery.values('user_id')[:1]),
+            payment_event_id=Subquery(payment_subquery.values('event__event_id')[:1]),
+            payment_event_title=Subquery(payment_subquery.values('event__title')[:1]),
+            payment_reference_annotated=Subquery(payment_subquery.values('payment_reference')[:1]),
+        )
+
+        if not user.is_staff and not user.is_superuser:
+            queryset = queryset.filter(payment_owner_id=user.id)
+
+        if self.action == 'list' and not self.request.query_params.get('event_id'):
+            return queryset.none()
+
+        return queryset
 
 
 class CreditExpenseViewSet(viewsets.ModelViewSet):

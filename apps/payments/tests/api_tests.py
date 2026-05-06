@@ -29,7 +29,16 @@ from apps.payments.models import (
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
 from apps.bookings.models import Booking, BookingPackage, TicketType, Ticket, TicketScopeChoices, TicketStatusChoices
-from apps.products.models import Order, OrderItem, OrderStatusChoices
+from apps.products.models import (
+    Order,
+    OrderItem,
+    OrderStatusChoices,
+    OrderItemStatusChoices,
+    Product,
+    ProductVariant,
+    ProductSizeChoices,
+    StockAuditLog,
+)
 from apps.organisations.models import EventSponsor, EventSponsorPackage
 from apps.attendee.models import Attendee, AttendeeRelationship
 
@@ -140,6 +149,21 @@ class PaymentAPITestCase(APITestCase):
             total_amount=Money(25, 'GBP'),
             status='draft',
         )
+
+        self.audit_product = Product.objects.create(
+            title='Audit Hoodie',
+            event=self.event,
+            base_amount=Money(30, 'GBP'),
+            added_by=self.admin_user,
+            verified=True,
+        )
+        self.audit_variant = ProductVariant.objects.create(
+            product=self.audit_product,
+            size=ProductSizeChoices.MEDIUM,
+            color='#111111',
+            stock_quantity=25,
+            added_by=self.admin_user,
+        )
         
         self.client = APIClient()
     
@@ -186,6 +210,158 @@ class PaymentAPITestCase(APITestCase):
         self.assertNotIn('target_id', response.data)
         self.assertNotIn('target_details', response.data)
         self.assertNotIn('target_model', response.data)
+
+    def test_stock_audit_list_requires_event_scope(self):
+        """Stock audit list should be empty unless event scope is provided."""
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=25,
+            new_quantity=24,
+            change_amount=-1,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=self.payment.payment_id,
+            actor=self.regular_user,
+        )
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:stockauditlog-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'], [])
+
+    def test_stock_audit_list_returns_only_owner_logs_for_event(self):
+        """Regular users should only see stock logs tied to their own payments in event scope."""
+        other_payment = Payment.objects.create(
+            user=self.other_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(55, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+        )
+
+        own_log = StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=25,
+            new_quantity=23,
+            change_amount=-2,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=self.payment.payment_id,
+            actor=self.regular_user,
+        )
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=23,
+            new_quantity=21,
+            change_amount=-2,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=other_payment.payment_id,
+            actor=self.other_user,
+        )
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:stockauditlog-list')
+        response = self.client.get(url, {'event_id': str(self.event.event_id)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['id'], str(own_log.id))
+        self.assertEqual(response.data['results'][0]['payment_id'], str(self.payment.payment_id))
+
+    def test_stock_audit_list_infers_event_and_payment_fields(self):
+        """Serializer should expose inferred event and payment metadata via payment_id."""
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=25,
+            new_quantity=24,
+            change_amount=-1,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=self.payment.payment_id,
+            actor=self.regular_user,
+        )
+
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payments:stockauditlog-list')
+        response = self.client.get(url, {'event_id': str(self.event.event_id)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+
+        payload = response.data['results'][0]
+        self.assertEqual(payload['event_id'], str(self.event.event_id))
+        self.assertEqual(payload['event_title'], self.event.title)
+        self.assertEqual(payload['payment_reference'], self.payment.payment_reference)
+
+    def test_stock_audit_admin_can_see_all_event_logs(self):
+        """Admins can see all stock logs for the selected event scope."""
+        other_payment = Payment.objects.create(
+            user=self.other_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(60, 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+        )
+
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=25,
+            new_quantity=24,
+            change_amount=-1,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=self.payment.payment_id,
+            actor=self.regular_user,
+        )
+        StockAuditLog.objects.create(
+            product_variant=self.audit_variant,
+            old_quantity=24,
+            new_quantity=22,
+            change_amount=-2,
+            change_reason=StockAuditLog.ChangeReasonChoices.INITIAL_ORDER_DEDUCTION,
+            payment_id=other_payment.payment_id,
+            actor=self.other_user,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:stockauditlog-list')
+        response = self.client.get(url, {'event_id': str(self.event.event_id)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 2)
+
+    def test_admin_cancel_payment_cancels_linked_orders(self):
+        """Cancelling a pending payment should cancel linked pending orders for stock safety."""
+        pending_payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(75, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+        )
+        linked_order = Order.objects.create(
+            customer=self.regular_user,
+            created_by=self.admin_user,
+            total_amount=Money(75, 'GBP'),
+            status=OrderStatusChoices.PENDING,
+            payment=pending_payment,
+        )
+
+        OrderItem.objects.create(
+            order=linked_order,
+            product_variant=self.audit_variant,
+            quantity=1,
+            unit_price=Money(75, 'GBP'),
+            total_price=Money(75, 'GBP'),
+            status=OrderItemStatusChoices.PENDING,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-cancel', kwargs={'payment_id': pending_payment.payment_id})
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        pending_payment.refresh_from_db()
+        linked_order.refresh_from_db()
+        self.assertEqual(pending_payment.status, PaymentStatusChoices.CANCELLED)
+        self.assertEqual(linked_order.status, OrderStatusChoices.CANCELLED)
     
     def test_create_payment(self):
         """Test creating a new payment."""
@@ -880,7 +1056,7 @@ class RefundRequestAPITestCase(APITestCase):
             start_datetime=timezone.now() + timezone.timedelta(days=30),
             end_datetime=timezone.now() + timezone.timedelta(days=32),
             status=EventStatusChoices.OPEN,
-            organisation=self.organisation
+            organisation=self.organisation,
         )
         
         self.payment_method = PaymentMethod.objects.create(
@@ -1147,6 +1323,136 @@ class RefundRequestAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         refund.refresh_from_db()
         self.assertEqual(refund.verification_status, VerificationStatus.REJECTED)
+
+    def test_reject_refund_restores_order_and_payment_to_completed(self):
+        """Rejecting a pending order refund restores both order and payment to completed."""
+        payment, order, item_one, item_two = self._create_order_payment_fixture()
+        OrderItem.objects.filter(id__in=[item_one.id, item_two.id]).update(status=OrderItemStatusChoices.COMPLETED)
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '25.00',
+                'amount_currency': 'GBP',
+                'reason': 'Refunding one order item pending review.',
+                'refund_items': [
+                    {
+                        'order_item_id': item_one.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatusChoices.PENDING_REFUND)
+        self.assertEqual(order.status, OrderStatusChoices.PENDING_REFUND)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        self.client.force_authenticate(user=self.admin_user)
+        reject_response = self.client.post(
+            reverse('payments:refundrequest-reject', kwargs={'refund_id': refund.refund_id})
+        )
+        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+
+        refund.refresh_from_db()
+        payment.refresh_from_db()
+        order.refresh_from_db()
+
+        self.assertEqual(refund.verification_status, VerificationStatus.REJECTED)
+        self.assertEqual(payment.status, PaymentStatusChoices.COMPLETED)
+        self.assertEqual(order.status, OrderStatusChoices.COMPLETED)
+
+    def test_reject_refund_restores_order_and_payment_to_partially_refunded(self):
+        """Rejecting a new refund on partially-refunded payment returns entities to partially-refunded state."""
+        payment, order, item_one, item_two = self._create_order_payment_fixture()
+        OrderItem.objects.filter(id=item_one.id).update(status=OrderItemStatusChoices.REFUNDED)
+        OrderItem.objects.filter(id=item_two.id).update(status=OrderItemStatusChoices.COMPLETED)
+        order.transition_to(OrderStatusChoices.PENDING_REFUND)
+        order.transition_to(OrderStatusChoices.PARTIALLY_REFUNDED)
+        payment.transition_to(PaymentStatusChoices.PARTIALLY_REFUNDED)
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '30.00',
+                'amount_currency': 'GBP',
+                'reason': 'Additional partial refund request for remaining item.',
+                'refund_items': [
+                    {
+                        'order_item_id': item_two.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatusChoices.PENDING_REFUND)
+        self.assertEqual(order.status, OrderStatusChoices.PENDING_REFUND)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        self.client.force_authenticate(user=self.admin_user)
+        reject_response = self.client.post(
+            reverse('payments:refundrequest-reject', kwargs={'refund_id': refund.refund_id})
+        )
+        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatusChoices.PARTIALLY_REFUNDED)
+        self.assertEqual(order.status, OrderStatusChoices.PARTIALLY_REFUNDED)
+
+    def test_reject_refund_fallback_restores_when_snapshot_missing(self):
+        """Reject rollback falls back safely when rollback snapshot metadata is absent."""
+        payment, order, item_one, item_two = self._create_order_payment_fixture()
+        OrderItem.objects.filter(id__in=[item_one.id, item_two.id]).update(status=OrderItemStatusChoices.COMPLETED)
+
+        self.client.force_authenticate(user=self.regular_user)
+        create_response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '25.00',
+                'amount_currency': 'GBP',
+                'reason': 'Refund request used to validate snapshot fallback path.',
+                'refund_items': [
+                    {
+                        'order_item_id': item_one.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        metadata = refund.metadata or {}
+        metadata.pop('rollback_snapshot', None)
+        refund.metadata = metadata
+        refund.save(update_fields=['metadata'])
+
+        self.client.force_authenticate(user=self.admin_user)
+        reject_response = self.client.post(
+            reverse('payments:refundrequest-reject', kwargs={'refund_id': refund.refund_id})
+        )
+        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatusChoices.COMPLETED)
+        self.assertEqual(order.status, OrderStatusChoices.COMPLETED)
     
     def test_filter_refunds_by_status(self):
         """Test filtering refunds by verification status."""

@@ -136,6 +136,7 @@ class EventListSerializer(serializers.ModelSerializer):
     landing_images = ResourceSerializer(many=True, read_only=True)
     main_landing_image = ResourceSerializer(read_only=True)
     attendee_overview = serializers.SerializerMethodField(read_only=True)
+    location = serializers.CharField(source='location.area_name', read_only=True)
     # TODO: field that shows if a user can register - check available windows and registration settings, show details with how many days until registration opens/closes if applicable
 
     timezone = serializers.CharField()
@@ -147,7 +148,7 @@ class EventListSerializer(serializers.ModelSerializer):
             'id','event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title', 
             'landing_images', 'main_landing_image',
             'status', 'status_display', 'event_type', 'event_type_name', 'organisation', 
-            'organisation_name', 'short_description', 'start_datetime', 'end_datetime', 'attendee_overview',
+            'organisation_name', 'short_description', 'start_datetime', 'end_datetime', 'attendee_overview', 'location',
             'timezone', 'created_at', 'created_by', '_links'
         )
         read_only_fields = ('event_id', 'url_safe_title', 'created_at')
@@ -197,7 +198,7 @@ class EventListSerializer(serializers.ModelSerializer):
         
         links = {
             'self': request.build_absolute_uri(
-                f"/api/event/list/{obj.event_id}/"
+                f"/api/event/list/{obj.url_safe_title}/"
             )
         }
         
@@ -290,7 +291,8 @@ class EventDetailSerializer(serializers.ModelSerializer):
     
     # New fields for availability, resources, and landing images
     availability_windows = AvailabilityWindowSerializer(many=True, read_only=True)
-    resources = ResourceSerializer(many=True, read_only=True)
+    # resources = ResourceSerializer(many=True, read_only=True)
+    resources = serializers.SerializerMethodField(read_only=True)
     landing_images = ResourceSerializer(many=True, read_only=True)
     main_landing_image = ResourceSerializer(read_only=True)
     is_deleted = serializers.SerializerMethodField()
@@ -298,6 +300,8 @@ class EventDetailSerializer(serializers.ModelSerializer):
 
     registration_open_date = serializers.SerializerMethodField(read_only=True)
     registration_close_date = serializers.SerializerMethodField(read_only=True)
+
+    location = serializers.SlugRelatedField(slug_field='area_id', read_only=True)
     
     # User permissions context
     user_permissions = serializers.SerializerMethodField()
@@ -316,7 +320,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'short_description', 'long_description', 'what_to_bring', 'important_information',
             'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance',
             'start_datetime', 'end_datetime', 'organisation', 'organisation_name',
-            'created_by', 'created_by_email', 'created_at', 'updated_at',
+            'created_by', 'created_by_email', 'created_at', 'updated_at', 'location',
             'settings', 'duration_days', 'is_ongoing', 'is_approved', 
             'can_participants_register', 'number_of_attendees',
             'availability_windows', 'resources', 'landing_images', 'main_landing_image',
@@ -338,6 +342,19 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'end_datetime': {'default': None},
             'timezone': {'source': '*'},  # Prevent auto-generation from TimeZoneField
         }
+
+
+    @extend_schema_field(ResourceSerializer(many=True))
+    def get_resources(self, obj):
+
+        request = self.context.get("request")
+
+        base_qs = obj.resources.exclude(tag__in=Resource.EXCLUDE_TAGS + ["LANDING_PHOTO_SECONDARY", "LANDING_PHOTO_MAIN"])
+
+        if not obj.is_staff(request.user):
+            base_qs = base_qs.filter(public=True)
+
+        return ResourceSerializer(base_qs, many=True).data
 
     @extend_schema_field(EventOutstandingTaskSerializer(many=True))
     def get_outstanding_tasks(self, obj):

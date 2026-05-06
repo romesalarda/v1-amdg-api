@@ -126,6 +126,8 @@ class Attendee(SoftDeleteModel):
     def age(self):
         if self.date_of_birth:
             today = date.today()
+            if not isinstance(self.date_of_birth, date):
+                self.date_of_birth = date_validation.parse_date(self.date_of_birth)
             return today.year - self.date_of_birth.year - ((today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day))
         return None
     

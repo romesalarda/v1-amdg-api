@@ -45,6 +45,34 @@ class WebhookEventHandler:
         account_suffix = f" account={self.account_id}" if self.account_id else ""
         log_func(f"[{self.event_type}:{self.event_id}{account_suffix}] {message}")
 
+    def _cancel_related_orders(self, payment, note: str):
+        """Cancel linked open orders to restore stock for failed/cancelled payments."""
+        from apps.products.models import OrderStatusChoices
+
+        cancelled_order_ids = []
+        related_orders = list(payment.orders.select_for_update().all())
+        if payment.target and hasattr(payment.target, 'transition_to') and hasattr(payment.target, 'status'):
+            if all(getattr(o, 'pk', None) != payment.target.pk for o in related_orders):
+                related_orders.append(payment.target)
+
+        for order in related_orders:
+            if order.status in [OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED]:
+                continue
+
+            if order.can_transition_to(OrderStatusChoices.CANCELLED):
+                order.transition_to(OrderStatusChoices.CANCELLED)
+                cancelled_order_ids.append(str(order.order_id))
+            else:
+                self.log_event(
+                    f"Order {order.id} linked to payment {payment.id} could not transition "
+                    f"to cancelled from {order.status}",
+                    level='warning',
+                )
+
+        if cancelled_order_ids:
+            self.log_event(f"{note}; cancelled linked orders: {cancelled_order_ids}", level='info')
+        return cancelled_order_ids
+
 
 class PaymentIntentSucceededHandler(WebhookEventHandler):
     """Handle payment_intent.succeeded events."""
@@ -217,6 +245,11 @@ class PaymentIntentPaymentFailedHandler(WebhookEventHandler):
                 # Transition to FAILED
                 payment.transition_to(PaymentStatusChoices.FAILED)
                 payment.save()
+
+                cancelled_order_ids = self._cancel_related_orders(
+                    payment,
+                    note='Payment failed; rolled back stock by cancelling linked orders',
+                )
                 
                 # Log history
                 PaymentHistoryAction.objects.create(
@@ -228,6 +261,7 @@ class PaymentIntentPaymentFailedHandler(WebhookEventHandler):
                         'stripe_account_id': self.account_id,
                         'payment_intent_id': payment_intent_id,
                         'error_message': error_message,
+                        'cancelled_order_ids': cancelled_order_ids,
                     }
                 )
                 
@@ -284,6 +318,11 @@ class PaymentIntentCanceledHandler(WebhookEventHandler):
                 # Transition to CANCELLED
                 payment.transition_to(PaymentStatusChoices.CANCELLED)
                 payment.save()
+
+                cancelled_order_ids = self._cancel_related_orders(
+                    payment,
+                    note='Payment intent cancelled; rolled back stock by cancelling linked orders',
+                )
                 
                 # Log history
                 PaymentHistoryAction.objects.create(
@@ -295,6 +334,7 @@ class PaymentIntentCanceledHandler(WebhookEventHandler):
                         'stripe_account_id': self.account_id,
                         'payment_intent_id': payment_intent_id,
                         'cancellation_reason': cancellation_reason,
+                        'cancelled_order_ids': cancelled_order_ids,
                     }
                 )
                 

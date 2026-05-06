@@ -13,7 +13,7 @@ from apps.bookings.models import Booking, Ticket, TicketStatusChoices
 from apps.common.models import VerificationStatus
 from apps.payments.models import PaymentStatusChoices, RefundAssociation, RefundRequest
 from apps.payments.models.donations import Donation
-from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices
+from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices, RefundRollbackLog
 from apps.organisations.models import EventSponsor
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 class AttendeeRefundService:
     """Orchestrates attendee-scoped refund validation and side effects."""
+
+    ROLLBACK_SNAPSHOT_KEY = "rollback_snapshot"
 
     TARGET_KIND_BOOKING = "booking"
     TARGET_KIND_ORDER = "order"
@@ -109,10 +111,61 @@ class AttendeeRefundService:
     def _transition_order_to_pending_refund(cls, order: Order) -> bool:
         if order.status in {OrderStatusChoices.PENDING_REFUND, OrderStatusChoices.REFUNDED, OrderStatusChoices.CANCELLED}:
             return False
-        if order.status in {OrderStatusChoices.PROCESSING, OrderStatusChoices.COMPLETED, OrderStatusChoices.PARTIALLY_REFUNDED}:
+        if order.status in {OrderStatusChoices.PROCESSING, OrderStatusChoices.COMPLETED, OrderStatusChoices.PARTIALLY_REFUNDED, OrderStatusChoices.PENDING}:
             order.transition_to(OrderStatusChoices.PENDING_REFUND)
             return True
         return False
+
+    @classmethod
+    def _get_rollback_snapshot(cls, refund_request: RefundRequest) -> Dict[str, Any]:
+        metadata = refund_request.metadata or {}
+        snapshot = metadata.get(cls.ROLLBACK_SNAPSHOT_KEY)
+        if isinstance(snapshot, dict):
+            return snapshot
+        return {}
+
+    @classmethod
+    def _save_rollback_snapshot(cls, refund_request: RefundRequest, snapshot: Dict[str, Any]) -> None:
+        metadata = refund_request.metadata or {}
+        metadata[cls.ROLLBACK_SNAPSHOT_KEY] = snapshot
+        refund_request.metadata = metadata
+        refund_request.save(update_fields=["metadata"])
+
+    @classmethod
+    def initialize_rollback_snapshot(cls, refund_request: RefundRequest) -> None:
+        """Capture payment state before any refund side-effects mutate linked entities."""
+        snapshot = cls._get_rollback_snapshot(refund_request)
+        changed = False
+
+        if not snapshot.get("payment_status_before_request"):
+            snapshot["payment_status_before_request"] = refund_request.payment.status
+            changed = True
+
+        if not isinstance(snapshot.get("orders"), dict):
+            snapshot["orders"] = {}
+            changed = True
+
+        if changed:
+            cls._save_rollback_snapshot(refund_request, snapshot)
+
+    @classmethod
+    def _snapshot_order_status(
+        cls,
+        refund_request: RefundRequest,
+        order: Order,
+        snapshot: Dict[str, Any],
+    ) -> bool:
+        orders_snapshot = snapshot.setdefault("orders", {})
+        if not isinstance(orders_snapshot, dict):
+            snapshot["orders"] = {}
+            orders_snapshot = snapshot["orders"]
+
+        key = str(order.id)
+        if key in orders_snapshot:
+            return False
+
+        orders_snapshot[key] = {"status": order.status}
+        return True
 
     @classmethod
     def _transition_order_to_partially_refunded(cls, order: Order) -> bool:
@@ -490,6 +543,10 @@ class AttendeeRefundService:
     @classmethod
     @transaction.atomic
     def attach_associations(cls, refund_request: RefundRequest) -> None:
+        cls.initialize_rollback_snapshot(refund_request)
+        snapshot = cls._get_rollback_snapshot(refund_request)
+        snapshot_changed = False
+
         metadata = refund_request.metadata or {}
         refund_scope = metadata.get("refund_scope")
         target_kind = cls.assert_supported_payment_target(refund_request.payment)
@@ -511,7 +568,10 @@ class AttendeeRefundService:
                     },
                 )
             if isinstance(target_obj, Order):
+                snapshot_changed = cls._snapshot_order_status(refund_request, target_obj, snapshot) or snapshot_changed
                 cls._transition_order_to_pending_refund(target_obj)
+            if snapshot_changed:
+                cls._save_rollback_snapshot(refund_request, snapshot)
             return
 
         if refund_scope == "targeted_order_items":
@@ -555,8 +615,11 @@ class AttendeeRefundService:
                         "unit_price": item_data.get("unit_price"),
                     },
                 )
+                snapshot_changed = cls._snapshot_order_status(refund_request, order_item.order, snapshot) or snapshot_changed
                 cls._transition_order_to_pending_refund(order_item.order)
 
+            if snapshot_changed:
+                cls._save_rollback_snapshot(refund_request, snapshot)
             return
 
         if refund_scope == "targeted_booking_products":
@@ -602,7 +665,10 @@ class AttendeeRefundService:
                         "package_product_id": item_data.get("package_product_id"),
                     },
                 )
+                snapshot_changed = cls._snapshot_order_status(refund_request, order_item.order, snapshot) or snapshot_changed
                 cls._transition_order_to_pending_refund(order_item.order)
+            if snapshot_changed:
+                cls._save_rollback_snapshot(refund_request, snapshot)
             return
 
         attendee_ids = metadata.get("selected_attendee_ids") or []
@@ -647,7 +713,11 @@ class AttendeeRefundService:
                     "entity": "order",
                 },
             )
+            snapshot_changed = cls._snapshot_order_status(refund_request, order, snapshot) or snapshot_changed
             cls._transition_order_to_pending_refund(order)
+
+        if snapshot_changed:
+            cls._save_rollback_snapshot(refund_request, snapshot)
 
     @classmethod
     @transaction.atomic
@@ -846,3 +916,149 @@ class AttendeeRefundService:
         if refund_request.is_full:
             return PaymentStatusChoices.PENDING_REFUND
         return PaymentStatusChoices.PARTIALLY_REFUNDED
+
+    @classmethod
+    def _validate_rollback_snapshot(cls, snapshot: Dict[str, Any]) -> List[str]:
+        issues: List[str] = []
+        if not isinstance(snapshot, dict):
+            return ['snapshot is not a dictionary']
+
+        if not isinstance(snapshot.get('orders', {}), dict):
+            issues.append('orders snapshot is not a dictionary')
+
+        payment_status_before_request = snapshot.get('payment_status_before_request')
+        if payment_status_before_request and payment_status_before_request not in {
+            PaymentStatusChoices.COMPLETED,
+            PaymentStatusChoices.PARTIALLY_REFUNDED,
+        }:
+            issues.append('payment_status_before_request is not restorable')
+
+        return issues
+
+    @classmethod
+    @transaction.atomic
+    def apply_reject_rollback(cls, refund_request: RefundRequest) -> Dict[str, Any]:
+        """Rollback in-flight refund side effects when a refund request is rejected."""
+        snapshot = cls._get_rollback_snapshot(refund_request)
+        initial_order_id = None
+        for association in refund_request.associations.select_related("target_type"):
+            target = association.target_object
+            if isinstance(target, Order):
+                initial_order_id = target.id
+                break
+            if isinstance(target, OrderItem):
+                initial_order_id = target.order_id
+                break
+
+        rollback_log = RefundRollbackLog.objects.create(
+            order_id=initial_order_id,
+            payment_id=refund_request.payment.payment_id,
+            status=RefundRollbackLog.RollbackStatusChoices.VALIDATING,
+            snapshot_before=snapshot if isinstance(snapshot, dict) else {},
+            actor=getattr(refund_request, 'last_updated_by', None),
+        )
+
+        snapshot_issues = cls._validate_rollback_snapshot(snapshot)
+        if snapshot_issues:
+            rollback_log.status = RefundRollbackLog.RollbackStatusChoices.VALIDATION_FAILED
+            rollback_log.validation_issues = snapshot_issues
+            rollback_log.error_message = 'Invalid rollback snapshot payload'
+            rollback_log.save(update_fields=['status', 'validation_issues', 'error_message', 'updated_at'])
+            logger.error(
+                'Reject rollback aborted for refund_request=%s due to invalid snapshot: %s',
+                refund_request.pk,
+                snapshot_issues,
+            )
+            raise ValidationError('Rollback snapshot is invalid; manual intervention required.')
+
+        order_snapshots = snapshot.get("orders") if isinstance(snapshot.get("orders"), dict) else {}
+
+        # Build candidate order IDs from both snapshot and associations.
+        candidate_order_ids = {int(order_id) for order_id in order_snapshots.keys() if str(order_id).isdigit()}
+        for association in refund_request.associations.select_related("target_type"):
+            target = association.target_object
+            if isinstance(target, Order):
+                candidate_order_ids.add(target.id)
+            elif isinstance(target, OrderItem):
+                candidate_order_ids.add(target.order_id)
+
+        restored_orders = 0
+        skipped_orders = 0
+        failed_order_ids: List[int] = []
+        rollback_log.status = RefundRollbackLog.RollbackStatusChoices.RESTORING
+        rollback_log.save(update_fields=['status', 'updated_at'])
+
+        for order in Order.objects.filter(id__in=candidate_order_ids).prefetch_related("order_items"):
+            if order.status != OrderStatusChoices.PENDING_REFUND:
+                skipped_orders += 1
+                continue
+
+            snap = order_snapshots.get(str(order.id), {}) if isinstance(order_snapshots, dict) else {}
+            desired_status = snap.get("status") if isinstance(snap, dict) else None
+            if desired_status not in {OrderStatusChoices.COMPLETED, OrderStatusChoices.PARTIALLY_REFUNDED}:
+                has_refunded_items = order.order_items.filter(status=OrderItemStatusChoices.REFUNDED).exists()
+                desired_status = OrderStatusChoices.PARTIALLY_REFUNDED if has_refunded_items else OrderStatusChoices.COMPLETED
+
+            try:
+                if order.status != desired_status:
+                    order.transition_to(desired_status)
+
+                # Ensure any in-flight item flags are cleared when restoring to completed.
+                if desired_status == OrderStatusChoices.COMPLETED:
+                    order.order_items.filter(status=OrderItemStatusChoices.PENDING_REFUND).update(
+                        status=OrderItemStatusChoices.COMPLETED
+                    )
+
+                restored_orders += 1
+            except ValidationError:
+                fallback_status = (
+                    OrderStatusChoices.PARTIALLY_REFUNDED
+                    if desired_status == OrderStatusChoices.COMPLETED
+                    else OrderStatusChoices.COMPLETED
+                )
+                try:
+                    if order.status != fallback_status:
+                        order.transition_to(fallback_status)
+
+                    if fallback_status == OrderStatusChoices.COMPLETED:
+                        order.order_items.filter(status=OrderItemStatusChoices.PENDING_REFUND).update(
+                            status=OrderItemStatusChoices.COMPLETED
+                        )
+
+                    restored_orders += 1
+                except ValidationError:
+                    failed_order_ids.append(order.id)
+
+        restored_payment_status = snapshot.get("payment_status_before_request")
+        if restored_payment_status not in {PaymentStatusChoices.COMPLETED, PaymentStatusChoices.PARTIALLY_REFUNDED}:
+            has_prior_processed_refund = refund_request.payment.refund_requests.exclude(
+                pk=refund_request.pk
+            ).filter(
+                verification_status=VerificationStatus.PROCESSED,
+            ).exists()
+            restored_payment_status = (
+                PaymentStatusChoices.PARTIALLY_REFUNDED
+                if has_prior_processed_refund
+                else PaymentStatusChoices.COMPLETED
+            )
+
+        rollback_log.status = (
+            RefundRollbackLog.RollbackStatusChoices.FAILED
+            if failed_order_ids
+            else RefundRollbackLog.RollbackStatusChoices.COMPLETED
+        )
+        rollback_log.snapshot_after = {
+            'restored_orders': restored_orders,
+            'skipped_orders': skipped_orders,
+            'failed_order_ids': failed_order_ids,
+            'restored_payment_status': restored_payment_status,
+        }
+        rollback_log.validation_issues = snapshot_issues
+        rollback_log.save(update_fields=['status', 'snapshot_after', 'validation_issues', 'updated_at'])
+
+        return {
+            "restored_orders": restored_orders,
+            "skipped_orders": skipped_orders,
+            "failed_order_ids": failed_order_ids,
+            "restored_payment_status": restored_payment_status,
+        }

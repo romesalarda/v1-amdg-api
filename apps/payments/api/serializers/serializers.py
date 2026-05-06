@@ -40,6 +40,7 @@ from apps.payments.models import (
     CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
 )
 from apps.payments.models.stripe_accounts import StripeConnectedAccount
+from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 from apps.payments.services.attendee_refunds import AttendeeRefundService
 
@@ -2076,3 +2077,38 @@ class PaymentHistoryActionSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'timestamp': {'default': None},
         }
+
+
+class StockAuditLogSerializer(serializers.ModelSerializer):
+    """Read-only serializer for StockAuditLog with inferred payment and event metadata."""
+
+    product_variant_code = serializers.UUIDField(source='product_variant.variant_id', read_only=True)
+    product_title = serializers.CharField(source='product_variant.product.title', read_only=True)
+    payment_reference = serializers.CharField(source='payment_reference_annotated', read_only=True, allow_null=True)
+    event_id = serializers.UUIDField(source='payment_event_id', read_only=True, allow_null=True)
+    event_title = serializers.CharField(source='payment_event_title', read_only=True, allow_null=True)
+    actor_name = serializers.CharField(source='actor.username', read_only=True, allow_null=True)
+
+    class Meta:
+        model = StockAuditLog
+        fields = (
+            'id',
+            'product_variant',
+            'product_variant_code',
+            'product_title',
+            'old_quantity',
+            'new_quantity',
+            'change_amount',
+            'change_reason',
+            'order_id',
+            'payment_id',
+            'payment_reference',
+            'event_id',
+            'event_title',
+            'actor',
+            'actor_name',
+            'webhook_event_id',
+            'notes',
+            'created_at',
+        )
+        read_only_fields = fields

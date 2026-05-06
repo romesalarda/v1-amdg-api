@@ -175,6 +175,7 @@ class BookingCheckoutFinalizer:
                             {
                                 "package_product_id": package_product.id,
                                 "variant_id": str(variant.variant_id),
+                                "product_id": str(variant.product.product_id),
                                 "quantity": quantity,
                                 "unit_final_amount": str(order_item.unit_price.amount),
                                 "line_total": str(order_item.total_price.amount),

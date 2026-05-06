@@ -23,7 +23,12 @@ from apps.common.models import VerificationStatus
 from apps.events.models import EventQuestion, EventQuestionAnswer, EventQuestionOption, EventQuestionTypeChoices
 from apps.products.models import Order, OrderItem, OrderStatusChoices, ProductVariant
 from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
+from django.db.models import Value, TextField
 
+try:
+    from django.contrib.postgres.search import TrigramSimilarity
+except Exception:  # pragma: no cover - optional postgres feature
+    TrigramSimilarity = None
 
 PAYMENT_TARGET_CHOICES = (
     ('booking', 'Booking'),
@@ -219,14 +224,32 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     def filter_search(self, queryset, name, value):
         """Search across name, email, phone, and display ID."""
-        return queryset.filter(
-            Q(first_name__icontains=value) |
-            Q(last_name__icontains=value) |
-            Q(email__icontains=value) |
-            Q(phone_number__icontains=value) |
-            Q(attendee_display_id__icontains=value)
-        )
-    
+        base = queryset.filter(
+                    Q(first_name__icontains=value) |
+                    Q(last_name__icontains=value) |
+                    Q(email__icontains=value) |
+                    Q(phone_number__icontains=value) |
+                    Q(attendee_display_id__icontains=value)
+                )
+        # TODO: issue #54 need to fix
+        print(f"Base search for '{value}' found {base.count()} attendees.")
+        if TrigramSimilarity:
+            qs = queryset.all().annotate(
+                similarity=
+                    TrigramSimilarity('first_name', Value(value, output_field=TextField())) + 
+                    TrigramSimilarity('last_name', Value(value, output_field=TextField())) 
+                    # TrigramSimilarity('email', Value(value, output_field=TextField())) + 
+                    # TrigramSimilarity('phone_number', Value(value, output_field=TextField())) + 
+                    # TrigramSimilarity('attendee_display_id', Value(value, output_field=TextField()))
+            ).filter(similarity__gt=0.3).order_by('-similarity')
+            print(f"Trigram search for '{value}' found {qs.count()} attendees.")
+            if not qs.exists():
+                print("Trigram search found no attendees, falling back to base search.")
+                return base
+            return qs.all()
+        
+        return base
+
     def filter_full_name(self, queryset, name, value):
         """Search by full name (first + last)."""
         return queryset.filter(

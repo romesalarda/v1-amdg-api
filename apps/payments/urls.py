@@ -19,6 +19,7 @@ from apps.payments.api.viewsets import (
     RefundPolicyViewSet,
     DonationViewSet,
     PaymentHistoryActionViewSet,
+    StockAuditLogViewSet,
     CreditExpenseViewSet,
     BankTransferEvidenceViewSet,
 )
@@ -48,6 +49,7 @@ router.register(r'refund-associations', RefundAssociationViewSet, basename='refu
 router.register(r'refund-policies', RefundPolicyViewSet, basename='refundpolicy')
 router.register(r'donations', DonationViewSet, basename='donation')
 router.register(r'history', PaymentHistoryActionViewSet, basename='paymenthistory')
+router.register(r'stock-audit', StockAuditLogViewSet, basename='stockauditlog')
 router.register(r'credits', CreditExpenseViewSet, basename='creditexpense')
 router.register(r'bank-transfer-evidence', BankTransferEvidenceViewSet, basename='banktransferevidence')
 

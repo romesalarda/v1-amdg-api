@@ -22,6 +22,7 @@ class Resource(models.Model):
     '''
     Abstract base model for resources.
     '''
+    EXCLUDE_TAGS = ['QUESTION_UPLOAD']  # Tags that should be excluded from certain queries, e.g., when fetching resources for frontend display.
     TYPE_CHOICES = ResourceTypeChoices
 
     name = models.CharField(max_length=100)

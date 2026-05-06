@@ -218,7 +218,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
     )
     permission_classes = [IsAttendeeOwnerOrStaff]
     pagination_class = StandardPagination
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = AttendeeFilterSet
     search_fields = ['first_name', 'last_name', 'email', 'attendee_display_id']
     ordering_fields = ['created_at', 'first_name', 'last_name', 'date_of_birth']

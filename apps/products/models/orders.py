@@ -42,7 +42,7 @@ class OrderItemStatusChoices(models.TextChoices):
 
 ORDER_STATUS_TRANSITIONS = {
     'draft': ['pending', 'cancelled'],
-    'pending': ['processing', 'cancelled'],
+    'pending': ['processing', 'cancelled', 'pending_refund'],
     'processing': ['completed', 'pending_refund', 'refunded', 'cancelled'],
     'completed': ['pending_refund', 'refunded', 'cancelled'],
     'cancelled': [],
@@ -143,7 +143,6 @@ class Order(SoftDeleteModel): # no admin model
         ]
 
     def save(self, *args, **kwargs):
-        self.clean()
         if not self.order_reference_id:
             try:
                 ref = self.attendee.event.display_code if self.attendee and self.attendee.event else 'EVT'
@@ -230,7 +229,15 @@ class Order(SoftDeleteModel): # no admin model
             for item in self.order_items.all():
                 if item.product_variant:
                     try:
-                        item.product_variant.increment_stock(item.quantity)
+                        item.product_variant.increment_stock(
+                            item.quantity,
+                            reason='order_cancellation_restore' if new_status == OrderStatusChoices.CANCELLED else 'refund_restoration',
+                            actor=self.updated_by,
+                            order_id=self.order_id,
+                            payment_id=self.payment.payment_id if self.payment else None,
+                            order_item_id=item.id,
+                            notes=f"Order transitioned from {old_status} to {new_status}",
+                        )
                     except exceptions.ValidationError as e  :
                         # If stock restoration fails (e.g., would exceed max), log but don't block cancellation
                         logger.warning(f"Could not restore stock for ProductVariant {item.product_variant.id} when cancelling/refunding Order {self.id}.")
@@ -332,7 +339,15 @@ class Order(SoftDeleteModel): # no admin model
             order_item.clean()
             order_item.save()
 
-            product_variant.decrement_stock(quantity) # adjust stock
+            product_variant.decrement_stock(
+                quantity,
+                reason='initial_order_deduction',
+                actor=self.updated_by or self.created_by,
+                order_id=self.order_id,
+                payment_id=self.payment.payment_id if self.payment else None,
+                order_item_id=order_item.id,
+                notes='Stock reserved when order item was created.',
+            )
 
             # Recalculate and save order total within transaction for consistency
             self.refresh_from_db()
@@ -399,7 +414,15 @@ class Order(SoftDeleteModel): # no admin model
             order_item.clean()
             order_item.save()
 
-            product_variant.decrement_stock(quantity)
+            product_variant.decrement_stock(
+                quantity,
+                reason='initial_order_deduction',
+                actor=self.updated_by or self.created_by,
+                order_id=self.order_id,
+                payment_id=self.payment.payment_id if self.payment else None,
+                order_item_id=order_item.id,
+                notes='Stock reserved when package order item was created.',
+            )
 
             self.refresh_from_db()
             self.total_amount = self.get_total_amount()
