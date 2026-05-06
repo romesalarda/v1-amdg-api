@@ -2138,7 +2138,7 @@ class StockAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """Read-only StockAuditLog endpoint with event-scoped list responses."""
 
     queryset = StockAuditLog.objects.select_related('product_variant', 'product_variant__product', 'actor')
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]  # Custom filtering in get_queryset enforces access control
     serializer_class = StockAuditLogSerializer
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -2148,6 +2148,7 @@ class StockAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
+        from apps.events.models import Event
         queryset = super().get_queryset()
         user = self.request.user
 
@@ -2162,11 +2163,15 @@ class StockAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             payment_reference_annotated=Subquery(payment_subquery.values('payment_reference')[:1]),
         )
 
-        if not user.is_staff and not user.is_superuser:
-            queryset = queryset.filter(payment_owner_id=user.id)
+        event = Event.objects.filter(url_safe_title=self.request.query_params.get('event_id')).first()
+
+        if event:
+            if not event.is_staff(user):
+                return queryset.filter(payment_owner_id=user.id)
 
         if self.action == 'list' and not self.request.query_params.get('event_id'):
             return queryset.none()
+        
 
         return queryset
 

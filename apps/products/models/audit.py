@@ -89,7 +89,7 @@ class StockAuditLog(models.Model):
     
     def __str__(self):
         direction = '+' if self.change_amount > 0 else '-'
-        return f"StockAudit: {self.product_variant.display_code} {direction}{abs(self.change_amount)} ({self.change_reason})"
+        return f"StockAudit: {self.product_variant.id} {direction}{abs(self.change_amount)} ({self.change_reason})"
     
     def __repr__(self):
         return f"<StockAuditLog product={self.product_variant.id} change={self.change_amount} reason={self.change_reason}>"

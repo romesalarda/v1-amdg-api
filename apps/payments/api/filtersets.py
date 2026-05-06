@@ -1153,10 +1153,11 @@ class PaymentHistoryActionFilterSet(filters.FilterSet):
 class StockAuditLogFilterSet(filters.FilterSet):
     """Filterset for StockAuditLog model."""
 
-    event_id = filters.UUIDFilter(
+    event_id = filters.CharFilter(
         method='filter_event_id',
-        help_text='Filter by event UUID inferred from payment association'
+        help_text='Filter by event URL-safe title inferred from payment association'
     )
+
     payment_id = filters.UUIDFilter(
         field_name='payment_id',
         help_text='Filter by payment UUID'
@@ -1198,7 +1199,7 @@ class StockAuditLogFilterSet(filters.FilterSet):
             return queryset
 
         payment_ids = Payment.objects.filter(
-            event__event_id=value
+            event__url_safe_title=value
         ).values_list('payment_id', flat=True)
         return queryset.filter(payment_id__in=payment_ids)
 

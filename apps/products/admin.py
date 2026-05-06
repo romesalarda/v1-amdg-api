@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.db.models import Sum, Count
-from .models import Product, ProductVariant, Order, OrderItem, ProductCategory, EventProductCategory
+from .models import Product, ProductVariant, Order, OrderItem, ProductCategory, EventProductCategory, StockAuditLog
 
 
 class EventProductCategoryInline(admin.TabularInline):
@@ -308,3 +308,5 @@ class OrderItemAdmin(admin.ModelAdmin):
     
     def has_delete_permission(self, request, obj=None):
         return False
+
+admin.site.register(StockAuditLog)
