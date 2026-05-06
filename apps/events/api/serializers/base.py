@@ -346,7 +346,15 @@ class EventDetailSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(ResourceSerializer(many=True))
     def get_resources(self, obj):
-        return ResourceSerializer(obj.resources.exclude(tag__in=Resource.EXCLUDE_TAGS + ["LANDING_PHOTO_SECONDARY", "LANDING_PHOTO_MAIN"]), many=True).data
+
+        request = self.context.get("request")
+
+        base_qs = obj.resources.exclude(tag__in=Resource.EXCLUDE_TAGS + ["LANDING_PHOTO_SECONDARY", "LANDING_PHOTO_MAIN"])
+
+        if not obj.is_staff(request.user):
+            base_qs = base_qs.filter(public=True)
+
+        return ResourceSerializer(base_qs, many=True).data
 
     @extend_schema_field(EventOutstandingTaskSerializer(many=True))
     def get_outstanding_tasks(self, obj):

@@ -386,7 +386,11 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         self.save()
 
     def is_staff(self, user):
-
+        '''
+        Returns True if the given user is a staff member for this event, False otherwise.
+        '''
+        if user.is_anonymous:
+            return False
         return self.staff_members.filter(user=user).exists()
         
     

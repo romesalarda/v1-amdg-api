@@ -13,7 +13,7 @@ from decimal import Decimal
 from djmoney.money import Money
 import os
 
-from apps.products.models import Product, ProductVariant, ProductSizeChoices, Order, OrderStatusChoices, OrderItem
+from apps.products.models import Product, ProductVariant, ProductSizeChoices, Order, OrderStatusChoices, OrderItem, StockAuditLog
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.common.models.resource import Resource, ResourceTypeChoices
@@ -964,6 +964,17 @@ class ProductVariantStockManagementTest(TestCase):
         self.variant.refresh_from_db()
         
         self.assertEqual(self.variant.stock_quantity, initial_stock + 10)
+
+    def test_increment_stock_creates_audit_log(self):
+        """Stock increments should always produce an immutable audit record."""
+        self.variant.increment_stock(7, reason='admin_action', actor=self.user, notes='manual top-up')
+
+        log = StockAuditLog.objects.filter(product_variant=self.variant).latest('created_at')
+        self.assertEqual(log.old_quantity, 100)
+        self.assertEqual(log.new_quantity, 107)
+        self.assertEqual(log.change_amount, 7)
+        self.assertEqual(log.change_reason, 'admin_action')
+        self.assertEqual(log.actor, self.user)
         
     def test_increment_stock_with_max_limit(self):
         """Test that stock cannot exceed max_stock_quantity"""
@@ -993,6 +1004,17 @@ class ProductVariantStockManagementTest(TestCase):
         self.variant.refresh_from_db()
         
         self.assertEqual(self.variant.stock_quantity, initial_stock - 20)
+
+    def test_decrement_stock_creates_audit_log(self):
+        """Stock decrements should always produce an immutable audit record."""
+        self.variant.decrement_stock(12, reason='initial_order_deduction', actor=self.user)
+
+        log = StockAuditLog.objects.filter(product_variant=self.variant).latest('created_at')
+        self.assertEqual(log.old_quantity, 100)
+        self.assertEqual(log.new_quantity, 88)
+        self.assertEqual(log.change_amount, -12)
+        self.assertEqual(log.change_reason, 'initial_order_deduction')
+        self.assertEqual(log.actor, self.user)
         
     def test_decrement_stock_insufficient_raises_error(self):
         """Test that stock cannot go below zero"""

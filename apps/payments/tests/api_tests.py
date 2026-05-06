@@ -186,6 +186,33 @@ class PaymentAPITestCase(APITestCase):
         self.assertNotIn('target_id', response.data)
         self.assertNotIn('target_details', response.data)
         self.assertNotIn('target_model', response.data)
+
+    def test_admin_cancel_payment_cancels_linked_orders(self):
+        """Cancelling a pending payment should cancel linked pending orders for stock safety."""
+        pending_payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money(75, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+        )
+        linked_order = Order.objects.create(
+            customer=self.regular_user,
+            created_by=self.admin_user,
+            total_amount=Money(75, 'GBP'),
+            status=OrderStatusChoices.PENDING,
+            payment=pending_payment,
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:payment-cancel', kwargs={'payment_id': pending_payment.payment_id})
+        response = self.client.post(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        pending_payment.refresh_from_db()
+        linked_order.refresh_from_db()
+        self.assertEqual(pending_payment.status, PaymentStatusChoices.CANCELLED)
+        self.assertEqual(linked_order.status, OrderStatusChoices.CANCELLED)
     
     def test_create_payment(self):
         """Test creating a new payment."""

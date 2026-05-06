@@ -319,16 +319,50 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 {'error': 'Can only cancel PENDING payments'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        payment.status = PaymentStatusChoices.CANCELLED
-        payment.save()
+
+        cancelled_order_ids = []
+        with transaction.atomic():
+            payment.status = PaymentStatusChoices.CANCELLED
+            payment.save()
+
+            try:
+                from apps.products.models import OrderStatusChoices
+
+                related_orders = list(payment.orders.select_for_update().all())
+                if payment.target and hasattr(payment.target, 'transition_to') and hasattr(payment.target, 'status'):
+                    if all(getattr(o, 'pk', None) != payment.target.pk for o in related_orders):
+                        related_orders.append(payment.target)
+
+                for order in related_orders:
+                    if order.status in [OrderStatusChoices.CANCELLED, OrderStatusChoices.REFUNDED]:
+                        continue
+
+                    if order.can_transition_to(OrderStatusChoices.CANCELLED):
+                        order.updated_by = request.user
+                        order.transition_to(OrderStatusChoices.CANCELLED)
+                        cancelled_order_ids.append(str(order.order_id))
+                    else:
+                        logger.warning(
+                            "Order %s linked to Payment %s could not transition to cancelled from %s",
+                            order.id,
+                            payment.id,
+                            order.status,
+                        )
+            except Exception as exc:
+                logger.exception("Failed to cancel related orders for payment %s", payment.id)
+                raise ValidationError(
+                    f"Payment cancellation aborted because linked order rollback failed: {str(exc)}"
+                )
         
         # Log action
         PaymentHistoryAction.objects.create(
             payment=payment,
             action='CANCELLED',
             description='Payment cancelled by administrator',
-            performed_by=request.user
+            performed_by=request.user,
+            metadata={
+                'cancelled_order_ids': cancelled_order_ids,
+            },
         )
         
         serializer = self.get_serializer(payment)

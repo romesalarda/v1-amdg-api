@@ -813,8 +813,8 @@ class WebhookFailurePathTestCase(TestCase):
     Integrity tests for webhook failure/cancellation paths.
 
     Verifies that:
-    - payment_intent.payment_failed marks payment FAILED and leaves related Order untouched
-    - payment_intent.canceled marks payment CANCELLED and leaves related Order untouched
+    - payment_intent.payment_failed marks payment FAILED and cancels linked open Order
+    - payment_intent.canceled marks payment CANCELLED and cancels linked open Order
     - Duplicate failed/canceled events are idempotent (already_processed returned)
     - Unknown payment_intent_id is gracefully ignored (no crash, 'ignored' status)
     - Duplicate payment_intent.succeeded with different event ID is also idempotent
@@ -853,12 +853,6 @@ class WebhookFailurePathTestCase(TestCase):
             is_active=True,
             created_by=self.user,
         )
-        self.order = Order.objects.create(
-            customer=self.user,
-            status=OrderStatusChoices.PENDING,
-            total_amount=Money(50, 'GBP'),
-            created_by=self.user,
-        )
         self.payment = Payment.objects.create(
             user=self.user,
             event=self.django_event,
@@ -866,6 +860,13 @@ class WebhookFailurePathTestCase(TestCase):
             base_amount=Money(50, 'GBP'),
             status=PaymentStatusChoices.PENDING,
             stripe_payment_intent='pi_failpath001',
+        )
+        self.order = Order.objects.create(
+            customer=self.user,
+            status=OrderStatusChoices.PENDING,
+            total_amount=Money(50, 'GBP'),
+            created_by=self.user,
+            payment=self.payment,
         )
 
     # ------------------------------------------------------------------
@@ -903,13 +904,13 @@ class WebhookFailurePathTestCase(TestCase):
         self.payment.refresh_from_db()
         self.assertEqual(self.payment.status, PaymentStatusChoices.FAILED)
 
-    def test_payment_failed_does_not_advance_order(self):
-        """Order must remain in its original status after a payment failure."""
+    def test_payment_failed_cancels_linked_order(self):
+        """Order should be cancelled after a payment failure to restore reserved stock."""
         handler = PaymentIntentPaymentFailedHandler(self._make_failed_event())
         handler.handle()
 
         self.order.refresh_from_db()
-        self.assertEqual(self.order.status, OrderStatusChoices.PENDING)
+        self.assertEqual(self.order.status, OrderStatusChoices.CANCELLED)
 
     def test_payment_failed_history_action_created(self):
         """A PaymentHistoryAction should be recorded for the failure."""
@@ -957,13 +958,13 @@ class WebhookFailurePathTestCase(TestCase):
         self.payment.refresh_from_db()
         self.assertEqual(self.payment.status, PaymentStatusChoices.CANCELLED)
 
-    def test_payment_canceled_does_not_advance_order(self):
-        """Order must remain in its original status after a payment cancellation."""
+    def test_payment_canceled_cancels_linked_order(self):
+        """Order should be cancelled after payment cancellation to restore reserved stock."""
         handler = PaymentIntentCanceledHandler(self._make_canceled_event())
         handler.handle()
 
         self.order.refresh_from_db()
-        self.assertEqual(self.order.status, OrderStatusChoices.PENDING)
+        self.assertEqual(self.order.status, OrderStatusChoices.CANCELLED)
 
     def test_payment_canceled_history_action_created(self):
         """A PaymentHistoryAction should be recorded for the cancellation."""

@@ -13,7 +13,7 @@ from apps.bookings.models import Booking, Ticket, TicketStatusChoices
 from apps.common.models import VerificationStatus
 from apps.payments.models import PaymentStatusChoices, RefundAssociation, RefundRequest
 from apps.payments.models.donations import Donation
-from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices
+from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices, RefundRollbackLog
 from apps.organisations.models import EventSponsor
 
 logger = logging.getLogger(__name__)
@@ -918,10 +918,59 @@ class AttendeeRefundService:
         return PaymentStatusChoices.PARTIALLY_REFUNDED
 
     @classmethod
+    def _validate_rollback_snapshot(cls, snapshot: Dict[str, Any]) -> List[str]:
+        issues: List[str] = []
+        if not isinstance(snapshot, dict):
+            return ['snapshot is not a dictionary']
+
+        if not isinstance(snapshot.get('orders', {}), dict):
+            issues.append('orders snapshot is not a dictionary')
+
+        payment_status_before_request = snapshot.get('payment_status_before_request')
+        if payment_status_before_request and payment_status_before_request not in {
+            PaymentStatusChoices.COMPLETED,
+            PaymentStatusChoices.PARTIALLY_REFUNDED,
+        }:
+            issues.append('payment_status_before_request is not restorable')
+
+        return issues
+
+    @classmethod
     @transaction.atomic
     def apply_reject_rollback(cls, refund_request: RefundRequest) -> Dict[str, Any]:
         """Rollback in-flight refund side effects when a refund request is rejected."""
         snapshot = cls._get_rollback_snapshot(refund_request)
+        initial_order_id = None
+        for association in refund_request.associations.select_related("target_type"):
+            target = association.target_object
+            if isinstance(target, Order):
+                initial_order_id = target.id
+                break
+            if isinstance(target, OrderItem):
+                initial_order_id = target.order_id
+                break
+
+        rollback_log = RefundRollbackLog.objects.create(
+            order_id=initial_order_id,
+            payment_id=refund_request.payment.payment_id,
+            status=RefundRollbackLog.RollbackStatusChoices.VALIDATING,
+            snapshot_before=snapshot if isinstance(snapshot, dict) else {},
+            actor=getattr(refund_request, 'last_updated_by', None),
+        )
+
+        snapshot_issues = cls._validate_rollback_snapshot(snapshot)
+        if snapshot_issues:
+            rollback_log.status = RefundRollbackLog.RollbackStatusChoices.VALIDATION_FAILED
+            rollback_log.validation_issues = snapshot_issues
+            rollback_log.error_message = 'Invalid rollback snapshot payload'
+            rollback_log.save(update_fields=['status', 'validation_issues', 'error_message', 'updated_at'])
+            logger.error(
+                'Reject rollback aborted for refund_request=%s due to invalid snapshot: %s',
+                refund_request.pk,
+                snapshot_issues,
+            )
+            raise ValidationError('Rollback snapshot is invalid; manual intervention required.')
+
         order_snapshots = snapshot.get("orders") if isinstance(snapshot.get("orders"), dict) else {}
 
         # Build candidate order IDs from both snapshot and associations.
@@ -936,6 +985,8 @@ class AttendeeRefundService:
         restored_orders = 0
         skipped_orders = 0
         failed_order_ids: List[int] = []
+        rollback_log.status = RefundRollbackLog.RollbackStatusChoices.RESTORING
+        rollback_log.save(update_fields=['status', 'updated_at'])
 
         for order in Order.objects.filter(id__in=candidate_order_ids).prefetch_related("order_items"):
             if order.status != OrderStatusChoices.PENDING_REFUND:
@@ -990,6 +1041,20 @@ class AttendeeRefundService:
                 if has_prior_processed_refund
                 else PaymentStatusChoices.COMPLETED
             )
+
+        rollback_log.status = (
+            RefundRollbackLog.RollbackStatusChoices.FAILED
+            if failed_order_ids
+            else RefundRollbackLog.RollbackStatusChoices.COMPLETED
+        )
+        rollback_log.snapshot_after = {
+            'restored_orders': restored_orders,
+            'skipped_orders': skipped_orders,
+            'failed_order_ids': failed_order_ids,
+            'restored_payment_status': restored_payment_status,
+        }
+        rollback_log.validation_issues = snapshot_issues
+        rollback_log.save(update_fields=['status', 'snapshot_after', 'validation_issues', 'updated_at'])
 
         return {
             "restored_orders": restored_orders,
