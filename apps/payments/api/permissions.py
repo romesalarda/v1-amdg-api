@@ -19,7 +19,12 @@ from typing import Any
 from uuid import UUID
 
 from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
-from apps.payments.models import CreditExpense, BankTransferEvidence
+from apps.payments.models import (
+    BankTransferEvidence,
+    CreditExpense,
+    PaymentMethod,
+    PaymentMethodTypeChoices,
+)
 
 User = get_user_model()
 
@@ -206,7 +211,54 @@ class IsStripeAccountOwner(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        return getattr(obj, 'user_id', None) == request.user.id
+        if getattr(obj, 'user_id', None) == request.user.id:
+            return True
+
+        if request.method not in permissions.SAFE_METHODS:
+            return False
+
+        if getattr(view, 'action', None) != 'retrieve':
+            return False
+
+        event_identifier = request.query_params.get('event')
+        if not event_identifier:
+            return False
+
+        return user_can_access_stripe_account_for_event(
+            user=request.user,
+            event_identifier=event_identifier,
+            stripe_account_id=getattr(obj, 'stripe_account_id', ''),
+        )
+
+
+def user_can_access_stripe_account_for_event(user, event_identifier: str, stripe_account_id: str) -> bool:
+    """
+    Check whether a user can view a specific Stripe connected account for an event.
+
+    Access is granted only when:
+    1. The user is staff on the referenced event, and
+    2. The Stripe account is linked to a Stripe payment method on that event.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+
+    if not event_identifier or not stripe_account_id:
+        return False
+
+    from apps.events.models import EventStaff
+
+    is_event_staff = EventStaff.objects.filter(
+        event__url_safe_title=event_identifier,
+        user_id=user.id,
+    ).exists()
+    if not is_event_staff:
+        return False
+
+    return PaymentMethod.objects.filter(
+        event__url_safe_title=event_identifier,
+        method_type=PaymentMethodTypeChoices.STRIPE,
+        provided_details__stripe_account_id=stripe_account_id,
+    ).exists()
 
 
 class IsPaymentOwnerOrAdministrative(permissions.BasePermission):

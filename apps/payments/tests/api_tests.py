@@ -27,7 +27,7 @@ from apps.payments.models import (
     StripeConnectedAccount,
 )
 from apps.common.models.verification import VerificationStatus
-from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices
+from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices, EventStaff
 from apps.bookings.models import Booking, BookingPackage, TicketType, Ticket, TicketScopeChoices, TicketStatusChoices
 from apps.products.models import (
     Order,
@@ -859,6 +859,24 @@ class StripeConnectedAccountAPITestCase(APITestCase):
         )
         self.client = APIClient()
 
+        from apps.organisations.models import Organisation
+        self.organisation = Organisation.objects.create(
+            title='Stripe Test Org',
+            created_by=self.other_user,
+        )
+        self.event_type = EventType.objects.create(title='Stripe Event Type', code='STRIPE')
+        self.event = Event.objects.create(
+            title='Stripe Staff Event',
+            display_code='STR001',
+            display_identifier='STR001TEST001',
+            created_by=self.other_user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timezone.timedelta(days=7),
+            end_datetime=timezone.now() + timezone.timedelta(days=8),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation,
+        )
+
     def _stripe_account_mock(self, account_id='acct_new_123'):
         mock_account = Mock()
         mock_account.id = account_id
@@ -948,6 +966,74 @@ class StripeConnectedAccountAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.get(
             reverse('payments:stripe-connect-accounts-detail', kwargs={'stripe_account_id': 'acct_private_1'})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_retrieve_allows_event_staff_when_account_linked_to_event_method(self):
+        account = StripeConnectedAccount.objects.create(
+            user=self.other_user,
+            stripe_account_id='acct_event_shared_1',
+        )
+        EventStaff.objects.create(event=self.event, user=self.user, assigned_by=self.other_user)
+        PaymentMethod.objects.create(
+            title='Stripe Event Method',
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.STRIPE,
+            is_active=True,
+            provided_details={'stripe_account_id': account.stripe_account_id},
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(
+            reverse('payments:stripe-connect-accounts-detail', kwargs={'stripe_account_id': account.stripe_account_id}),
+            {'event': self.event.url_safe_title},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['stripe_account_id'], account.stripe_account_id)
+
+    def test_retrieve_denies_event_staff_when_account_not_linked_to_event_method(self):
+        account = StripeConnectedAccount.objects.create(
+            user=self.other_user,
+            stripe_account_id='acct_event_not_linked_1',
+        )
+        EventStaff.objects.create(event=self.event, user=self.user, assigned_by=self.other_user)
+        PaymentMethod.objects.create(
+            title='Different Stripe Event Method',
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.STRIPE,
+            is_active=True,
+            provided_details={'stripe_account_id': 'acct_other_value_1'},
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(
+            reverse('payments:stripe-connect-accounts-detail', kwargs={'stripe_account_id': account.stripe_account_id}),
+            {'event': self.event.url_safe_title},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patch_still_denies_non_owner_even_with_event_param(self):
+        account = StripeConnectedAccount.objects.create(
+            user=self.other_user,
+            stripe_account_id='acct_event_read_only_1',
+        )
+        EventStaff.objects.create(event=self.event, user=self.user, assigned_by=self.other_user)
+        PaymentMethod.objects.create(
+            title='Stripe Read Only Method',
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.STRIPE,
+            is_active=True,
+            provided_details={'stripe_account_id': account.stripe_account_id},
+        )
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(
+            f"{reverse('payments:stripe-connect-accounts-detail', kwargs={'stripe_account_id': account.stripe_account_id})}?event={self.event.url_safe_title}",
+            {'display_name': 'Attempted Update'},
+            format='json',
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

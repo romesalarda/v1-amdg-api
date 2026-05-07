@@ -39,6 +39,7 @@ from apps.common.models import Resource
 from apps.common.api.serializers import AvailabilityWindowSerializer
 from apps.payments.evaluator import discount_applies
 from apps.payments.models import DiscountType, RefundAssociation
+from apps.payments.api.serializers import StockAuditLogSerializer
 
 User = get_user_model()
 
@@ -1373,13 +1374,21 @@ class OrderDetailSerializer(OrderListSerializer):
     created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
     updated_at = EventTimezoneField(read_only=True)
     updated_by_name = serializers.CharField(source='updated_by.username', read_only=True, allow_null=True)
+    actions = serializers.SerializerMethodField(help_text="Available actions for this order based on its status")
     
     class Meta(OrderListSerializer.Meta):
         fields = OrderListSerializer.Meta.fields + (
             'order_items', 'payment', 'payment_details',
             'created_by', 'created_by_name', 'updated_by',
-            'updated_by_name', 'updated_at'
+            'updated_by_name', 'updated_at', 'actions'
         )
+
+    @extend_schema_field(StockAuditLogSerializer(many=True))
+    def get_actions(self, obj):
+        """Determine available actions based on order status."""
+        from apps.products.models import StockAuditLog  
+
+        return StockAuditLogSerializer(StockAuditLog.objects.filter(order_id=obj.order_id), many=True, context=self.context).data
     
     @extend_schema_field({'type': 'object'})
     def get_payment_details(self, obj) -> Optional[dict]:

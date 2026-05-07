@@ -1,12 +1,17 @@
 """
 ViewSet endpoints for user-managed Stripe connected accounts.
 """
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.payments.api.permissions import IsStripeAccountOwner
+from apps.payments.api.permissions import (
+    IsStripeAccountOwner,
+    user_can_access_stripe_account_for_event,
+)
 from apps.payments.api.stripe_serializers import (
     StripeConnectedAccountCreateSerializer,
     StripeConnectedAccountListSerializer,
@@ -16,6 +21,23 @@ from apps.payments.models import StripeConnectedAccount
 from apps.payments.services.stripe.connect import StripeConnectService
 
 
+@extend_schema_view(
+    retrieve=extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='event',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    'Optional event url_safe_title. If supplied, event staff can retrieve '
+                    'a non-owned account only when that account is linked to a Stripe '
+                    'payment method on the event.'
+                ),
+            )
+        ]
+    )
+)
 class StripeConnectedAccountViewSet(viewsets.ModelViewSet):
     """Manage Stripe connected accounts for the authenticated user."""
 
@@ -24,7 +46,30 @@ class StripeConnectedAccountViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
-        return StripeConnectedAccount.objects.filter(user=self.request.user).order_by('-is_primary', '-created_at')
+        user = self.request.user
+        queryset = StripeConnectedAccount.objects.all().order_by('-is_primary', '-created_at')
+
+        # List is always self-scoped.
+        if self.action == 'list':
+            return queryset.filter(user=user)
+
+        # Retrieve can expand beyond ownership only with event-based staff access.
+        if self.action == 'retrieve':
+            event_identifier = self.request.query_params.get('event')
+            if not event_identifier:
+                return queryset.filter(user=user)
+
+            if user_can_access_stripe_account_for_event(
+                user=user,
+                event_identifier=event_identifier,
+                stripe_account_id=self.kwargs.get(self.lookup_field),
+            ):
+                return queryset
+
+            return queryset.none()
+
+        # Mutating actions remain owner-scoped.
+        return queryset.filter(user=user)
 
     def get_serializer_class(self):
         if self.action == 'create':
