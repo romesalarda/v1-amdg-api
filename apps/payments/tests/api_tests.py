@@ -1221,6 +1221,81 @@ class RefundRequestAPITestCase(APITestCase):
 
         return booking_payment, attendee, ticket
 
+    def _create_booking_hybrid_refund_fixture(self):
+        booking = Booking.objects.create(event=self.event, made_by=self.regular_user)
+
+        attendee = Attendee.objects.create(
+            first_name='Hybrid',
+            last_name='Refund',
+            event=self.event,
+            user=self.regular_user,
+            booking=booking,
+            date_of_birth=datetime.date(1992, 2, 2),
+            relationship_to_user=AttendeeRelationship.SELF,
+            defined_by=self.regular_user,
+        )
+
+        ticket_type = TicketType.objects.create(
+            event=self.event,
+            code=f'HYBRID-{str(timezone.now().timestamp()).replace(".", "")[:10]}',
+            title='Hybrid Admission',
+            scope=TicketScopeChoices.FULL_EVENT,
+            created_by=self.admin_user,
+        )
+
+        booking_package = BookingPackage.objects.create(
+            name=f'Hybrid-Package-{timezone.now().timestamp()}',
+            event=self.event,
+            ticket_type=ticket_type,
+            base_amount=Money('50.00', 'GBP'),
+            created_by=self.admin_user,
+        )
+
+        payment = Payment.objects.create(
+            user=self.regular_user,
+            event=self.event,
+            method=self.payment_method,
+            base_amount=Money('70.00', 'GBP'),
+            status=PaymentStatusChoices.COMPLETED,
+            target_type=ContentType.objects.get_for_model(Booking),
+            target_id=str(booking.id),
+            metadata={'ticket_breakdown': {}},
+        )
+
+        ticket = Ticket.objects.create(
+            ticket_type=ticket_type,
+            attendee=attendee,
+            package=booking_package,
+            payment=payment,
+            status=TicketStatusChoices.ACTIVE,
+        )
+
+        payment.metadata['ticket_breakdown'][str(ticket.ticket_id)] = {
+            'amount': '50.00',
+            'currency': 'GBP',
+        }
+        payment.save(update_fields=['metadata'])
+
+        order = Order.objects.create(
+            customer=self.regular_user,
+            attendee=attendee,
+            created_by=self.regular_user,
+            total_amount=Money('20.00', 'GBP'),
+            status=OrderStatusChoices.COMPLETED,
+            payment=payment,
+        )
+        order_item = OrderItem.objects.create(
+            order=order,
+            product_variant=None,
+            quantity=1,
+            unit_price=Money('20.00', 'GBP'),
+            total_price=Money('20.00', 'GBP'),
+            status=OrderItemStatusChoices.COMPLETED,
+        )
+        order.recalculate_total_amount()
+
+        return payment, attendee, ticket, order_item
+
     def _create_attendee_for_booking(self, booking, first_name, last_name):
         return Attendee.objects.create(
             first_name=first_name,
@@ -1689,6 +1764,43 @@ class RefundRequestAPITestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('refund_items', response.data)
+
+    def test_hybrid_booking_refund_supports_attendee_and_order_items_in_one_request(self):
+        """Booking refunds can combine attendee ticket scope and selected booking order items in a single request."""
+        payment, attendee, _, order_item = self._create_booking_hybrid_refund_fixture()
+
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.post(
+            reverse('payments:refundrequest-list'),
+            {
+                'payment': payment.payment_id,
+                'amount': '70.00',
+                'amount_currency': 'GBP',
+                'reason': 'Refund attendee package plus selected booking order item together.',
+                'attendee_ids': [str(attendee.attendee_id)],
+                'refund_items': [
+                    {
+                        'attendee_id': str(attendee.attendee_id),
+                        'order_item_id': order_item.id,
+                        'quantity': 1,
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        refund = RefundRequest.objects.get(payment=payment)
+        metadata = refund.metadata or {}
+        self.assertEqual(metadata.get('refund_scope'), 'hybrid_booking_attendees_and_products')
+        self.assertEqual(refund.associations.count(), 2)
+        association_models = {
+            association.target_type.model
+            for association in refund.associations.select_related('target_type').all()
+        }
+        self.assertIn('ticket', association_models)
+        self.assertIn('orderitem', association_models)
 
     def test_partial_order_refund_single_item(self):
         """Order partial refunds support single item targeting with exact amount matching."""

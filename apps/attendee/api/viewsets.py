@@ -420,6 +420,42 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         '''
         attendee = self.get_object()
         return Response(self._build_pre_removal_summary(attendee), status=status.HTTP_200_OK)
+    
+    @extend_schema(
+        summary='Cancel Attendee Registration',
+        description=(
+            'Cancel an attendee\'s registration for the event. Marks the attendee as cancelled without deleting the record. '
+            'Useful for scenarios where the attendee should no longer be considered active but historical data must be retained.'
+        ),
+        request=inline_serializer(
+            name='AttendeeCancellationRequest',
+            fields={
+                'invalidate': drf_serializers.BooleanField(
+                    required=False,
+                    default=False,
+                )
+            }
+        ), 
+        tags=['Attendees'],
+        responses={
+            200: OpenApiResponse(description='Attendee registration cancelled successfully.'),
+            400: OpenApiResponse(description='Attendee is already cancelled.'),
+        },
+    )
+    def cancel(self, request, attendee_id):
+        """Custom action to cancel an attendee's registration."""
+        attendee = self.get_object()
+
+        invalidate = request.data.get('invalidate', False)
+
+        if attendee.is_cancelled:
+            return Response({'detail': 'Attendee is already cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        attendee.mark_cancelled()
+        if invalidate:
+            attendee.invalidate()
+
+        return Response({'detail': 'Attendee registration cancelled successfully.'}, status=status.HTTP_200_OK)
 
 
 

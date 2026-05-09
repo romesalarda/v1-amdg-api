@@ -63,6 +63,12 @@ class RefundService:
                 user_message="Invalid refund amount."
             )
         
+        if not stripe_account_id:
+            raise StripeValidationError(
+                message="Stripe account ID is required to create a refund.",
+                user_message="Refund processing error. Please try again."
+            )
+        
         # Prepare request parameters
         params = {
             'payment_intent': payment_intent_id,

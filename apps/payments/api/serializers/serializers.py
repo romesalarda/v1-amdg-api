@@ -1252,7 +1252,8 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 'amount': f"Refund amount cannot exceed payment amount ({payment.base_amount})."
             })
 
-        is_targeted_booking_refund = is_booking_payment and bool(refund_items)
+        is_hybrid_booking_refund = is_booking_payment and bool(refund_items) and bool(attendee_ids)
+        is_targeted_booking_refund = is_booking_payment and bool(refund_items) and not bool(attendee_ids)
         is_targeted_order_refund = is_order_payment and bool(refund_items)
 
         if not AttendeeRefundService.supports_itemized_refunds(payment) and refund_items:
@@ -1273,14 +1274,9 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 )
             })
 
-        if is_booking_payment and amount < payment.base_amount and not attendee_ids and not is_targeted_booking_refund:
+        if is_booking_payment and amount < payment.base_amount and not attendee_ids and not refund_items:
             raise serializers.ValidationError({
                 'attendee_ids': "attendee_ids is required for partial refunds on booking payments."
-            })
-
-        if is_booking_payment and refund_items and attendee_ids:
-            raise serializers.ValidationError({
-                'refund_items': "Use either attendee_ids or refund_items for booking refunds, not both."
             })
 
         if is_order_payment and amount < payment.base_amount and not is_targeted_order_refund:
@@ -1308,7 +1304,49 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                     )
                 })
 
-        if is_booking_payment and is_targeted_booking_refund:
+        if is_hybrid_booking_refund:
+            attendees = AttendeeRefundService.resolve_booking_attendees(payment, attendee_ids)
+
+            if AttendeeRefundService.has_used_ticket(payment, attendees) and not override_used_ticket_block:
+                raise serializers.ValidationError({
+                    'attendee_ids': (
+                        "One or more selected attendees already have a used ticket. "
+                        "Set override_used_ticket_block=true with override_reason if admin override is intended."
+                    )
+                })
+
+            ticket_breakdown = AttendeeRefundService.calculate_booking_ticket_breakdown(payment, attendees)
+            order_item_breakdown = AttendeeRefundService.calculate_targeted_booking_product_breakdown(payment, refund_items)
+
+            ticket_total = Decimal(str(ticket_breakdown.get('total', 0))).quantize(Decimal('0.01'))
+            order_item_total = Decimal(str(order_item_breakdown.get('total', 0))).quantize(Decimal('0.01'))
+            combined_total = (ticket_total + order_item_total).quantize(Decimal('0.01'))
+
+            refund_context['selected_attendee_ids'] = attendee_ids
+            refund_context['selected_refund_items'] = order_item_breakdown.get('items', [])
+            refund_context['breakdown'] = {
+                'scope': 'hybrid_booking_attendees_and_products',
+                'total': float(combined_total),
+                'total_currency': payment.base_amount.currency.code,
+                'ticket_breakdown': ticket_breakdown,
+                'order_item_breakdown': order_item_breakdown,
+                'ticket_attendee_ids': attendee_ids,
+                'order_items': order_item_breakdown.get('items', []),
+                'entity_counts': {
+                    'tickets': len(ticket_breakdown.get('tickets', [])),
+                    'orders': order_item_breakdown.get('entity_counts', {}).get('orders', 0),
+                    'items': order_item_breakdown.get('entity_counts', {}).get('items', 0),
+                },
+            }
+            refund_context['refund_scope'] = 'hybrid_booking_attendees_and_products'
+
+            self._assert_breakdown_amount_matches(
+                amount.amount,
+                combined_total,
+                'Hybrid booking refund amount must match selected attendee tickets and item total',
+            )
+
+        elif is_booking_payment and is_targeted_booking_refund:
             breakdown = AttendeeRefundService.calculate_targeted_booking_product_breakdown(payment, refund_items)
             refund_context['selected_attendee_ids'] = breakdown.get('selected_attendee_ids', [])
             refund_context['selected_refund_items'] = breakdown.get('items', [])
