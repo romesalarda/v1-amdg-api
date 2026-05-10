@@ -149,6 +149,7 @@ class EventListSerializer(serializers.ModelSerializer):
             'landing_images', 'main_landing_image',
             'status', 'status_display', 'event_type', 'event_type_name', 'organisation', 
             'organisation_name', 'short_description', 'start_datetime', 'end_datetime', 'attendee_overview', 'location',
+            'external_link', 'external_event', 'last_opened', 'last_closed',
             'timezone', 'created_at', 'created_by', '_links'
         )
         read_only_fields = ('event_id', 'url_safe_title', 'created_at')
@@ -327,12 +328,14 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'deleted_at', 'deleted_by', 'is_deleted', 'user_permissions', 'general_price', 'outstanding_tasks',
             'can_event_be_published', 'registration_open_date', 'registration_close_date', 'uptime',
             'user_registered_attendee_count', 'user_remaining_registration_slots', 'user_self_registered',
+            'external_link', 'external_event', 'last_opened', 'last_closed',
             '_links'
         )
         read_only_fields = (
             'event_id', 'display_identifier', 'url_safe_title', 'created_at', 
             'updated_at', 'duration_days', 'is_ongoing', 'is_approved', 
-            'can_participants_register', 'number_of_attendees', 'deleted_at', 'deleted_by'
+            'can_participants_register', 'number_of_attendees', 'deleted_at', 'deleted_by',
+            'last_opened', 'last_closed', 'uptime',
         )
         extra_kwargs = {
             'created_at': {'default': None},
@@ -913,6 +916,7 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
             'event_id', 'display_code', 'title', 'status', 'event_type', 'timezone',
             'short_description', 'long_description', 'what_to_bring', 'important_information',
             'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance', 'url_safe_title',
+            'external_link', 'external_event',
             'start_datetime', 'end_datetime', 'organisation', 'created_by', '_links'
         )
         read_only_fields = ('event_id', 'created_by', '_links')

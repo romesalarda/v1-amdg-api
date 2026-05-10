@@ -71,11 +71,20 @@ class IsOwnerOrAdmin(permissions.BasePermission):
     
     Used to ensure users can only view/edit their own profile unless they're staff.
     """
+
+    def has_permission(self, request, view):
+        """Allow access if user is authenticated."""
+        return request.user and request.user.is_authenticated
     
     def has_object_permission(self, request, view, obj):
         """Check if user owns the object or is staff."""
         # Staff can access any object
         if request.user and request.user.is_staff:
+            return True
+        
+        # if retrieve of list, allow, but CUD operations require ownership
+
+        if view.action in ['retrieve', 'list']:
             return True
         
         # Check if obj is a User or has a user attribute (like Profile)

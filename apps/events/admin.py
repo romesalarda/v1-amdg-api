@@ -5,7 +5,7 @@ from .models import (
     EventPermissionAssignment, EventReview, EventRole, 
     EventRoleAssignment, EventStaff, EventStaffAvailability, EventStaffInvite,
     EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice,
-    EventSettings, EventVenue
+    EventSettings, EventVenue, EventNotification
 )
 
 
@@ -26,6 +26,7 @@ class EventTypeAdmin(admin.ModelAdmin):
         }),
     )
 
+admin.site.register(EventNotification)
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
