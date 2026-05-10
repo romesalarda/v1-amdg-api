@@ -888,6 +888,9 @@ class BookingDetailSerializer(BookingListSerializer):
                 'display_id': {'type': 'string'},
                 'name': {'type': 'string'},
                 'url': {'type': 'string', 'format': 'uri'},
+                'is_cancelled': {'type': 'boolean'},
+                'is_registered': {'type': 'boolean'},
+                'is_checked_in': {'type': 'boolean'},
             }
         }
     })
@@ -901,6 +904,9 @@ class BookingDetailSerializer(BookingListSerializer):
                 'id': str(attendee.attendee_id),
                 'display_id': attendee.attendee_display_id,
                 'name': attendee.full_name,
+                'is_cancelled': attendee.is_cancelled,
+                'is_registered': attendee.is_registered,
+                'is_checked_in': attendee.is_checked_in,
             }
             if request:
                 attendee_data['url'] = request.build_absolute_uri(f"/api/attendees/{attendee.attendee_id}/")

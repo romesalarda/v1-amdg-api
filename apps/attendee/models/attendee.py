@@ -423,7 +423,7 @@ class Attendee(SoftDeleteModel):
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.CANCELLED,
             attendee=self,
-            performed_by=performed_by, # system action,
+            performed_by=None, # system action,
             notes=notes
         )
 

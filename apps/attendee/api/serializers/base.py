@@ -34,13 +34,16 @@ class AttendeeListSerializer(serializers.ModelSerializer):
     event_title = serializers.CharField(source='event.title', read_only=True, allow_null=True)
     relationship_display = serializers.CharField(source='get_relationship_to_user_display', read_only=True)
     area_from_name = serializers.CharField(source='area_from.area_name', read_only=True, allow_null=True)
-    
+    is_cancelled = serializers.BooleanField(read_only=True)
+    is_registered = serializers.BooleanField(read_only=True)
+    is_checked_in = serializers.BooleanField(read_only=True)
     class Meta:
         model = Attendee
         fields = (
             'attendee_id', 'attendee_display_id', 'first_name', 'last_name', 'full_name',
             'email', 'phone_number', 'date_of_birth', 'age', 'is_minor', 'gender',
             'relationship_to_user', 'relationship_display', 'event', 'event_title', 'status',
+            'is_cancelled', 'is_registered', 'is_checked_in',
             'created_at', '_links', 'area_from_name'
         )
         read_only_fields = ('attendee_id', 'attendee_display_id', 'full_name', 'age', 'is_minor', 'created_at')
@@ -106,21 +109,20 @@ class AttendeeDetailSerializer(AttendeeListSerializer):
     is_event_staff = serializers.BooleanField(read_only=True)
     staff_role_names = serializers.ListField(read_only=True)
     self_registered = serializers.BooleanField(read_only=True)
-    is_cancelled = serializers.BooleanField(read_only=True)
-    is_registered = serializers.BooleanField(read_only=True)
-    is_checked_in = serializers.BooleanField(read_only=True)
+   
     area_from_name = serializers.CharField(source='area_from.area_name', read_only=True, allow_null=True)
     
     class Meta(AttendeeListSerializer.Meta):
         fields = AttendeeListSerializer.Meta.fields + (
             'area_from', 'area_from_name', 'booking',
             'is_event_staff', 'staff_role_names', 'self_registered',
-            'is_cancelled', 'is_registered', 'is_checked_in',
+            # 'is_cancelled', 'is_registered', 'is_checked_in',
             'defined_by', 'updated_at', 'deleted_at', 'deleted_by'
         )
         read_only_fields = AttendeeListSerializer.Meta.read_only_fields + (
             'is_event_staff', 'staff_role_names', 'self_registered',
-            'is_cancelled', 'is_registered', 'is_checked_in', 'updated_at', 'deleted_at'
+            # 'is_cancelled', 'is_registered', 'is_checked_in', 
+            'updated_at', 'deleted_at'
         )
 
 
