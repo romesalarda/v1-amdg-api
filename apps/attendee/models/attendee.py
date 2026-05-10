@@ -25,16 +25,17 @@ class AttendeeRelationship(models.TextChoices):
     SPOUSE = 'spouse', 'Spouse'
     CHILD = 'child', 'Child'
     FRIEND = 'friend', 'Friend'
-    PARRENT = 'parent', 'Parent'
+    PARENT = 'parent', 'Parent'
     SIBLING = 'sibling', 'Sibling'
     OTHER = 'other', 'Other'
 
 class AttendeeStatus(models.TextChoices):
-    PENDING_PAYMENT = 'pending_payment', 'Pending Payment'
-    REGISTERED = 'registered', 'Registered'
-    CHECKED_IN = 'checked_in', 'Checked In'
-    CANCELLED = 'cancelled', 'Cancelled'
-    WHITELISTED = 'whitelisted', 'Whitelisted'
+    PENDING_PAYMENT = 'pending_payment', 'Pending Payment' # means attendee record created but not yet official due to incomplete payment
+    REGISTERED = 'registered', 'Registered' # means attendee has completed registration process and is official, even if payment is still pending (e.g., for free tickets or manual payment methods)
+    CHECKED_IN = 'checked_in', 'Checked In' # means attendee has been checked in for the event, but may still have actions pending (e.g., payment, check out)
+    CHECKED_OUT = 'checked_out', 'Checked Out' # means attendee has been checked out of the event, but may still have actions pending (e.g., payment)
+    CANCELLED = 'cancelled', 'Cancelled' # means attendee has been cancelled and should not be allowed to check in or access event, but may still have actions pending (e.g., refund)
+    WHITELISTED = 'whitelisted', 'Whitelisted' # means attendee is whitelisted and can check in, but may not have completed registration or payment yet (e.g., VIPs, staff, etc.)
 
 class Attendee(SoftDeleteModel):
     
@@ -388,6 +389,9 @@ class Attendee(SoftDeleteModel):
             attendance.check_in_by = checked_in_by
             attendance.check_in_at = models.DateTimeField(auto_now=True)
             attendance.save()
+
+        self.status = AttendeeStatus.CHECKED_IN
+        self.save(update_fields=['status'])
             
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.CHECKED_IN,
@@ -414,10 +418,13 @@ class Attendee(SoftDeleteModel):
             attendance.save()
             
             AttendeeAction.objects.create(
-                action=AttendeeActionChoices.CHECKED_IN,
+                action=AttendeeActionChoices.CHECKED_OUT,
                 attendee=self,
                 performed_by=None # system action
             )   
+        
+            self.status = AttendeeStatus.CHECKED_OUT
+            self.save(update_fields=['status'])
         
             return attendance
 
@@ -448,6 +455,8 @@ class Attendee(SoftDeleteModel):
             performed_by=None, # system action,
             notes=notes
         )
+        self.status = AttendeeStatus.CANCELLED
+        self.save(update_fields=['status'])
 
     def get_metadata(self):
         '''
@@ -464,6 +473,17 @@ class Attendee(SoftDeleteModel):
             "added_at": self.created_at.isoformat(),
         }
     
+    def log_action(self, action, performed_by=None, notes=None):
+        '''
+        Log an action performed on this attendee.
+        '''
+        AttendeeAction.objects.create(
+            action=action,
+            attendee=self,
+            performed_by=performed_by,
+            notes=notes
+        )
+    
 class AttendeeGuardian(models.Model):
     
     user = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='guarded_attendees', null=True, blank=True)
@@ -478,8 +498,18 @@ class AttendeeGuardian(models.Model):
         return f"<AttendeeGuardian: {self.user} -> {self.attendee} ({self.relationship})>"
     
 class AttendeeActionChoices(models.TextChoices):
+    '''
+    High level audit trail of actions performed on an attendee record, for tracking important milestones and changes in status over time.
+    '''
     REGISTERED = 'registered', 'Registered'
+    MADE_PAYMENT = 'made_payment', 'Made Payment'
+    CANCELLED_PAYMENT = 'cancelled_payment', 'Cancelled Payment'
+    INTENDS_TO_REFUND_PAYMENT = 'intends_to_refund_payment', 'Intends to Refund Payment'
+    ORDERED_FROM_SHOP = 'ordered_from_shop', 'Ordered from Shop'
+
     CHECKED_IN = 'checked_in', 'Checked In'
+    CHECKED_OUT = 'checked_out', 'Checked Out'
+    
     CANCELLED = 'cancelled', 'Cancelled'
     UPDATED_INFO = 'updated_info', 'Updated Information'
     

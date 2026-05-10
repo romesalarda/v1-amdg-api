@@ -216,7 +216,7 @@ class FullBookingFlowIntegrationTest(TestCase):
             date_of_birth=date(1980, 5, 20),  # 45 years old
             event=self.event,
             booking=booking,
-            relationship_to_user=AttendeeRelationship.PARRENT,
+            relationship_to_user=AttendeeRelationship.PARENT,
             defined_by=self.sam
         )
         
@@ -228,7 +228,7 @@ class FullBookingFlowIntegrationTest(TestCase):
             date_of_birth=date(1977, 8, 10),  # 48 years old
             event=self.event,
             booking=booking,
-            relationship_to_user=AttendeeRelationship.PARRENT,
+            relationship_to_user=AttendeeRelationship.PARENT,
             defined_by=self.sam
         )
         

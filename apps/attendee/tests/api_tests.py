@@ -128,7 +128,7 @@ class AttendeeAPITestCase(APITestCase):
         AttendeeGuardian.objects.create(
             user=self.regular_user,
             attendee=self.child_attendee,
-            relationship=AttendeeRelationship.PARRENT
+            relationship=AttendeeRelationship.PARENT
         )
         
         # Create reference data
@@ -622,7 +622,7 @@ class GuardianTests(AttendeeAPITestCase):
         data = {
             'user': self.other_user.id,
             'attendee': new_child.attendee_id,
-            'relationship': AttendeeRelationship.PARRENT
+            'relationship': AttendeeRelationship.PARENT
         }
         response = self.client.post('/api/guardians/', data, format='json')
         

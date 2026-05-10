@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from djmoney.money import Money
 
-from apps.attendee.models import Attendee, AttendeeRelationship, AttendeeStatus
+from apps.attendee.models import Attendee, AttendeeRelationship, AttendeeStatus, AttendeeActionChoices
 from apps.attendee.models.personal.accessibility import AttendeeAccessibilityRequirement
 from apps.attendee.models.personal.consent import AttendeeConsent, Consent
 from apps.attendee.models.personal.dietary import AttendeeDietaryRequirement
@@ -194,6 +194,8 @@ class BookingCheckoutFinalizer:
                     selection_metadata["product_lines"] = product_lines
 
                 attendee_selection_metadata.append(selection_metadata)
+
+                attendee.mark_registered()
 
             if payment.base_amount and payment.base_amount != total_amount:
                 raise CheckoutFinalizationError(
