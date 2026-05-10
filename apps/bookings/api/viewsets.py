@@ -22,6 +22,7 @@ from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 
 from rest_framework.pagination import PageNumberPagination
@@ -399,6 +400,65 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         response_status = status.HTTP_200_OK if precheck_result['valid'] else status.HTTP_400_BAD_REQUEST
         return Response(precheck_result, status=response_status)
+
+    @extend_schema(
+        summary="List checkout alternative sign-in definitions",
+        description=(
+            "Return active event alternative sign-in definitions for a booking intent. "
+            "Authenticated users can access definitions for their own intent. "
+            "Administrative users can access any intent."
+        ),
+        tags=["Bookings"],
+        parameters=[
+            OpenApiParameter(
+                name='booking_intent_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Booking intent UUID used to scope event alternative sign-in definitions',
+            )
+        ],
+        responses={
+            200: EventAlternativeSigninListSerializer(many=True),
+            400: OpenApiResponse(description='Validation error'),
+            403: OpenApiResponse(description='Permission denied'),
+        },
+        operation_id="bookings_checkout_alternative_signins",
+    )
+    @action(detail=False, methods=['get'], url_path='checkout-alternative-signins')
+    def checkout_alternative_signins(self, request):
+        """List active event alternative sign-in definitions for checkout."""
+        booking_intent_id = request.query_params.get('booking_intent_id')
+        if not booking_intent_id:
+            raise ValidationError({
+                'booking_intent_id': 'booking_intent_id is required.'
+            })
+
+        try:
+            intent = BookingIntent.objects.select_related('event').get(
+                booking_intent_id=booking_intent_id
+            )
+        except BookingIntent.DoesNotExist:
+            raise ValidationError({
+                'booking_intent_id': f'BookingIntent with id {booking_intent_id} does not exist.'
+            })
+
+        user = request.user
+        if not (user.is_staff or user.is_superuser):
+            if not intent.made_by_id or intent.made_by_id != user.id:
+                raise PermissionDenied('You do not have permission to access this booking intent.')
+
+        queryset = EventAlternativeSigninIdentifier.objects.filter(
+            event=intent.event,
+            is_active=True,
+        ).select_related('event').order_by('title')
+
+        serializer = EventAlternativeSigninListSerializer(
+            queryset,
+            many=True,
+            context={'request': request},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Checkout booking with payment",

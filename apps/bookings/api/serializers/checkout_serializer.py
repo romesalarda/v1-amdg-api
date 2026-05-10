@@ -216,6 +216,32 @@ class MedicalConditionItemSerializer(PersonalInfoItemSerializer):
     )
 
 
+class AttendeeAlternativeSigninDraftSerializer(serializers.Serializer):
+    """
+    Alternative sign-in payload for a draft attendee.
+
+    Example:
+        {
+            "event_alternative_signin_id": "550e8400-e29b-41d4-a716-446655440000",
+            "identifier": "123456"
+        }
+    """
+
+    event_alternative_signin_id = serializers.UUIDField(
+        help_text="UUID of EventAlternativeSigninIdentifier"
+    )
+    identifier = serializers.CharField(
+        max_length=255,
+        help_text="Identifier value matching event alternative sign-in format"
+    )
+
+    def validate_identifier(self, value):
+        cleaned = (value or '').strip()
+        if not cleaned:
+            raise serializers.ValidationError('Identifier cannot be empty.')
+        return cleaned
+
+
 class AttendeePersonalInfoDraftSerializer(serializers.Serializer):
     """
     Complete personal information payload for attendee.
@@ -261,6 +287,15 @@ class AttendeePersonalInfoDraftSerializer(serializers.Serializer):
     emergency_contact = EmergencyContactDraftSerializer(
         required=False,
         help_text="Emergency contact (REQUIRED for attendees under 18)"
+    )
+    organisation_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text="Optional organisation ID to associate with attendee"
+    )
+    alternative_signin_identifier = AttendeeAlternativeSigninDraftSerializer(
+        required=False,
+        help_text="Optional alternative sign-in identifier to create for attendee"
     )
 
 

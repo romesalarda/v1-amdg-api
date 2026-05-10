@@ -848,6 +848,56 @@ class BookingPackageEndpointTests(BookingsAPITestCase):
 
 class EventAlternativeSigninEndpointTests(BookingsAPITestCase):
     """Test event alternative signin endpoints (admin only)."""
+
+    def test_checkout_alternative_signins_requires_booking_intent_id(self):
+        """Checkout lookup endpoint should require booking_intent_id query parameter."""
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get('/api/bookings/list/checkout-alternative-signins/')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('booking_intent_id', response.data)
+
+    def test_checkout_alternative_signins_for_intent_owner(self):
+        """Authenticated intent owner should receive active event sign-ins for checkout."""
+        EventAlternativeSigninIdentifier.objects.create(
+            title='Inactive Code',
+            description='Should not appear',
+            event=self.event,
+            format_match=r'^.*$',
+            is_active=False,
+            verification_status=VerificationStatus.VERIFIED,
+        )
+
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=1,
+            made_by=self.regular_user,
+        )
+
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(
+            f'/api/bookings/list/checkout-alternative-signins/?booking_intent_id={intent.booking_intent_id}'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data), 1)
+        self.assertTrue(all(item['is_active'] for item in response.data))
+        self.assertTrue(any(item['id'] == str(self.event_signin.id) for item in response.data))
+
+    def test_checkout_alternative_signins_denies_non_owner(self):
+        """Authenticated users should not access checkout sign-ins for intents they do not own."""
+        intent = BookingIntent.objects.create(
+            event=self.event,
+            intended_ticket_count=1,
+            made_by=self.regular_user,
+        )
+
+        self.client.force_authenticate(user=self.other_user)
+        response = self.client.get(
+            f'/api/bookings/list/checkout-alternative-signins/?booking_intent_id={intent.booking_intent_id}'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
     
     def test_list_event_signins_as_admin(self):
         """Test listing event alternative signins as admin."""

@@ -31,6 +31,8 @@ from apps.events.models import Event, EventQuestion, EventQuestionTypeChoices
 from apps.payments.models import PaymentMethod, PaymentMethodTypeChoices
 from apps.common.models import Resource, VerificationStatus
 from apps.attendee.models.personal.consent import Consent
+from apps.organisations.models import Organisation
+from apps.bookings.models import EventAlternativeSigninIdentifier
 from apps.users.models import CommunityUser
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -253,6 +255,72 @@ class CheckoutValidationService:
                 raise ValidationError({
                     'attendees': 'Event must be provided to validate attendee.'
                 })
+
+    @staticmethod
+    def validate_personal_info_enrichments(
+        personal_info: Dict[str, Any],
+        event: Event,
+    ) -> None:
+        """
+        Validate optional attendee personal info enrichments used at checkout.
+
+        Enforces:
+        - organisation_id references an existing organisation
+        - alternative_signin_identifier references an active event scoped signin definition
+        - identifier matches required format
+        """
+        if not personal_info:
+            return
+
+        organisation_id = personal_info.get('organisation_id')
+        if organisation_id not in (None, ''):
+            try:
+                Organisation.objects.only('id').get(id=organisation_id)
+            except Organisation.DoesNotExist:
+                raise ValidationError({
+                    'attendees': f'Invalid organisation_id {organisation_id}.'
+                })
+
+        alt_identifier = personal_info.get('alternative_signin_identifier') or {}
+        if not alt_identifier:
+            return
+
+        event_signin_id = alt_identifier.get('event_alternative_signin_id')
+        identifier = (alt_identifier.get('identifier') or '').strip()
+
+        if not event_signin_id:
+            raise ValidationError({
+                'attendees': 'alternative_signin_identifier.event_alternative_signin_id is required.'
+            })
+
+        if not identifier:
+            raise ValidationError({
+                'attendees': 'alternative_signin_identifier.identifier cannot be empty.'
+            })
+
+        try:
+            event_signin = EventAlternativeSigninIdentifier.objects.get(id=event_signin_id)
+        except EventAlternativeSigninIdentifier.DoesNotExist:
+            raise ValidationError({
+                'attendees': f'Event alternative sign-in {event_signin_id} does not exist.'
+            })
+
+        if event_signin.event_id != event.id:
+            raise ValidationError({
+                'attendees': 'Event alternative sign-in must belong to the same checkout event.'
+            })
+
+        if not event_signin.is_valid:
+            raise ValidationError({
+                'attendees': 'Event alternative sign-in is not active.'
+            })
+
+        if not event_signin.validate_code_format(identifier):
+            raise ValidationError({
+                'attendees': 'Alternative sign-in identifier does not match required format.'
+            })
+
+        alt_identifier['identifier'] = identifier
     
     @staticmethod
     def validate_package_eligibility(
@@ -638,6 +706,10 @@ class CheckoutValidationService:
             # Validate draft if provided
             if draft:
                 CheckoutValidationService.validate_attendee_draft(draft)
+                CheckoutValidationService.validate_personal_info_enrichments(
+                    draft.get('personal_info') or {},
+                    event,
+                )
                 
                 # Validate questions and consents for draft attendee
                 CheckoutValidationService.validate_consent_records(

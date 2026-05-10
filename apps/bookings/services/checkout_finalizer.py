@@ -7,13 +7,18 @@ from django.db import transaction
 from django.utils import timezone
 from djmoney.money import Money
 
-from apps.attendee.models import Attendee, AttendeeRelationship, AttendeeStatus, AttendeeActionChoices
+from apps.attendee.models import Attendee, AttendeeRelationship, AttendeeStatus, AttendeeActionChoices, AttendeeOrganisation
 from apps.attendee.models.personal.accessibility import AttendeeAccessibilityRequirement
 from apps.attendee.models.personal.consent import AttendeeConsent, Consent
 from apps.attendee.models.personal.dietary import AttendeeDietaryRequirement
 from apps.attendee.models.personal.emergency import EmergencyContact
 from apps.attendee.models.personal.medical import AttendeeMedicalCondition
-from apps.bookings.models import Booking, BookingIntent
+from apps.bookings.models import (
+    Booking,
+    BookingIntent,
+    AttendeeAlternativeSigninIdentifier,
+    EventAlternativeSigninIdentifier,
+)
 from apps.bookings.models.products import PackageProduct
 from apps.common.models import Resource
 from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
@@ -309,6 +314,45 @@ class BookingCheckoutFinalizer:
                 email=emergency.get("email") or None,
                 primary_contact=emergency.get("primary_contact", True),
                 added_by=actor or payment.user,
+            )
+
+        organisation_id = personal_info.get("organisation_id")
+        if organisation_id not in (None, ""):
+            AttendeeOrganisation.objects.get_or_create(
+                attendee=attendee,
+                organisation_id=organisation_id,
+                defaults={
+                    "added_by": actor or payment.user,
+                },
+            )
+
+        alternative_signin = personal_info.get("alternative_signin_identifier") or {}
+        if alternative_signin:
+            event_signin_id = alternative_signin.get("event_alternative_signin_id")
+            identifier_value = (alternative_signin.get("identifier") or "").strip()
+
+            if not event_signin_id or not identifier_value:
+                raise CheckoutFinalizationError(
+                    "Alternative sign-in identifier payload is incomplete."
+                )
+
+            try:
+                event_signin = EventAlternativeSigninIdentifier.objects.get(
+                    id=event_signin_id,
+                    event=intent.event,
+                )
+            except EventAlternativeSigninIdentifier.DoesNotExist as exc:
+                raise CheckoutFinalizationError(
+                    f"Event alternative sign-in {event_signin_id} not found for event."
+                ) from exc
+
+            AttendeeAlternativeSigninIdentifier.objects.get_or_create(
+                attendee=attendee,
+                event_alternative_signin=event_signin,
+                identifier=identifier_value,
+                defaults={
+                    "defined_by": actor or payment.user,
+                },
             )
 
         consent_records = draft.get("consents", []) or []

@@ -26,7 +26,9 @@ from djmoney.money import Money
 
 from apps.bookings.models import (
     Booking, BookingIntent, BookingPackage,
-    TicketType, Ticket, TicketScopeChoices
+    TicketType, Ticket, TicketScopeChoices,
+    EventAlternativeSigninIdentifier,
+    AttendeeAlternativeSigninIdentifier,
 )
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentMethodTypeChoices,
@@ -42,7 +44,8 @@ from apps.attendee.models import (
     Consent, AttendeeConsent,
     DietaryRequirement, AttendeeDietaryRequirement,
     MedicalCondition, AttendeeMedicalCondition,
-    AccessibilityRequirement, AttendeeAccessibilityRequirement
+    AccessibilityRequirement, AttendeeAccessibilityRequirement,
+    AttendeeOrganisation,
 )
 from apps.attendee.models.personal.emergency import EmergencyContact
 from apps.organisations.models import Organisation
@@ -1105,6 +1108,112 @@ class CheckoutAPITestCase(TestCase):
         self.assertEqual(answers.count(), 2)
         upload_answer = answers.get(question=upload_question)
         self.assertEqual(upload_answer.answer_text, upload_resource.resource_url)
+
+    def test_checkout_with_draft_attendee_creates_org_and_alternative_signin(self):
+        """Checkout should persist organisation and alternative sign-in data from attendee personal info."""
+        intent = self.create_booking_intent(ticket_count=1)
+
+        event_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC Member ID',
+            description='Community identifier',
+            event=self.event,
+            format_match=r'^\d{6}$',
+            is_active=True,
+        )
+
+        response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.cash_method.id,
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Alt',
+                        'last_name': 'Signin',
+                        'email': 'altsignin@example.com',
+                        'date_of_birth': '1991-01-01',
+                        'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                        'personal_info': {
+                            'organisation_id': self.organisation.id,
+                            'alternative_signin_identifier': {
+                                'event_alternative_signin_id': str(event_signin.id),
+                                'identifier': ' 123456 ',
+                            }
+                        },
+                    },
+                }
+            ],
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        attendee = Attendee.objects.get(email='altsignin@example.com')
+        self.assertTrue(
+            AttendeeOrganisation.objects.filter(
+                attendee=attendee,
+                organisation=self.organisation,
+                added_by=self.user,
+            ).exists()
+        )
+
+        attendee_signin = AttendeeAlternativeSigninIdentifier.objects.get(
+            attendee=attendee,
+            event_alternative_signin=event_signin,
+        )
+        self.assertEqual(attendee_signin.identifier, '123456')
+        self.assertIsNone(attendee_signin.ticket)
+        self.assertEqual(attendee_signin.defined_by, self.user)
+
+        payment = Payment.objects.get(payment_reference=response.data['payment_reference'])
+        metadata_personal_info = payment.metadata['checkout_attendees'][0]['attendee_draft']['personal_info']
+        self.assertEqual(metadata_personal_info['organisation_id'], self.organisation.id)
+        self.assertEqual(
+            str(metadata_personal_info['alternative_signin_identifier']['event_alternative_signin_id']),
+            str(event_signin.id),
+        )
+        self.assertEqual(metadata_personal_info['alternative_signin_identifier']['identifier'], '123456')
+
+    def test_checkout_with_invalid_alternative_signin_identifier_fails(self):
+        """Checkout should fail atomically when attendee alternative sign-in format is invalid."""
+        intent = self.create_booking_intent(ticket_count=1)
+
+        event_signin = EventAlternativeSigninIdentifier.objects.create(
+            title='YFC Member ID',
+            description='Community identifier',
+            event=self.event,
+            format_match=r'^\d{6}$',
+            is_active=True,
+        )
+
+        response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.cash_method.id,
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Invalid',
+                        'last_name': 'Signin',
+                        'email': 'invalid-signin@example.com',
+                        'date_of_birth': '1991-01-01',
+                        'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                        'personal_info': {
+                            'organisation_id': self.organisation.id,
+                            'alternative_signin_identifier': {
+                                'event_alternative_signin_id': str(event_signin.id),
+                                'identifier': 'ABCDEF',
+                            }
+                        },
+                    },
+                }
+            ],
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('attendees', response.data)
+        self.assertFalse(Attendee.objects.filter(email='invalid-signin@example.com').exists())
 
     def test_checkout_draft_attendee_missing_required_consent(self):
         """Draft checkout should fail when required consents are missing."""
