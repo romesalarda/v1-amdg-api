@@ -37,13 +37,14 @@ class AttendeeListSerializer(serializers.ModelSerializer):
     is_cancelled = serializers.BooleanField(read_only=True)
     is_registered = serializers.BooleanField(read_only=True)
     is_checked_in = serializers.BooleanField(read_only=True)
+    is_refunded = serializers.BooleanField(read_only=True)
     class Meta:
         model = Attendee
         fields = (
             'attendee_id', 'attendee_display_id', 'first_name', 'last_name', 'full_name',
             'email', 'phone_number', 'date_of_birth', 'age', 'is_minor', 'gender',
             'relationship_to_user', 'relationship_display', 'event', 'event_title', 'status',
-            'is_cancelled', 'is_registered', 'is_checked_in',
+            'is_cancelled', 'is_registered', 'is_checked_in', 'is_refunded',
             'created_at', '_links', 'area_from_name'
         )
         read_only_fields = ('attendee_id', 'attendee_display_id', 'full_name', 'age', 'is_minor', 'created_at')

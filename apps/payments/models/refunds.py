@@ -211,7 +211,6 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
         Raises:
             ValidationError: If Stripe refund fails
         """
-        self.is_active
         
         # Trigger Stripe refund if payment has Stripe PaymentIntent
         if self.payment.stripe_payment_intent:

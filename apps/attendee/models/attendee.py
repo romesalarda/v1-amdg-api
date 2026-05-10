@@ -12,9 +12,11 @@ import uuid
 from apps.locations.models import AreaLocation
 from apps.payments.evaluator import DiscountContext
 
-from apps.common.models.rules import AccessRule
+from apps.common.models.verification import VerificationStatus
 from apps.common.evaluator import BaseEvaluator, BaseContext, rules_apply
 from apps.common.models.softdelete import SoftDeleteModel
+from apps.payments.models.refunds import RefundAssociation
+from apps.bookings.models import Ticket
 
 User = get_user_model()
 
@@ -203,6 +205,26 @@ class Attendee(SoftDeleteModel):
         Determine if the attendee has been marked as registered.
         '''
         return self.actions.filter(action=AttendeeActionChoices.REGISTERED).exists()
+    
+    @property
+    def is_refunded(self):
+        # must reconcile this attendees TICKET for this event, with the correct refund association 
+        ticket = self.tickets.filter(
+            ticket_type__event=self.event,
+            package__isnull=False
+            )
+        # if not ticket.exists():
+        ticket = ticket.first() if ticket.exists() else None
+
+        if not ticket:
+            return False
+        ticket_type = ContentType.objects.get_for_model(Ticket)
+        return RefundAssociation.objects.filter(
+            target_type=ticket_type,
+            target_id=str(ticket.ticket_id),
+            refund_request__is_active=False, # only consider completed refunds
+            refund_request__verification_status=VerificationStatus.PROCESSED
+        ).exists()
     
     def get_outstanding_payments(self):
         '''
