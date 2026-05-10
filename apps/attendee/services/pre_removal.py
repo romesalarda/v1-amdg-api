@@ -22,18 +22,15 @@ class AttendeePreRemovalSummaryService:
 
 		blockers = []
 		summary_counts = {
-			'linked_payments': 0,
-			'outstanding_payments': 0,
-			'active_refund_requests': 0,
 			'active_tickets': 0,
 			'unresolved_orders': 0,
-			'open_attendance': 0,
-			'family_memberships': 0,
 			'total_blockers': 0,
 			'high_priority_blockers': 0,
 			'medium_priority_blockers': 0,
 		}
 
+		# Keep payment/package entries visible to prompt refund actions.
+		# They are advisory and do not block attendee deletion by themselves.
 		linked_payments = self.get_linked_payments(attendee)
 
 		non_blocking_payment_statuses = [
@@ -42,18 +39,13 @@ class AttendeePreRemovalSummaryService:
 			PaymentStatusChoices.FAILED,
 		]
 		blocking_payments = linked_payments.exclude(status__in=non_blocking_payment_statuses)
-		summary_counts['linked_payments'] = blocking_payments.count()
 
 		outstanding_payments = blocking_payments.filter(
 			status__in=[
 				PaymentStatusChoices.DRAFTING,
 				PaymentStatusChoices.PENDING,
-				# PaymentStatusChoices.COMPLETED,
-				# PaymentStatusChoices.PENDING_REFUND,
-				# PaymentStatusChoices.PARTIALLY_REFUNDED,
 			]
 		)
-		summary_counts['outstanding_payments'] = outstanding_payments.count()
 		if outstanding_payments.exists():
 			items, pagination = self._paginate_items(
 				[self._build_payment_item(payment) for payment in outstanding_payments]
@@ -61,12 +53,12 @@ class AttendeePreRemovalSummaryService:
 			blockers.append(
 				{
 					'code': 'outstanding_payments',
-					'severity': 'high',
+					'severity': 'low',
 					'count': outstanding_payments.count(),
-					'message': 'Attendee has outstanding payments that must be resolved before deletion.',
+					'message': 'Attendee has outstanding package payments that may require refund review.',
 					'items': items,
 					'pagination': pagination,
-					'action_hint': 'Review each payment and request a refund if applicable.',
+					'action_hint': 'Review each payment and request a refund where applicable.',
 				}
 			)
 
@@ -78,12 +70,12 @@ class AttendeePreRemovalSummaryService:
 				blockers.append(
 					{
 						'code': 'linked_payments',
-						'severity': 'high',
+						'severity': 'low',
 						'count': blocking_payments.count(),
-						'message': 'Attendee has linked payment history that may require review before deletion.',
+						'message': 'Attendee has linked package payment history that can be reviewed for refunds.',
 						'items': items,
 						'pagination': pagination,
-						'action_hint': 'Review each payment and request a refund from the specific payment row when eligible.',
+						'action_hint': 'Use payment entries below to initiate refund requests when eligible.',
 					}
 				)
 
@@ -131,7 +123,6 @@ class AttendeePreRemovalSummaryService:
 		payments_with_active_refunds = blocking_payments.filter(
 			refund_requests__is_active=True,
 		).distinct()
-		summary_counts['active_refund_requests'] = payments_with_active_refunds.count()
 		if payments_with_active_refunds.exists():
 			items, pagination = self._paginate_items(
 				[self._build_payment_item(payment) for payment in payments_with_active_refunds]
@@ -139,12 +130,12 @@ class AttendeePreRemovalSummaryService:
 			blockers.append(
 				{
 					'code': 'active_refunds',
-					'severity': 'medium',
+					'severity': 'low',
 					'count': payments_with_active_refunds.count(),
-					'message': 'Attendee has payments with active refund requests that must be resolved before deletion.',
+					'message': 'Attendee has active refund requests in progress.',
 					'items': items,
 					'pagination': pagination,
-					'action_hint': 'Resolve all pending refund requests before removing this attendee.',
+					'action_hint': 'Track refund progress while proceeding with other completed deletion checks.',
 				}
 			)
 
@@ -158,13 +149,16 @@ class AttendeePreRemovalSummaryService:
 
 		suggested_actions = self._build_suggested_actions(blockers)
 
+		blocking_codes = {'active_tickets', 'unresolved_orders'}
+		has_blocking_items = any(blocker['code'] in blocking_codes for blocker in blockers)
+
 		payload = {
 			'attendee': {
 				'attendee_id': str(attendee.attendee_id),
 				'attendee_display_id': attendee.attendee_display_id,
 				'full_name': attendee.full_name,
 			},
-			'can_delete': len(blockers) == 0,
+			'can_delete': not has_blocking_items,
 			'blockers': blockers,
 			'summary_counts': summary_counts,
 			'suggested_actions': suggested_actions,
@@ -299,11 +293,18 @@ class AttendeePreRemovalSummaryService:
 		suggestions = []
 		blocker_codes = {blocker['code'] for blocker in blockers}
 
-		if 'outstanding_payments' in blocker_codes:
+		if 'outstanding_payments' in blocker_codes or 'linked_payments' in blocker_codes:
 			suggestions.append(
 				{
-					'code': 'review_outstanding_payments',
-					'message': 'Review outstanding payments and submit refunds where eligible.',
+					'code': 'review_package_payments',
+					'message': 'Review package-linked payments and submit refunds where eligible.',
+				}
+			)
+		if 'active_refunds' in blocker_codes:
+			suggestions.append(
+				{
+					'code': 'track_active_refunds',
+					'message': 'Monitor active refund requests while completing deletion blockers.',
 				}
 			)
 		if 'active_tickets' in blocker_codes:
@@ -318,13 +319,6 @@ class AttendeePreRemovalSummaryService:
 				{
 					'code': 'finalize_orders',
 					'message': 'Move unresolved orders to a final state before deleting the attendee.',
-				}
-			)
-		if 'active_refunds' in blocker_codes:
-			suggestions.append(
-				{
-					'code': 'resolve_active_refunds',
-					'message': 'Wait for active refund requests to complete before deletion.',
 				}
 			)
 
@@ -384,8 +378,8 @@ class AttendeePreRemovalSummaryService:
 		if not user or user.is_anonymous:
 			return False, 'Sign in as an eligible user to request this refund.'
 
-		if payment.status != PaymentStatusChoices.COMPLETED:
-			return False, 'Refund requests can only be created for completed payments.'
+		if payment.status not in [PaymentStatusChoices.COMPLETED, PaymentStatusChoices.PARTIALLY_REFUNDED]:
+			return False, 'Refund requests can only be created for completed or partially refunded payments.'
 
 		if payment.refund_requests.filter(is_active=True).exists():
 			return False, 'This payment already has an active refund request.'

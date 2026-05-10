@@ -370,7 +370,7 @@ class Attendee(SoftDeleteModel):
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.CHECKED_IN,
             attendee=self,
-            performed_by=None # system action
+            performed_by=checked_in_by # system action
         )
             
         if raise_if_already_checked_in and not created and attendance.is_checked_in:
@@ -415,7 +415,7 @@ class Attendee(SoftDeleteModel):
             performed_by=performed_by
         )
         
-    def mark_cancelled(self, notes=None):
+    def mark_cancelled(self, notes=None, performed_by=None):
         '''
         Mark the attendee as cancelled.
         '''
@@ -423,7 +423,7 @@ class Attendee(SoftDeleteModel):
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.CANCELLED,
             attendee=self,
-            performed_by=None, # system action,
+            performed_by=performed_by, # system action,
             notes=notes
         )
 

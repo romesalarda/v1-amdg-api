@@ -442,6 +442,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
             400: OpenApiResponse(description='Attendee is already cancelled.'),
         },
     )
+    @action(detail=True, methods=['post'], url_path='cancel')
     def cancel(self, request, attendee_id):
         """Custom action to cancel an attendee's registration."""
         attendee = self.get_object()
@@ -451,7 +452,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         if attendee.is_cancelled:
             return Response({'detail': 'Attendee is already cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        attendee.mark_cancelled()
+        attendee.mark_cancelled(performed_by=request.user, notes='Cancelled manually')
         if invalidate:
             attendee.invalidate()
 

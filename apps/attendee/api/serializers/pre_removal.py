@@ -186,16 +186,11 @@ class AttendeePreRemovalSummaryAttendeeSerializer(serializers.Serializer):
 
 
 class AttendeePreRemovalSummaryCountsSerializer(serializers.Serializer):
-    linked_payments = serializers.IntegerField()
-    outstanding_payments = serializers.IntegerField()
-    active_refund_requests = serializers.IntegerField()
     active_tickets = serializers.IntegerField()
     unresolved_orders = serializers.IntegerField()
-    open_attendance = serializers.IntegerField()
-    family_memberships = serializers.IntegerField()
-    total_blockers = serializers.IntegerField(required=False)
-    high_priority_blockers = serializers.IntegerField(required=False)
-    medium_priority_blockers = serializers.IntegerField(required=False)
+    total_blockers = serializers.IntegerField()
+    high_priority_blockers = serializers.IntegerField()
+    medium_priority_blockers = serializers.IntegerField()
 
 
 class AttendeePreRemovalSuggestedActionSerializer(serializers.Serializer):
