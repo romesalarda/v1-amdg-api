@@ -807,6 +807,14 @@ class CheckoutSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Pre-uploaded bank transfer evidence ID bound to this booking intent"
     )
+    discount_code = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
+        max_length=100,
+        help_text="Optional discount code to apply across all eligible attendees"
+    )
     attendees = AttendeeCheckoutSerializer(
         many=True,
         help_text="List of attendee selections with packages and products"
@@ -1174,6 +1182,14 @@ class CheckoutPreviewSerializer(serializers.Serializer):
 
     booking_intent_id = serializers.UUIDField(
         help_text="UUID of the BookingIntent to preview"
+    )
+    discount_code = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
+        max_length=100,
+        help_text="Optional discount code to apply across all eligible attendees"
     )
     attendees = AttendeeCheckoutSerializer(
         many=True,

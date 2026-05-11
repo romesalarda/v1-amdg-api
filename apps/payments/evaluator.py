@@ -63,10 +63,17 @@ class DiscountRuleEvaluator:
         return rule.value.strip().lower() in context.metadata.get("full_name", "").strip().lower()
     
     def location_matches(self, rule, context):
-        return context.metadata.get("location").lower() == rule.value.lower()
+        location = context.metadata.get("location")
+        if location is None:
+            return False
+        return location.lower() == rule.value.lower()
     
     def code_matches(self, rule, context):
-        return context.metadata.get("code") == rule.value
+        code = context.metadata.get("code")
+        # Guard: None must never match a real rule value
+        if code is None:
+            return False
+        return code == rule.value
 
 def discount_applies(discount, context):
     '''

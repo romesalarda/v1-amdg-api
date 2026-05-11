@@ -538,6 +538,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         attendee_selections = serializer.validated_data['attendees']
         stripe_payment_intent_id = serializer.validated_data.get('_stripe_payment_intent_id')
         bank_transfer_evidence_obj = serializer.validated_data.get('_bank_transfer_evidence_obj')
+        discount_code = serializer.validated_data.get('discount_code') or None
         user = request.user
         idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
         
@@ -623,12 +624,16 @@ class BookingViewSet(viewsets.ModelViewSet):
                     if not answer.get('answer_text'):
                         answer['answer_text'] = resource.resource_url or ''
 
-        def calculate_total_and_validate(intent_obj, selections):
+        def calculate_total_and_validate(intent_obj, selections, code=None):
+            from apps.payments.models import DiscountType
+            from apps.payments.evaluator import discount_applies
+
             total_amount = Money(0, 'GBP')
+            applied_discounts_snapshot = []
             preview_savepoint = transaction.savepoint()
 
             try:
-                for selection in selections:
+                for attendee_index, selection in enumerate(selections):
                     package = selection['_package']
                     product_selections = selection.get('product_selections', [])
 
@@ -658,9 +663,48 @@ class BookingViewSet(viewsets.ModelViewSet):
                             )
                         })
 
-                    attendee_context = attendee.pricing_context()
+                    attendee_context = attendee.pricing_context(code=code)
+                    package_base = package.modified_amount
+
+                    # Collect discount breakdown for this attendee's package
+                    attendee_discount_breakdown = []
+                    percentage_total = Decimal('0.00')
+                    fixed_total = Money(0, package_base.currency)
+                    for d in package.discounts:
+                        if not discount_applies(d, attendee_context):
+                            continue
+                        if d.discount_type == DiscountType.PERCENTAGE:
+                            discount_amount = package_base * (d.percentage / Decimal('100'))
+                            percentage_total += d.percentage
+                            value = str(d.percentage)
+                        else:
+                            discount_amount = d.amount
+                            fixed_total += d.amount
+                            value = str(d.amount.amount)
+                        attendee_discount_breakdown.append({
+                            'discount_id': str(d.discount_id),
+                            'name': d.name,
+                            'discount_type': d.discount_type,
+                            'value': value,
+                            'amount': str(discount_amount.amount),
+                            'currency': package_base.currency.code,
+                        })
+
                     package_price = package.total_amount_for_context(attendee_context)
                     total_amount += package_price
+
+                    applied_discounts_snapshot.append({
+                        'attendee_index': attendee_index,
+                        'package_id': package.id,
+                        'package_name': package.name,
+                        'discount_breakdown': attendee_discount_breakdown,
+                        'total_discount': str(
+                            min(
+                                package_base * (percentage_total / Decimal('100')) + fixed_total,
+                                package_base,
+                            ).amount.quantize(Decimal('0.01'))
+                        ),
+                    })
 
                     if product_selections:
                         for prod_selection in product_selections:
@@ -695,7 +739,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             finally:
                 transaction.savepoint_rollback(preview_savepoint)
 
-            return total_amount
+            return total_amount, applied_discounts_snapshot
 
         def build_response(payment_obj, status_label, message, booking=None, stripe_client_secret=None, bank_transfer_evidence=None):
             response_data = {
@@ -819,7 +863,9 @@ class BookingViewSet(viewsets.ModelViewSet):
 
                 materialize_multipart_question_uploads(attendee_selections, intent.event, user)
 
-                total_amount = calculate_total_and_validate(intent, attendee_selections)
+                total_amount, applied_discounts_snapshot = calculate_total_and_validate(
+                    intent, attendee_selections, code=discount_code
+                )
 
                 payment_metadata = {
                     'checkout_intent_id': str(intent.booking_intent_id),
@@ -828,6 +874,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                     'payment_type': 'booking_checkout_pending_finalization',
                     'total_attendees': len(attendee_selections),
                     'booking_finalized': False,
+                    'discount_code': discount_code,
+                    'applied_discounts_snapshot': applied_discounts_snapshot,
                 }
 
                 reserved_payment = serializer.validated_data.get('_payment_obj')
@@ -1321,6 +1369,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         user = request.user
         intent = serializer.validated_data['_intent']
         attendee_selections = serializer.validated_data['attendees']
+        discount_code = serializer.validated_data.get('discount_code') or None
 
         def applied_discount_breakdown(payable, discount_base, context):
             percentage_total = Decimal('0.00')
@@ -1400,7 +1449,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                                 area_from_id=draft.get('area_from'),
                             )
 
-                        attendee_context = attendee.pricing_context()
+                        attendee_context = attendee.pricing_context(code=discount_code)
                         attendee_name = attendee.full_name
                         if not package.can_use_package(user, attendee):
                             raise ValidationError({
@@ -1511,6 +1560,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         'currency': total_amount.currency.code,
                         'total_amount': str(total_amount.amount.quantize(Decimal('0.01'))),
                         'soft_stock_reservation': True,
+                        'discount_code_applied': discount_code or None,
                         'attendees': attendees_breakdown,
                     },
                     status=status.HTTP_200_OK,
