@@ -319,9 +319,10 @@ class Attendee(SoftDeleteModel):
         return self.get_outstanding_payments().exists()
 
 
-    def pricing_context(self): # DEPRECATE in favour of get_base_context
+    def pricing_context(self, code: str | None = None): # DEPRECATE in favour of get_base_context
         '''
         @param payable: An instance of a PayableModel (e.g., ticket, registration fee)
+        @param code: Optional discount code to inject into the context metadata
         @return: DiscountContext instance for pricing evaluations
         '''        
         return DiscountContext( #TODO migrate to use base from common
@@ -334,6 +335,7 @@ class Attendee(SoftDeleteModel):
                 "is_event_staff": self.is_event_staff,
                 "full_name": self.full_name,
                 "location": self.area_from.area_name if self.area_from else None,
+                "code": code,
             }
         )
     

@@ -202,8 +202,8 @@ class PaymentListSerializer(serializers.ModelSerializer):
     created_at = serializers.DateTimeField(read_only=True)
     descriptor = serializers.SerializerMethodField(help_text="Type of the payment target (e.g., booking, order, ticket, donation, sponsorship)")
 
-    original_amount = serializers.SerializerMethodField(help_text="Original base amount before modifications")
-    final_amount = serializers.SerializerMethodField(help_text="Final amount after percentage modifier")
+    original_amount = serializers.SerializerMethodField(help_text="Original amount before discounts were applied")
+    final_amount = serializers.SerializerMethodField(help_text="Final amount after refunds have been processed")
     
     class Meta:
         model = Payment
@@ -219,15 +219,72 @@ class PaymentListSerializer(serializers.ModelSerializer):
             'created_at': {'default': None},
         }
 
+    def _to_decimal(self, value: Any) -> Decimal:
+        """Safely convert money-like values to a 2dp Decimal."""
+        if value is None:
+            return Decimal('0.00')
+
+        if isinstance(value, Money):
+            raw_value = value.amount
+        else:
+            raw_value = value
+
+        try:
+            return Decimal(str(raw_value)).quantize(Decimal('0.01'))
+        except (TypeError, ValueError, ArithmeticError):
+            return Decimal('0.00')
+
+    def _get_total_applied_discounts(self, obj) -> Decimal:
+        """Sum applied discounts from checkout snapshot metadata."""
+        metadata = obj.metadata if isinstance(obj.metadata, dict) else {}
+        snapshot = metadata.get('applied_discounts_snapshot', [])
+
+        if not isinstance(snapshot, list):
+            return Decimal('0.00')
+
+        discount_total = Decimal('0.00')
+        for entry in snapshot:
+            if not isinstance(entry, dict):
+                continue
+
+            # Preferred source from checkout snapshot.
+            entry_total = entry.get('total_discount')
+            if entry_total is not None:
+                discount_total += self._to_decimal(entry_total)
+                continue
+
+            # Fallback for legacy/partial snapshots.
+            breakdown = entry.get('discount_breakdown', [])
+            if isinstance(breakdown, list):
+                for item in breakdown:
+                    if isinstance(item, dict):
+                        discount_total += self._to_decimal(item.get('amount'))
+
+        return discount_total.quantize(Decimal('0.01'))
+
+    def _get_original_before_discounts(self, obj) -> Decimal:
+        """Reconstruct original amount before discount application."""
+        checkout_amount = self._to_decimal(getattr(obj, 'original_amount', None) or getattr(obj, 'base_amount', None))
+        return (checkout_amount + self._get_total_applied_discounts(obj)).quantize(Decimal('0.01'))
+
+    def _get_final_after_refunds(self, obj) -> Decimal:
+        """Compute post-refund final amount using modified/base amount minus processed refunds."""
+        modified_or_base = self._to_decimal(getattr(obj, 'modified_amount', None) or getattr(obj, 'base_amount', None))
+        refunded_amount = self._to_decimal(getattr(obj, 'total_refunded_amount', None))
+        final_amount = (modified_or_base - refunded_amount).quantize(Decimal('0.01'))
+        if final_amount < Decimal('0.00'):
+            return Decimal('0.00')
+        return final_amount
+
     @extend_schema_field(OpenApiTypes.STR)
     def get_original_amount(self, obj) -> str:
-        """Return the original base amount as string."""
-        return str(obj.original_amount)
+        """Return original amount before discounts as a fixed-precision string."""
+        return f"{self._get_original_before_discounts(obj):.2f}"
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_final_amount(self, obj) -> str:
-        """Return the final modified amount as string."""
-        return str(obj.final_amount)
+        """Return final amount after refunds as a fixed-precision string."""
+        return f"{self._get_final_after_refunds(obj):.2f}"
     
     @extend_schema_field(OpenApiTypes.STR)
     def get_amount(self, obj) -> str:
@@ -295,14 +352,28 @@ class PaymentDetailSerializer(PaymentListSerializer):
             'stripe_payment_intent', 'stripe_charge_id', 'bank_transfer_reference',
             'metadata', 'refund_requests', 'donations', 'history_actions', 'bank_transfer_evidence', 'updated_at', 
         )
-    
+
+    @extend_schema_field(OpenApiTypes.STR)
     def get_base_amount(self, obj) -> str:
         return str(obj.base_amount)
-    
+
+    @extend_schema_field(OpenApiTypes.STR)
     def get_modified_amount(self, obj) -> str:
         return str(obj.modified_amount)
-    
-    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
+
+    @extend_schema_field({
+        'type': 'array',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'id': {'type': 'string', 'format': 'uuid'},
+                'amount': {'type': 'string'},
+                'status': {'type': 'string'},
+                'requested_at': {'type': 'string', 'format': 'date-time'},
+            },
+            'required': ['id', 'amount', 'status', 'requested_at'],
+        },
+    })
     def get_refund_requests(self, obj) -> list:
         """Return summary of refund requests."""
         requests = obj.refund_requests.all()[:5]  # Limit to recent 5
@@ -313,7 +384,19 @@ class PaymentDetailSerializer(PaymentListSerializer):
             'requested_at': req.requested_at.isoformat(),
         } for req in requests]
     
-    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
+    @extend_schema_field({
+        'type': 'array',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'id': {'type': 'string', 'format': 'uuid'},
+                'amount': {'type': 'string'},
+                'status': {'type': 'string'},
+                'donated_at': {'type': 'string', 'format': 'date-time'},
+            },
+            'required': ['id', 'amount', 'status', 'donated_at'],
+        },
+    })
     def get_donations(self, obj) -> list:
         """Return summary of donations."""
         donations = obj.donations.all()[:5]  # Limit to recent 5
@@ -324,7 +407,19 @@ class PaymentDetailSerializer(PaymentListSerializer):
             'donated_at': don.donated_at.isoformat(),
         } for don in donations]
     
-    @extend_schema_field({'type': 'array', 'items': {'type': 'object'}})
+    @extend_schema_field({
+        'type': 'array',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'action': {'type': 'string'},
+                'description': {'type': 'string'},
+                'performed_by': {'type': 'string', 'nullable': True},
+                'timestamp': {'type': 'string', 'format': 'date-time'},
+            },
+            'required': ['action', 'description', 'performed_by', 'timestamp'],
+        },
+    })
     def get_history_actions(self, obj) -> list:
         """Return recent payment history actions."""
         actions = obj.history_actions.all()[:10]  # Limit to recent 10
@@ -335,7 +430,21 @@ class PaymentDetailSerializer(PaymentListSerializer):
             'timestamp': act.timestamp.isoformat(),
         } for act in actions]
 
-    @extend_schema_field({'type': 'object', 'nullable': True})
+    @extend_schema_field({
+        'type': 'object',
+        'nullable': True,
+        'properties': {
+            'bank_transfer_id': {'type': 'string', 'format': 'uuid'},
+            'transfer_id': {'type': 'string'},
+            'evidence_file': {'type': 'string', 'format': 'uri', 'nullable': True},
+            'verification_status': {'type': 'string'},
+            'uploaded_at': {'type': 'string', 'format': 'date-time', 'nullable': True},
+            'auto_expiry_date': {'type': 'string', 'format': 'date-time', 'nullable': True},
+        },
+        'required': [
+            'bank_transfer_id', 'transfer_id', 'evidence_file', 'verification_status', 'uploaded_at', 'auto_expiry_date'
+        ],
+    })
     def get_bank_transfer_evidence(self, obj):
         if not obj.method or obj.method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER:
             return None

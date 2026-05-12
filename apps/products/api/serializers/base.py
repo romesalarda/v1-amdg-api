@@ -1241,7 +1241,25 @@ class OrderItemSerializer(serializers.ModelSerializer):
     def get_total_price(self, obj) -> str:
         return str(obj.total_price)
     
-    @extend_schema_field({'type': 'object'})
+    # write the proper fields
+    @extend_schema_field(
+        {
+            'type': 'object',
+            'nullable': True,
+            'properties': {
+                'variant_id': {'type': 'string', 'format': 'uuid'},
+                'variant_db_id': {'type': 'integer'},
+                'product_id': {'type': 'string', 'format': 'uuid'},
+                'product_display_code': {'type': 'string'},
+                'product_title': {'type': 'string'},
+                'size': {'type': 'string'},
+                'color': {'type': 'string'},
+                'image_url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                'variant_image_url': {'type': 'string', 'format': 'uri', 'nullable': True},
+                'product_image_url': {'type': 'string', 'format': 'uri', 'nullable': True},
+            }
+        }
+    )
     def get_product_variant_details(self, obj) -> Optional[dict]:
         """Return product variant details."""
         if not obj.product_variant:

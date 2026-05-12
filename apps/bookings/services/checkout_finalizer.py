@@ -72,6 +72,7 @@ class BookingCheckoutFinalizer:
 
             checkout_intent_id = metadata.get("checkout_intent_id")
             checkout_attendees = metadata.get("checkout_attendees") or []
+            discount_code = metadata.get("discount_code") or None
             if not checkout_intent_id or not isinstance(checkout_attendees, list) or not checkout_attendees:
                 raise CheckoutFinalizationError("Missing checkout metadata for finalization")
 
@@ -122,7 +123,7 @@ class BookingCheckoutFinalizer:
                         f"Attendee {attendee.attendee_id} is not eligible for package {package.name}"
                     )
 
-                attendee_context = attendee.pricing_context()
+                attendee_context = attendee.pricing_context(code=discount_code)
                 package_price = package.total_amount_for_context(attendee_context)
                 total_amount += package_price
 

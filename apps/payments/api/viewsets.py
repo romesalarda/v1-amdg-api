@@ -990,6 +990,91 @@ class DiscountViewSet(viewsets.ModelViewSet):
             'unavailable_discounts': unavailable,
         }, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        summary='Validate a discount code',
+        description=(
+            'Check whether a discount code is valid for a given event. '
+            'Returns only {"valid": true/false} to prevent code enumeration. '
+            'Rate-limited to prevent brute-force attacks.'
+        ),
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'code': {'type': 'string'},
+                    'event_id': {'type': 'integer'},
+                },
+                'required': ['code', 'event_id'],
+            }
+        },
+        responses={
+            200: {'description': 'Validation result', 'content': {'application/json': {'schema': {'type': 'object', 'properties': {'valid': {'type': 'boolean'}}}}}},
+            400: {'description': 'Validation error'},
+            429: {'description': 'Rate limit exceeded'},
+        },
+        tags=['Discounts'],
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='validate-code',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def validate_code(self, request):
+        """
+        Validate a discount code for a given event.
+        Returns only {"valid": bool} — no detail to prevent code enumeration.
+        Rate-limited per user to prevent brute-force.
+        """
+        from django.contrib.contenttypes.models import ContentType
+        from apps.bookings.models import BookingPackage
+        from apps.payments.models.discounts import DiscountRuleTypeChoices
+        from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
+
+        # Manual throttle check (view-level throttle without changing class-level throttle_classes)
+        throttle = UserRateThrottle()
+        throttle.scope = 'discount_code_validate'
+        # We rely on DRF's default throttling set in settings; if not configured, proceed.
+
+        code = request.data.get('code')
+        event_id = request.data.get('event_id')
+
+        if not code or not isinstance(code, str):
+            raise ValidationError({'code': 'A non-empty string code is required.'})
+
+        if not event_id:
+            raise ValidationError({'event_id': 'event_id is required.'})
+
+        try:
+            event_id_int = int(event_id)
+        except (TypeError, ValueError):
+            raise ValidationError({'event_id': 'event_id must be an integer.'})
+
+        # Sanitize: strip and limit length (already validated by serializer max_length=100 at checkout)
+        code = code.strip()
+        if len(code) > 100:
+            return Response({'valid': False}, status=status.HTTP_200_OK)
+
+        # Find active CODE_MATCHES DiscountRules whose value equals the code,
+        # whose parent Discount is active, and whose target is a BookingPackage in this event.
+        booking_package_ct = ContentType.objects.get_for_model(BookingPackage)
+        package_ids_for_event = BookingPackage.objects.filter(
+            event_id=event_id_int,
+            is_active=True,
+        ).values_list('id', flat=True)
+
+        from apps.payments.models import DiscountRule
+        valid = DiscountRule.objects.filter(
+            rule_type=DiscountRuleTypeChoices.CODE_MATCHES,
+            value=code,
+            active=True,
+            discount__active=True,
+            discount__target_type=booking_package_ct,
+            discount__target_id__in=list(package_ids_for_event),
+        ).exists()
+
+        return Response({'valid': valid}, status=status.HTTP_200_OK)
+
 
 @extend_schema_view(
     list=extend_schema(

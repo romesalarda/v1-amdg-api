@@ -770,6 +770,7 @@ class AttendeeRefundService:
                     metadata={
                         "entity": "order_item",
                         "scope": "targeted_order_items",
+                        "order_item_id": order_item.pk,
                         "attendee_id": item_data.get("attendee_id"),
                         "order_id": item_data.get("order_id"),
                         "quantity": item_data.get("quantity"),
@@ -819,6 +820,7 @@ class AttendeeRefundService:
                         "attendee_id": item_data.get("attendee_id"),
                         "entity": "order_item",
                         "scope": "targeted_booking_products",
+                        "order_item_id": order_item.pk,
                         "order_id": item_data.get("order_id"),
                         "quantity": item_data.get("quantity"),
                         "unit_price": item_data.get("unit_price"),
@@ -859,7 +861,12 @@ class AttendeeRefundService:
                     refund_request.associate_with(
                         ticket,
                         amount=Money(amount.amount, currency),
-                        metadata={"attendee_id": str(ticket.attendee.attendee_id), "entity": "ticket", "scope": cls.REFUND_SCOPE_HYBRID_BOOKING},
+                        metadata={
+                            "attendee_id": str(ticket.attendee.attendee_id), 
+                            "entity": "ticket", 
+                            "scope": cls.REFUND_SCOPE_HYBRID_BOOKING,
+                            "ticket_id": str(ticket.ticket_id),
+                            },
                     )
                     existing_keys.add(key)
 
@@ -889,6 +896,7 @@ class AttendeeRefundService:
                         "attendee_id": item_data.get("attendee_id"),
                         "entity": "order_item",
                         "scope": cls.REFUND_SCOPE_HYBRID_BOOKING,
+                        "order_item_id": order_item.pk,
                         "order_id": item_data.get("order_id"),
                         "quantity": item_data.get("quantity"),
                         "unit_price": item_data.get("unit_price"),
@@ -944,6 +952,8 @@ class AttendeeRefundService:
                 metadata={
                     "attendee_id": str(order.attendee.attendee_id) if order.attendee else None,
                     "entity": "order",
+                    "scope": "booking_attendee_order",
+                    "order_id": str(order.order_id),
                 },
             )
             snapshot_changed = cls._snapshot_order_status(refund_request, order, snapshot) or snapshot_changed
