@@ -695,6 +695,8 @@ class BookingViewSet(viewsets.ModelViewSet):
 
                     applied_discounts_snapshot.append({
                         'attendee_index': attendee_index,
+                        'attendee_id': str(attendee.attendee_id),
+                        'attendee_name': attendee.full_name,
                         'package_id': package.id,
                         'package_name': package.name,
                         'discount_breakdown': attendee_discount_breakdown,

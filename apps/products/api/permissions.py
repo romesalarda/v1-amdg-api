@@ -178,8 +178,16 @@ class IsOrderOwner(permissions.BasePermission):
             return False
         
         # Check if user is the customer
-        if obj.customer and obj.customer.id == request.user.id:
+
+        if getattr(obj, 'order', None) and getattr(obj.order, 'customer', None) and getattr(obj.order.customer, 'id', None) == request.user.id:
+            # if order item then query the order
             return True
+        
+        elif getattr(obj, 'customer', None) and getattr(obj.customer, 'id', None) == request.user.id:
+            # if order object then check the customer field
+            return True
+
+        
         
         # Check if user is associated with the attendee
         if obj.attendee and hasattr(obj.attendee, 'user') and getattr(obj.attendee, 'user') and getattr(obj.attendee.user, 'id') == request.user.id:
