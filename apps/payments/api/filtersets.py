@@ -30,7 +30,8 @@ from apps.payments.models import (
     Discount, DiscountRule, DiscountType, DiscountApplicationChoices, DiscountRuleTypeChoices,
     RefundRequest, RefundPolicy, RefundPolicyTypeChoices,
     Donation, PaymentHistoryAction,
-    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
+    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence,
+    DebitExpense, DebitExpenseTypeChoices, BudgetProposal,
 )
 from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
@@ -1211,3 +1212,121 @@ class StockAuditLogFilterSet(filters.FilterSet):
             Q(notes__icontains=value) |
             Q(webhook_event_id__icontains=value)
         )
+
+
+# ============================================================================
+# DEBIT EXPENSE FILTERSET
+# ============================================================================
+
+class DebitExpenseFilterSet(filters.FilterSet):
+    """
+    Filterset for DebitExpense model.
+
+    Supports filtering by verification status, event, expense type,
+    settlement state, creator, amount ranges, and date ranges.
+    """
+
+    verification_status = filters.MultipleChoiceFilter(
+        field_name='verification_status',
+        choices=VerificationStatus.choices,
+        help_text='Filter by verification status',
+    )
+    expense_type = filters.MultipleChoiceFilter(
+        field_name='expense_type',
+        choices=DebitExpenseTypeChoices.choices,
+        help_text='Filter by expense type',
+    )
+    event = filters.NumberFilter(
+        field_name='event__id',
+        help_text='Filter by event ID',
+    )
+    event__event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text='Filter by event UUID',
+    )
+    created_by = filters.NumberFilter(
+        field_name='created_by__id',
+        help_text='Filter by creator user ID',
+    )
+    created_by__username = filters.CharFilter(
+        field_name='created_by__username',
+        lookup_expr='icontains',
+        help_text='Filter by creator username',
+    )
+    is_settled = filters.BooleanFilter(
+        field_name='is_settled',
+        help_text='Filter by settlement state',
+    )
+    created_after = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='gte',
+        help_text='Filter debits created after this timestamp',
+    )
+    created_before = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='lte',
+        help_text='Filter debits created before this timestamp',
+    )
+    amount_min = filters.NumberFilter(
+        field_name='amount',
+        lookup_expr='gte',
+        help_text='Minimum computed amount',
+    )
+    amount_max = filters.NumberFilter(
+        field_name='amount',
+        lookup_expr='lte',
+        help_text='Maximum computed amount',
+    )
+
+    class Meta:
+        model = DebitExpense
+        fields = []
+
+
+# ============================================================================
+# BUDGET PROPOSAL FILTERSET
+# ============================================================================
+
+class BudgetProposalFilterSet(filters.FilterSet):
+    """
+    Filterset for BudgetProposal model.
+
+    Supports filtering by event, verification status, proposer, and date range.
+    """
+
+    event = filters.NumberFilter(
+        field_name='event__id',
+        help_text='Filter by event ID',
+    )
+    event__event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text='Filter by event UUID',
+    )
+    verification_status = filters.MultipleChoiceFilter(
+        field_name='verification_status',
+        choices=VerificationStatus.choices,
+        help_text='Filter by verification status',
+    )
+    proposed_by = filters.NumberFilter(
+        field_name='proposed_by__id',
+        help_text='Filter by proposer user ID',
+    )
+    proposed_by__username = filters.CharFilter(
+        field_name='proposed_by__username',
+        lookup_expr='icontains',
+        help_text='Filter by proposer username',
+    )
+    created_after = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='gte',
+        help_text='Filter proposals created after this timestamp',
+    )
+    created_before = filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='lte',
+        help_text='Filter proposals created before this timestamp',
+    )
+
+    class Meta:
+        model = BudgetProposal
+        fields = []

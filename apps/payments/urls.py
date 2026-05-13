@@ -22,6 +22,8 @@ from apps.payments.api.viewsets import (
     StockAuditLogViewSet,
     CreditExpenseViewSet,
     BankTransferEvidenceViewSet,
+    DebitExpenseViewSet,
+    BudgetProposalViewSet,
 )
 from apps.payments.api.statistics_viewsets import PaymentStatisticsViewSet
 from apps.payments.api.stripe_views import (
@@ -52,6 +54,8 @@ router.register(r'history', PaymentHistoryActionViewSet, basename='paymenthistor
 router.register(r'stock-audit', StockAuditLogViewSet, basename='stockauditlog')
 router.register(r'credits', CreditExpenseViewSet, basename='creditexpense')
 router.register(r'bank-transfer-evidence', BankTransferEvidenceViewSet, basename='banktransferevidence')
+router.register(r'debits', DebitExpenseViewSet, basename='debitexpense')
+router.register(r'budget-proposals', BudgetProposalViewSet, basename='budgetproposal')
 
 # Register statistics viewset
 router.register(r'statistics', PaymentStatisticsViewSet, basename='payment-statistics')

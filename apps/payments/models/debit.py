@@ -1,4 +1,8 @@
+'''
+contains ESTIMATED inflow model
+'''
 from datetime import date
+from decimal import Decimal
 import uuid
 
 from django.conf import settings
@@ -9,34 +13,38 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 from djmoney.models.fields import MoneyField
+from moneyed import Money
 
 from apps.common.models.verification import RequiresVerificationModel
 
 
-class CreditExpenseTypeChoices(models.TextChoices):
-    VENUE_COST = 'VENUE_COST', 'Venue Cost'
-    FOOD_COST = 'FOOD_COST', 'Food Cost'
-    CLERGY_COST = 'CLERGY_COST', 'Clergy Cost'
-    CONSECRATED_RELIGIOUS_COST = 'CONSECRATED_RELIGIOUS_COST', 'Consecrated Religious Cost'
-    LOGISTICS_COST = 'LOGISTICS_COST', 'Logistics Cost'
-    TRANSPORT_COST = 'TRANSPORT_COST', 'Transport Cost'
-    STAFF_COST = 'STAFF_COST', 'Staff Cost'
-    CREATIVES_COST = 'CREATIVES_COST', 'Creatives Cost'
-    TECHNICAL_COST = 'TECHNICAL_COST', 'Technical Cost'
-    STIPEND = 'STIPEND', 'Stipend'
+class DebitExpenseTypeChoices(models.TextChoices):
+    DONATION = 'DONATION', 'Donation'
+    TICKET_SALES = 'TICKET_SALES', 'Ticket Sales'
+    MERCHANDISE_SALES = 'MERCHANDISE_SALES', 'Merchandise Sales'
+    SPONSORSHIP = 'SPONSORSHIP', 'Sponsorship'
+    GRANTS = 'GRANTS', 'Grants'
     OTHER = 'OTHER', 'Other'
 
 
-class CreditExpense(RequiresVerificationModel):
+class DebitExpense(RequiresVerificationModel):
     '''
-    Tracks outgoing monetary value from an event.
+    Tracks estimated monetary inflow for an event.
+
+    quantity × unit_price = amount (auto-computed on save).
 
     The model intentionally keeps the generic relation read-only at the API layer.
     The backend may attach a target object when required, but clients must not
     write target_type or target_id directly.
     '''
 
-    credit_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, primary_key=True)
+    debit_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, primary_key=True)
+    quantity = models.PositiveIntegerField(
+        default=1,
+        validators=[validators.MinValueValidator(1)],
+    )
+    unit_price = MoneyField(max_digits=14, decimal_places=2, default_currency='GBP')
+    # amount is auto-computed from quantity × unit_price; stored for queryability
     amount = MoneyField(max_digits=14, decimal_places=2, default_currency='GBP')
     description = models.TextField(
         validators=[
@@ -46,20 +54,20 @@ class CreditExpense(RequiresVerificationModel):
     )
     expense_type = models.CharField(
         max_length=100,
-        choices=CreditExpenseTypeChoices.choices,
-        default=CreditExpenseTypeChoices.OTHER,
+        choices=DebitExpenseTypeChoices.choices,
+        default=DebitExpenseTypeChoices.OTHER,
     )
     event = models.ForeignKey(
         'events.Event',
         on_delete=models.CASCADE,
-        related_name='credit_expenses',
+        related_name='debit_expenses',
         null=True,
         blank=True,
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
-        related_name='credits_created',
+        related_name='debits_created',
         null=True,
         blank=True,
     )
@@ -75,8 +83,8 @@ class CreditExpense(RequiresVerificationModel):
 
     class Meta:
         ordering = ['-created_at']
-        verbose_name = 'Credit'
-        verbose_name_plural = 'Credits'
+        verbose_name = 'Debit'
+        verbose_name_plural = 'Debits'
         indexes = [
             models.Index(fields=['event', 'created_at']),
             models.Index(fields=['verification_status']),
@@ -85,30 +93,42 @@ class CreditExpense(RequiresVerificationModel):
         ]
 
     def __str__(self):
-        return f"Credit Expense: {self.description} - Amount: {self.amount}"
+        return f"Debit Expense: {self.description} - Amount: {self.amount}"
 
     def clean(self):
         super().clean()
 
-        if self.amount is not None and self.amount.amount <= 0:
-            raise ValidationError({'amount': 'Credit amount must be greater than zero.'})
+        if self.unit_price is not None and self.unit_price.amount <= 0:
+            raise ValidationError({'unit_price': 'Unit price must be greater than zero.'})
+
+        if self.quantity is not None and self.quantity < 1:
+            raise ValidationError({'quantity': 'Quantity must be at least 1.'})
 
         if self.paid_date and self.paid_date > date.today():
             raise ValidationError({'paid_date': 'Paid date cannot be in the future.'})
 
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).only(
-                'amount', 'amount_currency', 'verification_status'
+                'unit_price', 'unit_price_currency', 'quantity', 'verification_status'
             ).first()
-            if previous and previous.verification_status in {'verified', 'processed'} and previous.amount:
-                previous_amount = previous.amount.amount
-                previous_currency = previous.amount.currency
-                current_amount = self.amount.amount if self.amount else None
-                current_currency = self.amount.currency if self.amount else None
-                if previous_amount != current_amount or previous_currency != current_currency:
-                    raise ValidationError({'amount': 'Amount cannot be changed after verification.'})
+            if previous and previous.verification_status in {'verified', 'processed'} and previous.unit_price:
+                if (
+                    previous.unit_price.amount != (self.unit_price.amount if self.unit_price else None)
+                    or previous.unit_price.currency != (self.unit_price.currency if self.unit_price else None)
+                    or previous.quantity != self.quantity
+                ):
+                    raise ValidationError({'unit_price': 'Amount cannot be changed after verification.'})
 
     def save(self, *args, **kwargs):
+        # Auto-compute amount from quantity × unit_price
+        if self.unit_price is not None and self.quantity is not None:
+            self.amount = Money(
+                Decimal(str(self.unit_price.amount)) * Decimal(str(self.quantity)),
+                self.unit_price.currency,
+            )
+            self.amount_currency = self.unit_price.currency
+
         if self.verification_status == 'processed' and self.paid_date is None:
             self.paid_date = timezone.now().date()
         super().save(*args, **kwargs)
+

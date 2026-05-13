@@ -32,17 +32,20 @@ from decimal import Decimal
 from typing import Dict, Any, Optional
 from uuid import UUID
 
+from django.db.models import Sum
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
     Discount, DiscountRule, DiscountType, DiscountApplicationChoices, DiscountRuleTypeChoices,
     RefundRequest, RefundAssociation, RefundPolicy, RefundPolicyTypeChoices,
     Donation, PaymentHistoryAction,
-    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
+    CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence,
+    DebitExpense, DebitExpenseTypeChoices, BudgetProposal,
 )
 from apps.payments.models.stripe_accounts import StripeConnectedAccount
 from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 from apps.payments.services.attendee_refunds import AttendeeRefundService
+from apps.events.models import Event
 
 User = get_user_model()
 
@@ -2259,3 +2262,417 @@ class StockAuditLogSerializer(serializers.ModelSerializer):
             'created_at',
         )
         read_only_fields = fields
+
+
+# ============================================================================
+# DEBIT SERIALIZERS
+# ============================================================================
+
+class DebitExpenseListSerializer(serializers.ModelSerializer):
+    """List serializer for DebitExpense. target_* fields are intentionally excluded from the API."""
+
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.name', read_only=True, allow_null=True)
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+
+    class Meta:
+        model = DebitExpense
+        fields = (
+            'debit_id', 'quantity', 'unit_price', 'unit_price_currency', 'amount', 'amount_currency',
+            'description', 'expense_type',
+            'event', 'event_name', 'created_by', 'created_by_name',
+            'paid_date', 'is_settled', 'verification_status',
+            'created_at', 'updated_at', '_links',
+        )
+        read_only_fields = ('debit_id', 'amount', 'amount_currency', 'created_at', 'updated_at')
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        links: Dict[str, str] = {
+            'self': request.build_absolute_uri(f"/api/payments/debits/{obj.debit_id}/"),
+        }
+        if obj.event:
+            links['event'] = request.build_absolute_uri(f"/api/events/{obj.event.event_id}/")
+        return links
+
+
+class DebitExpenseDetailSerializer(DebitExpenseListSerializer):
+    """Detailed serializer for DebitExpense — adds verification audit fields."""
+
+    verified_by_name = serializers.CharField(source='verified_by.username', read_only=True, allow_null=True)
+    processed_by_name = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+
+    class Meta(DebitExpenseListSerializer.Meta):
+        fields = DebitExpenseListSerializer.Meta.fields + (
+            'verified_updated_at', 'verified_by', 'verified_by_name',
+            'processed_at', 'processed_by', 'processed_by_name', 'auto_processed',
+        )
+
+
+class DebitExpenseCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for DebitExpense. amount is computed from quantity × unit_price."""
+
+    event = serializers.SlugRelatedField(
+        slug_field='event_id', queryset=Event.objects.all()
+        )
+    unit_price = MoneyField(max_digits=14, decimal_places=2)
+
+    class Meta:
+        model = DebitExpense
+        fields = (
+            'debit_id',
+            'event', 'quantity', 'unit_price', 'description', 
+            'expense_type', 'paid_date', 'is_settled'
+            )
+
+    def validate_unit_price(self, value):
+        if value.amount <= 0:
+            raise serializers.ValidationError('Unit price must be greater than zero.')
+        return value
+
+    def validate_quantity(self, value):
+        if value < 1:
+            raise serializers.ValidationError('Quantity must be at least 1.')
+        return value
+
+    def validate(self, attrs):
+        forbidden_fields = {'target_type', 'target_id', 'amount'}
+        provided_forbidden = forbidden_fields.intersection(getattr(self, 'initial_data', {}).keys())
+        if provided_forbidden:
+            raise serializers.ValidationError({
+                field: 'This field is read-only and controlled by the backend.'
+                for field in sorted(provided_forbidden)
+            })
+        return attrs
+
+    def validate_paid_date(self, value):
+        if value and value > timezone.now().date():
+            raise serializers.ValidationError('Paid date cannot be in the future.')
+        return value
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        validated_data['created_by'] = request.user if request else None
+        return super().create(validated_data)
+
+
+class DebitExpenseUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for DebitExpense."""
+
+    unit_price = MoneyField(max_digits=14, decimal_places=2, required=False)
+
+    class Meta:
+        model = DebitExpense
+        fields = ('debit_id', 'description', 'quantity', 'unit_price', 'paid_date', 'is_settled', 'verification_status')
+
+    def validate_unit_price(self, value):
+        if value.amount <= 0:
+            raise serializers.ValidationError('Unit price must be greater than zero.')
+        return value
+
+    def validate_quantity(self, value):
+        if value < 1:
+            raise serializers.ValidationError('Quantity must be at least 1.')
+        return value
+
+    def validate_paid_date(self, value):
+        if value and value > timezone.now().date():
+            raise serializers.ValidationError('Paid date cannot be in the future.')
+        return value
+
+    def validate(self, attrs):
+        forbidden_fields = {'target_type', 'target_id', 'amount'}
+        provided_forbidden = forbidden_fields.intersection(getattr(self, 'initial_data', {}).keys())
+        if provided_forbidden:
+            raise serializers.ValidationError({
+                field: 'This field is read-only and controlled by the backend.'
+                for field in sorted(provided_forbidden)
+            })
+        return attrs
+
+    def validate_verification_status(self, value):
+        if self.instance:
+            current = self.instance.verification_status
+            allowed_transitions = {
+                VerificationStatus.PENDING: [VerificationStatus.VERIFIED, VerificationStatus.REJECTED],
+                VerificationStatus.VERIFIED: [VerificationStatus.PROCESSED],
+            }
+            if current != value and value not in allowed_transitions.get(current, []):
+                raise serializers.ValidationError(f'Cannot transition from {current} to {value}.')
+        return value
+
+    def update(self, instance, validated_data):
+        new_status = validated_data.pop('verification_status', instance.verification_status)
+        user = self.context.get('request').user if self.context.get('request') else None
+
+        # Apply non-status fields first so amount is recomputed on save()
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if new_status == VerificationStatus.VERIFIED and instance.verification_status != new_status:
+            instance.mark_verified(user)
+        elif new_status == VerificationStatus.PROCESSED and instance.verification_status != new_status:
+            instance.mark_processed(user)
+        elif new_status == VerificationStatus.REJECTED and instance.verification_status != new_status:
+            instance.mark_rejected(user)
+
+        return instance
+
+
+# ============================================================================
+# BUDGET PROPOSAL SERIALIZERS
+# ============================================================================
+
+class BudgetProposalListSerializer(serializers.ModelSerializer):
+    """List serializer for BudgetProposal with aggregated totals and health indicator."""
+
+    _links = serializers.SerializerMethodField()
+    event_name = serializers.CharField(source='event.name', read_only=True, allow_null=True)
+    proposed_by_name = serializers.CharField(source='proposed_by.username', read_only=True, allow_null=True)
+    total_credits = serializers.SerializerMethodField()
+    total_debits = serializers.SerializerMethodField()
+    credit_count = serializers.SerializerMethodField()
+    debit_count = serializers.SerializerMethodField()
+    health_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BudgetProposal
+        fields = (
+            'proposal_id', 'proposal_title', 'proposal_description',
+            'event', 'event_name', 'proposed_by', 'proposed_by_name',
+            'verification_status',
+            'total_credits', 'total_debits', 'credit_count', 'debit_count',
+            'health_status',
+            'created_at', 'updated_at', '_links',
+        )
+        read_only_fields = ('proposal_id', 'created_at', 'updated_at')
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_total_credits(self, obj) -> Optional[str]:
+        total = obj.total_credits
+        return str(total) if total else '£0.00'
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_total_debits(self, obj) -> Optional[str]:
+        total = obj.total_debits
+        return str(total) if total else '£0.00'
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_credit_count(self, obj) -> int:
+        return obj.credit_expenses.count()
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_debit_count(self, obj) -> int:
+        return obj.debit_expenses.count()
+
+    @extend_schema_field({
+        'type': 'string',
+        'enum': ['SURPLUS', 'BREAK_EVEN', 'DEFICIT', 'UNKNOWN'],
+        'description': 'Budget health: real inbound payments vs total outgoing credits.',
+    })
+    def get_health_status(self, obj) -> str:
+        if not obj.event_id:
+            return 'UNKNOWN'
+        result = Payment.objects.filter(
+            event=obj.event,
+            status=PaymentStatusChoices.COMPLETED,
+        ).aggregate(total=Sum('base_amount'))
+        real_inbound = result.get('total') or 0
+        total_outgoing = obj.total_credits.amount if obj.total_credits else 0
+        if real_inbound == 0 and total_outgoing == 0:
+            return 'UNKNOWN'
+        net = real_inbound - total_outgoing
+        if net > 0:
+            return 'SURPLUS'
+        if net == 0:
+            return 'BREAK_EVEN'
+        return 'DEFICIT'
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri'},
+            'event': {'type': 'string', 'format': 'uri'},
+        }
+    })
+    def get__links(self, obj) -> Dict[str, str]:
+        request = self.context.get('request')
+        if not request:
+            return {}
+        links: Dict[str, str] = {
+            'self': request.build_absolute_uri(f"/api/payments/budget-proposals/{obj.proposal_id}/"),
+        }
+        if obj.event:
+            links['event'] = request.build_absolute_uri(f"/api/events/{obj.event.event_id}/")
+        return links
+
+
+class BudgetProposalDetailSerializer(BudgetProposalListSerializer):
+    """Detailed serializer — embeds nested credit/debit lists and verification audit fields."""
+
+    credit_expenses = CreditExpenseListSerializer(many=True, read_only=True)
+    debit_expenses = DebitExpenseListSerializer(many=True, read_only=True)
+    verified_by_name = serializers.CharField(source='verified_by.username', read_only=True, allow_null=True)
+    processed_by_name = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+
+    class Meta(BudgetProposalListSerializer.Meta):
+        fields = BudgetProposalListSerializer.Meta.fields + (
+            'credit_expenses', 'debit_expenses',
+            'verified_updated_at', 'verified_by', 'verified_by_name',
+            'processed_at', 'processed_by', 'processed_by_name', 'auto_processed',
+        )
+
+
+class BudgetProposalCreateSerializer(serializers.ModelSerializer):
+    """Create serializer for BudgetProposal. Sets proposed_by from request user."""
+    event = serializers.SlugRelatedField(
+        slug_field='event_id',
+        queryset=Event.objects.all(),
+    )
+    class Meta:
+        model = BudgetProposal
+        fields = (
+            'proposal_id',
+            'event', 'proposal_title', 'proposal_description', 'credit_expenses', 'debit_expenses')
+
+    def validate(self, attrs):
+        event = attrs.get('event')
+        if not event:
+            return attrs
+
+        credits = attrs.get('credit_expenses', [])
+        for credit in credits:
+            if credit.event_id != event.pk:
+                raise serializers.ValidationError(
+                    {'credit_expenses': f'Credit {credit.credit_id} does not belong to the selected event.'}
+                )
+
+        debits = attrs.get('debit_expenses', [])
+        for debit in debits:
+            if debit.event_id != event.pk:
+                raise serializers.ValidationError(
+                    {'debit_expenses': f'Debit {debit.debit_id} does not belong to the selected event.'}
+                )
+
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        credits = validated_data.pop('credit_expenses', [])
+        debits = validated_data.pop('debit_expenses', [])
+        validated_data['proposed_by'] = request.user if request else None
+        proposal = BudgetProposal.objects.create(**validated_data)
+        if credits:
+            proposal.credit_expenses.set(credits)
+        if debits:
+            proposal.debit_expenses.set(debits)
+        return proposal
+
+
+class BudgetProposalUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for BudgetProposal."""
+
+    class Meta:
+        model = BudgetProposal
+        fields = ('proposal_title', 'proposal_description', 'credit_expenses', 'debit_expenses', 'verification_status')
+
+    def validate(self, attrs):
+        event = self.instance.event if self.instance else None
+
+        credits = attrs.get('credit_expenses', [])
+        for credit in credits:
+            if event and credit.event_id != event.pk:
+                raise serializers.ValidationError(
+                    {'credit_expenses': f'Credit {credit.credit_id} does not belong to this proposal\'s event.'}
+                )
+
+        debits = attrs.get('debit_expenses', [])
+        for debit in debits:
+            if event and debit.event_id != event.pk:
+                raise serializers.ValidationError(
+                    {'debit_expenses': f'Debit {debit.debit_id} does not belong to this proposal\'s event.'}
+                )
+
+        return attrs
+
+    def validate_verification_status(self, value):
+        if self.instance:
+            current = self.instance.verification_status
+            allowed_transitions = {
+                VerificationStatus.PENDING: [VerificationStatus.VERIFIED, VerificationStatus.REJECTED],
+                VerificationStatus.VERIFIED: [VerificationStatus.PROCESSED],
+            }
+            if current != value and value not in allowed_transitions.get(current, []):
+                raise serializers.ValidationError(f'Cannot transition from {current} to {value}.')
+        return value
+
+    def update(self, instance, validated_data):
+        new_status = validated_data.pop('verification_status', instance.verification_status)
+        credits = validated_data.pop('credit_expenses', None)
+        debits = validated_data.pop('debit_expenses', None)
+        user = self.context.get('request').user if self.context.get('request') else None
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if credits is not None:
+            instance.credit_expenses.set(credits)
+        if debits is not None:
+            instance.debit_expenses.set(debits)
+
+        if new_status == VerificationStatus.VERIFIED and instance.verification_status != new_status:
+            instance.mark_verified(user)
+        elif new_status == VerificationStatus.PROCESSED and instance.verification_status != new_status:
+            instance.mark_processed(user)
+        elif new_status == VerificationStatus.REJECTED and instance.verification_status != new_status:
+            instance.mark_rejected(user)
+
+        return instance
+
+
+class BudgetProposalStatisticsSerializer(serializers.Serializer):
+    """Response serializer for budget proposal statistics."""
+
+    proposal_id = serializers.UUIDField()
+    proposal_title = serializers.CharField()
+    event_id = serializers.UUIDField(allow_null=True)
+    event_name = serializers.CharField(allow_null=True)
+    estimated_inbound = serializers.DecimalField(max_digits=14, decimal_places=2)
+    estimated_inbound_currency = serializers.CharField()
+    real_inbound = serializers.DecimalField(max_digits=14, decimal_places=2)
+    real_inbound_currency = serializers.CharField()
+    total_outgoing = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_outgoing_currency = serializers.CharField()
+    net_estimated = serializers.DecimalField(max_digits=14, decimal_places=2)
+    net_real = serializers.DecimalField(max_digits=14, decimal_places=2)
+    variance = serializers.DecimalField(max_digits=14, decimal_places=2)
+    health_status = serializers.ChoiceField(choices=['SURPLUS', 'BREAK_EVEN', 'DEFICIT', 'UNKNOWN'])
+    credit_count = serializers.IntegerField()
+    debit_count = serializers.IntegerField()
+
+
+class EventBudgetStatisticsSerializer(serializers.Serializer):
+    """Response serializer for event-level budget statistics across all proposals."""
+
+    event_id = serializers.UUIDField(allow_null=True)
+    event_name = serializers.CharField(allow_null=True)
+    proposal_count = serializers.IntegerField()
+    total_estimated_inbound = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_real_inbound = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_outgoing = serializers.DecimalField(max_digits=14, decimal_places=2)
+    net_estimated = serializers.DecimalField(max_digits=14, decimal_places=2)
+    net_real = serializers.DecimalField(max_digits=14, decimal_places=2)
+    variance = serializers.DecimalField(max_digits=14, decimal_places=2)
+    health_status = serializers.ChoiceField(choices=['SURPLUS', 'BREAK_EVEN', 'DEFICIT', 'UNKNOWN'])
+    currency = serializers.CharField()

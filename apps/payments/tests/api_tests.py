@@ -25,6 +25,7 @@ from apps.payments.models import (
     Donation, PaymentHistoryAction,
     CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence,
     StripeConnectedAccount,
+    DebitExpense, DebitExpenseTypeChoices, BudgetProposal,
 )
 from apps.common.models.verification import VerificationStatus
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventStatusChoices, EventStaff
@@ -2686,3 +2687,340 @@ class FilteringTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 3)
+
+
+# ============================================================================
+# DEBIT EXPENSE API TESTS
+# ============================================================================
+
+class DebitExpenseAPITestCase(APITestCase):
+    """Test suite for DebitExpense API endpoints."""
+
+    def setUp(self):
+        from apps.organisations.models import Organisation
+        self.admin_user = User.objects.create_user(
+            username='debit_admin', email='debit_admin@test.com', password='pass', is_staff=True, is_superuser=True
+        )
+        self.event_manager = User.objects.create_user(
+            username='debit_mgr', email='debit_mgr@test.com', password='pass'
+        )
+        self.other_user = User.objects.create_user(
+            username='debit_other', email='debit_other@test.com', password='pass'
+        )
+        self.org = Organisation.objects.create(title='Debit Org', created_by=self.admin_user)
+        event_type = EventType.objects.create(title='Conference', code='DCONF')
+        self.event = Event.objects.create(
+            title='Debit Event', display_code='DEB001', display_identifier='DEB001TEST001',
+            created_by=self.admin_user, event_type=event_type,
+            start_datetime=timezone.now() + timezone.timedelta(days=30),
+            end_datetime=timezone.now() + timezone.timedelta(days=32),
+            status=EventStatusChoices.OPEN, organisation=self.org
+        )
+        admin_role = EventRole.objects.create(name='Admin', code='ADM1', category=EventRoleCategoryChoices.ADMINISTRATIVE)
+        EventRoleAssignment.objects.create(event=self.event, user=self.event_manager, role=admin_role)
+
+        self.payment_method = PaymentMethod.objects.create(
+            method_type=PaymentMethodTypeChoices.CASH, 
+            title='Cash', 
+            created_by=self.admin_user,
+            event=self.event
+        )
+        self.client = APIClient()
+
+    def _create_debit(self, user=None, event=None, quantity=2, unit_price='50.00', description='Estimated ticket sales'):
+        user = user or self.event_manager
+        event = event or self.event
+        client = APIClient()
+        client.force_authenticate(user=user)
+        url = reverse('payments:debitexpense-list')
+        data = client.post(url, {
+            'event': str(event.event_id),
+            'quantity': quantity,
+            'unit_price': unit_price,
+            'description': description,
+            'expense_type': DebitExpenseTypeChoices.TICKET_SALES,
+        }, format='json')
+
+        self.assertEqual(data.status_code, status.HTTP_201_CREATED, msg=f"Debit creation failed: {data.data}")
+        self.assertIn('debit_id', data.data, msg=f"Response missing debit_id: {data.data}")
+        return data
+
+    def test_create_debit_expense(self):
+        """Authenticated event manager can create a debit expense."""
+        response = self._create_debit()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('debit_id', response.data)
+
+    def test_debit_amount_auto_computed(self):
+        """amount = quantity × unit_price on save."""
+        response = self._create_debit(quantity=3, unit_price='50.00')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        debit = DebitExpense.objects.get(debit_id=response.data['debit_id'])
+        self.assertEqual(debit.amount.amount, Decimal('150.00'))
+
+    def test_debit_rejects_target_fields_from_api(self):
+        """target_type and target_id must not be accepted via API."""
+        self.client.force_authenticate(user=self.event_manager)
+        url = reverse('payments:debitexpense-list')
+        response = self.client.post(url, {
+            'event': str(self.event.event_id),
+            'quantity': 1,
+            'unit_price': '10.00',
+            'description': 'Test should be 10 chars long',
+            'expense_type': DebitExpenseTypeChoices.TICKET_SALES,
+            'target_type': 1,
+            'target_id': 1,
+        }, format='json')
+        # Must succeed but target fields silently ignored (not persisted)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, msg=f"API should reject target fields: {response.data}")
+
+    def test_debit_rejects_amount_field_from_api(self):
+        """Providing amount in payload does not override computed value."""
+        self.client.force_authenticate(user=self.event_manager)
+        url = reverse('payments:debitexpense-list')
+        response = self.client.post(url, {
+            'event': str(self.event.event_id),
+            'quantity': 2,
+            'unit_price': '25.00',
+            'description': 'Test should be 10 chars long',
+            'expense_type': DebitExpenseTypeChoices.TICKET_SALES,
+            'amount': '999.00',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, msg=f"API should reject amount field: {response.data}")
+
+    def test_debit_verification_status_transitions(self):
+        """Pending → verified → processed status transitions work via PATCH."""
+        create_resp = self._create_debit()
+        self.assertEqual(create_resp.status_code, status.HTTP_201_CREATED)
+        debit_id = create_resp.data['debit_id']
+
+        # Mark verified (admin)
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:debitexpense-detail', kwargs={'debit_id': debit_id})
+        resp = self.client.patch(url, {'verification_status': 'verified'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['verification_status'], 'verified')
+
+        # Mark processed
+        resp = self.client.patch(url, {'verification_status': 'processed'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['verification_status'], 'processed')
+
+    def test_debit_permission_unauthenticated(self):
+        """Unauthenticated access to debit list is denied."""
+        url = reverse('payments:debitexpense-list')
+        response = APIClient().get(url)
+        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+
+# ============================================================================
+# BUDGET PROPOSAL API TESTS
+# ============================================================================
+
+class BudgetProposalAPITestCase(APITestCase):
+    """Test suite for BudgetProposal API endpoints."""
+
+    def setUp(self):
+        from apps.organisations.models import Organisation
+        self.admin_user = User.objects.create_user(
+            username='bp_admin', email='bp_admin@test.com', password='pass', is_staff=True, is_superuser=True
+        )
+        self.event_manager = User.objects.create_user(
+            username='bp_mgr', email='bp_mgr@test.com', password='pass'
+        )
+        self.org = Organisation.objects.create(title='BP Org', created_by=self.admin_user)
+        event_type = EventType.objects.create(title='Workshop', code='BPWKS')
+        self.event = Event.objects.create(
+            title='BP Event', display_code='BP0001', display_identifier='BP0001TEST001',
+            created_by=self.admin_user, event_type=event_type,
+            start_datetime=timezone.now() + timezone.timedelta(days=30),
+            end_datetime=timezone.now() + timezone.timedelta(days=32),
+            status=EventStatusChoices.OPEN, organisation=self.org
+        )
+        self.other_event = Event.objects.create(
+            title='Other Event', display_code='BP0002', display_identifier='BP0002TEST001',
+            created_by=self.admin_user, event_type=event_type,
+            start_datetime=timezone.now() + timezone.timedelta(days=30),
+            end_datetime=timezone.now() + timezone.timedelta(days=32),
+            status=EventStatusChoices.OPEN, organisation=self.org
+        )
+        admin_role = EventRole.objects.create(name='BP Admin', code='BPADM', category=EventRoleCategoryChoices.ADMINISTRATIVE)
+        EventRoleAssignment.objects.create(event=self.event, user=self.event_manager, role=admin_role)
+
+        self.payment_method = PaymentMethod.objects.create(
+            method_type=PaymentMethodTypeChoices.CASH, 
+            title='BPCash', 
+            created_by=self.admin_user,
+            event=self.event
+        )
+
+        # Create a credit and debit for self.event
+        self.credit = CreditExpense.objects.create(
+            event=self.event, amount=Money(200, 'GBP'), description='Venue hire',
+            expense_type=CreditExpenseTypeChoices.VENUE_COST, created_by=self.event_manager
+        )
+        self.debit = DebitExpense.objects.create(
+            event=self.event, quantity=10, unit_price=Money(30, 'GBP'),
+            description='Ticket sales', expense_type=DebitExpenseTypeChoices.TICKET_SALES,
+            created_by=self.event_manager
+        )
+
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.event_manager)
+
+    def _create_proposal(self, title='Q1 Budget', event=None):
+        event = event or self.event
+        url = reverse('payments:budgetproposal-list')
+        data = self.client.post(url, {
+            'event': str(event.event_id),
+            'proposal_title': title,
+            'proposal_description': 'Test budget',
+        }, format='json')
+        self.assertEqual(data.status_code, status.HTTP_201_CREATED)
+        self.assertIn('proposal_id', data.data)
+        return data
+
+    def test_create_budget_proposal(self):
+        """Authenticated event manager can create a budget proposal."""
+        response = self._create_proposal()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('proposal_id', response.data)
+
+    def test_add_credit_to_proposal(self):
+        """POST add-credit/ links a credit expense to the proposal."""
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        url = reverse('payments:budgetproposal-add-credit', kwargs={'proposal_id': proposal_id})
+        response = self.client.post(url, {'credit_id': str(self.credit.credit_id)}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_add_debit_to_proposal(self):
+        """POST add-debit/ links a debit expense to the proposal."""
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        url = reverse('payments:budgetproposal-add-debit', kwargs={'proposal_id': proposal_id})
+        response = self.client.post(url, {'debit_id': str(self.debit.debit_id)}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_remove_credit_from_proposal(self):
+        """POST remove-credit/ unlinks a credit expense from the proposal."""
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        add_url = reverse('payments:budgetproposal-add-credit', kwargs={'proposal_id': proposal_id})
+        self.client.post(add_url, {'credit_id': str(self.credit.credit_id)}, format='json')
+        remove_url = reverse('payments:budgetproposal-remove-credit', kwargs={'proposal_id': proposal_id})
+        response = self.client.post(remove_url, {'credit_id': str(self.credit.credit_id)}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        proposal = BudgetProposal.objects.get(proposal_id=proposal_id)
+        self.assertNotIn(self.credit, proposal.credit_expenses.all())
+
+    def test_proposal_statistics_endpoint(self):
+        """GET {id}/statistics/ returns budget summary figures."""
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        # Attach credit and debit
+        self.client.post(
+            reverse('payments:budgetproposal-add-credit', kwargs={'proposal_id': proposal_id}),
+            {'credit_id': str(self.credit.credit_id)}, format='json'
+        )
+        self.client.post(
+            reverse('payments:budgetproposal-add-debit', kwargs={'proposal_id': proposal_id}),
+            {'debit_id': str(self.debit.debit_id)}, format='json'
+        )
+        url = reverse('payments:budgetproposal-statistics', kwargs={'proposal_id': proposal_id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('estimated_inbound', response.data)
+        self.assertIn('total_outgoing', response.data)
+        self.assertIn('health_status', response.data)
+
+    def test_event_budget_statistics_endpoint(self):
+        """GET event-statistics/?event_id=... returns aggregated stats for the event."""
+        self._create_proposal()
+        url = reverse('payments:budgetproposal-event-statistics')
+        response = self.client.get(url, {'event_id': str(self.event.event_id)})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('event_id', response.data)
+
+    def test_proposal_verification_workflow(self):
+        """Proposal can be verified and processed by admin."""
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:budgetproposal-detail', kwargs={'proposal_id': proposal_id})
+        resp = self.client.patch(url, {'verification_status': 'verified'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['verification_status'], 'verified')
+
+    def test_credit_must_belong_to_same_event_as_proposal(self):
+        """Cannot link a credit from a different event to a proposal."""
+        # Create a credit on the other event
+        other_credit = CreditExpense.objects.create(
+            event=self.other_event, amount=Money(100, 'GBP'), description='Other',
+            expense_type=CreditExpenseTypeChoices.VENUE_COST, created_by=self.admin_user
+        )
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        url = reverse('payments:budgetproposal-add-credit', kwargs={'proposal_id': proposal_id})
+        response = self.client.post(url, {'credit_id': str(other_credit.credit_id)}, format='json')
+        self.assertIn(response.status_code, [status.HTTP_400_BAD_REQUEST, status.HTTP_403_FORBIDDEN])
+
+    def test_debit_must_belong_to_same_event_as_proposal(self):
+        """Cannot link a debit from a different event to a proposal."""
+        other_debit = DebitExpense.objects.create(
+            event=self.other_event, quantity=1, unit_price=Money(10, 'GBP'),
+            description='Other', expense_type=DebitExpenseTypeChoices.TICKET_SALES,
+            created_by=self.admin_user
+        )
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        url = reverse('payments:budgetproposal-add-debit', kwargs={'proposal_id': proposal_id})
+        response = self.client.post(url, {'debit_id': str(other_debit.debit_id)}, format='json')
+        self.assertIn(response.status_code, [status.HTTP_400_BAD_REQUEST, status.HTTP_403_FORBIDDEN])
+
+    def test_health_status_surplus(self):
+        """Health status is SURPLUS when real inbound > total outgoing."""
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        # Attach credit (£200 outgoing)
+        self.client.post(
+            reverse('payments:budgetproposal-add-credit', kwargs={'proposal_id': proposal_id}),
+            {'credit_id': str(self.credit.credit_id)}, format='json'
+        )
+        # Create a completed payment of £500 (more than £200 outgoing)
+        Payment.objects.create(
+            user=self.event_manager, event=self.event, method=self.payment_method,
+            base_amount=Money(500, 'GBP'), status=PaymentStatusChoices.COMPLETED
+        )
+        url = reverse('payments:budgetproposal-statistics', kwargs={'proposal_id': proposal_id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['health_status'], 'SURPLUS')
+
+    def test_health_status_deficit(self):
+        """Health status is DEFICIT when real inbound < total outgoing."""
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        # Attach credit (£200 outgoing)
+        self.client.post(
+            reverse('payments:budgetproposal-add-credit', kwargs={'proposal_id': proposal_id}),
+            {'credit_id': str(self.credit.credit_id)}, format='json'
+        )
+        # Create a completed payment of £50 (less than £200 outgoing)
+        Payment.objects.create(
+            user=self.event_manager, event=self.event, method=self.payment_method,
+            base_amount=Money(50, 'GBP'), status=PaymentStatusChoices.COMPLETED
+        )
+        url = reverse('payments:budgetproposal-statistics', kwargs={'proposal_id': proposal_id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['health_status'], 'DEFICIT')
+
+    def test_health_status_unknown_no_payments(self):
+        """Health status is UNKNOWN when there are no completed payments."""
+        proposal_resp = self._create_proposal()
+        proposal_id = proposal_resp.data['proposal_id']
+        url = reverse('payments:budgetproposal-statistics', kwargs={'proposal_id': proposal_id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['health_status'], 'UNKNOWN')

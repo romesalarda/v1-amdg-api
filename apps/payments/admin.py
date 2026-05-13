@@ -6,7 +6,8 @@ from apps.payments.models import (
     Payment, PaymentMethod, Discount, DiscountRule,
     RefundRequest, RefundAssociation, RefundPolicy,
     Donation, PaymentHistoryAction,
-    CreditExpense, BankTransferEvidence, StripeConnectedAccount
+    CreditExpense, BankTransferEvidence, StripeConnectedAccount,
+    DebitExpense, BudgetProposal,
 )
 
 
@@ -887,4 +888,195 @@ class PaymentHistoryActionAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         """Optimize queryset."""
         return super().get_queryset(request).select_related('payment', 'performed_by')
+
+
+# ============================================================================
+# DEBIT EXPENSE ADMIN
+# ============================================================================
+
+@admin.register(DebitExpense)
+class DebitExpenseAdmin(admin.ModelAdmin):
+    """Admin for DebitExpense model."""
+
+    list_display = (
+        'debit_id', 'description', 'quantity', 'unit_price', 'amount',
+        'expense_type', 'event', 'is_settled', 'verification_status', 'created_by', 'created_at'
+    )
+    list_filter = ('expense_type', 'verification_status', 'is_settled', 'event', 'created_at')
+    search_fields = ('debit_id', 'description', 'event__name', 'created_by__username')
+    date_hierarchy = 'created_at'
+    readonly_fields = (
+        'debit_id', 'amount', 'amount_currency', 'created_at', 'updated_at',
+        'verified_updated_at', 'verified_by', 'processed_at', 'processed_by', 'auto_processed',
+        'target_object_link',
+    )
+    actions = ['mark_verified', 'mark_rejected', 'mark_processed', 'mark_settled']
+
+    fieldsets = (
+        ('Debit Information', {
+            'fields': ('debit_id', 'event', 'created_by', 'description', 'expense_type')
+        }),
+        ('Amount Estimation', {
+            'fields': ('quantity', 'unit_price', 'amount', 'paid_date', 'is_settled')
+        }),
+        ('Target', {
+            'fields': ('target_type', 'target_id', 'target_object_link')
+        }),
+        ('Verification', {
+            'fields': ('verification_status', 'verified_by', 'verified_updated_at'),
+            'classes': ('collapse',)
+        }),
+        ('Processing', {
+            'fields': ('processed_by', 'processed_at', 'auto_processed'),
+            'classes': ('collapse',)
+        }),
+        ('Audit', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def target_object_link(self, obj):
+        if obj.target and obj.target_type:
+            return format_html(
+                '<a href="{}">{}</a>',
+                f'/admin/{obj.target_type.app_label}/{obj.target_type.model}/{obj.target_id}/change/',
+                str(obj.target)
+            )
+        return '-'
+    target_object_link.short_description = 'Target Object'
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly_fields = list(super().get_readonly_fields(request, obj))
+        if obj and obj.verification_status in {'verified', 'processed'}:
+            readonly_fields.extend(['unit_price', 'quantity'])
+        return readonly_fields
+
+    def mark_verified(self, request, queryset):
+        updated = 0
+        for debit in queryset.filter(verification_status='pending'):
+            debit.mark_verified(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} debit(s) verified.')
+    mark_verified.short_description = 'Verify selected debits'
+
+    def mark_rejected(self, request, queryset):
+        updated = 0
+        for debit in queryset.filter(verification_status='pending'):
+            debit.mark_rejected(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} debit(s) rejected.')
+    mark_rejected.short_description = 'Reject selected debits'
+
+    def mark_processed(self, request, queryset):
+        updated = 0
+        for debit in queryset.filter(verification_status='verified'):
+            debit.mark_processed(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} debit(s) processed.')
+    mark_processed.short_description = 'Process selected debits'
+
+    def mark_settled(self, request, queryset):
+        updated = queryset.update(is_settled=True)
+        self.message_user(request, f'{updated} debit(s) marked as settled.')
+    mark_settled.short_description = 'Mark selected debits as settled'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'event', 'created_by', 'verified_by', 'processed_by', 'target_type'
+        )
+
+
+# ============================================================================
+# BUDGET PROPOSAL ADMIN
+# ============================================================================
+
+class CreditExpenseInline(admin.TabularInline):
+    """Inline for CreditExpenses linked to a BudgetProposal."""
+    model = BudgetProposal.credit_expenses.through
+    verbose_name = 'Linked Credit Expense'
+    verbose_name_plural = 'Linked Credit Expenses'
+    extra = 0
+
+
+class DebitExpenseInline(admin.TabularInline):
+    """Inline for DebitExpenses linked to a BudgetProposal."""
+    model = BudgetProposal.debit_expenses.through
+    verbose_name = 'Linked Debit Expense'
+    verbose_name_plural = 'Linked Debit Expenses'
+    extra = 0
+
+
+@admin.register(BudgetProposal)
+class BudgetProposalAdmin(admin.ModelAdmin):
+    """Admin for BudgetProposal model."""
+
+    list_display = (
+        'proposal_id', 'proposal_title', 'event', 'proposed_by',
+        'verification_status', 'credit_count', 'debit_count', 'created_at'
+    )
+    list_filter = ('verification_status', 'event', 'created_at')
+    search_fields = ('proposal_id', 'proposal_title', 'event__name', 'proposed_by__username')
+    date_hierarchy = 'created_at'
+    readonly_fields = (
+        'proposal_id', 'created_at', 'updated_at',
+        'verified_updated_at', 'verified_by', 'processed_at', 'processed_by', 'auto_processed',
+    )
+    inlines = [CreditExpenseInline, DebitExpenseInline]
+    actions = ['mark_verified', 'mark_rejected', 'mark_processed']
+
+    fieldsets = (
+        ('Proposal', {
+            'fields': ('proposal_id', 'event', 'proposed_by', 'proposal_title', 'proposal_description')
+        }),
+        ('Verification', {
+            'fields': ('verification_status', 'verified_by', 'verified_updated_at'),
+            'classes': ('collapse',)
+        }),
+        ('Processing', {
+            'fields': ('processed_by', 'processed_at', 'auto_processed'),
+            'classes': ('collapse',)
+        }),
+        ('Audit', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def credit_count(self, obj):
+        return obj.credit_expenses.count()
+    credit_count.short_description = 'Credits'
+
+    def debit_count(self, obj):
+        return obj.debit_expenses.count()
+    debit_count.short_description = 'Debits'
+
+    def mark_verified(self, request, queryset):
+        updated = 0
+        for proposal in queryset.filter(verification_status='pending'):
+            proposal.mark_verified(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} proposal(s) verified.')
+    mark_verified.short_description = 'Verify selected proposals'
+
+    def mark_rejected(self, request, queryset):
+        updated = 0
+        for proposal in queryset.filter(verification_status='pending'):
+            proposal.mark_rejected(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} proposal(s) rejected.')
+    mark_rejected.short_description = 'Reject selected proposals'
+
+    def mark_processed(self, request, queryset):
+        updated = 0
+        for proposal in queryset.filter(verification_status='verified'):
+            proposal.mark_processed(request.user)
+            updated += 1
+        self.message_user(request, f'{updated} proposal(s) processed.')
+    mark_processed.short_description = 'Process selected proposals'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'event', 'proposed_by', 'verified_by', 'processed_by'
+        ).prefetch_related('credit_expenses', 'debit_expenses')
 

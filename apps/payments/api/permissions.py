@@ -22,6 +22,8 @@ from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
 from apps.payments.models import (
     BankTransferEvidence,
     CreditExpense,
+    DebitExpense,
+    BudgetProposal,
     PaymentMethod,
     PaymentMethodTypeChoices,
 )
@@ -633,3 +635,67 @@ class IsReadOnly(permissions.BasePermission):
     def has_object_permission(self, request, view, obj) -> bool:
         """Only allow safe methods."""
         return request.method in permissions.SAFE_METHODS
+
+
+class IsDebitAccessible(permissions.BasePermission):
+    """Allow creators and event administrators to access debit records."""
+
+    message = "You do not have permission to access this debit record."
+
+    def has_permission(self, request, view) -> bool:
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        if isinstance(obj, DebitExpense) and obj.created_by == request.user:
+            return True
+
+        event = getattr(obj, 'event', None)
+        if not event:
+            return False
+
+        if EventRoleAssignment.objects.filter(
+            user=request.user,
+            event=event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).exists():
+            return True
+
+        return _user_has_finance_role(request.user, event)
+
+
+class IsBudgetProposalAccessible(permissions.BasePermission):
+    """Allow proposers and event administrators to access budget proposals."""
+
+    message = "You do not have permission to access this budget proposal."
+
+    def has_permission(self, request, view) -> bool:
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        if isinstance(obj, BudgetProposal) and obj.proposed_by == request.user:
+            return True
+
+        event = getattr(obj, 'event', None)
+        if not event:
+            return False
+
+        if EventRoleAssignment.objects.filter(
+            user=request.user,
+            event=event,
+            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).exists():
+            return True
+
+        return _user_has_finance_role(request.user, event)
