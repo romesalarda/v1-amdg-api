@@ -6,7 +6,7 @@ from .roles import EventRole, EventRoleAssignment, EventRoleCategoryChoices
 from .authorization import EventAuthorization, EventAuthorizationStatusChoices
 from .review import EventReview
 from .questions import EventQuestion, EventQuestionTypeChoices, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice
-from .venue import EventVenue
+from .venue import EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata, EventVenueContactRoleChoice
 from .notifications import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
 
 __all__ = [
@@ -33,6 +33,10 @@ __all__ = [
     'EventQuestionAnswerChoice',
     'EventSettings',
     'EventVenue',
+    'EventVenueRoom',
+    'EventVenueContact',
+    'EventVenueMetadata',
+    'EventVenueContactRoleChoice',
     'EventNotification',
     'NotificationTypeChoices',
     'NotificationPriorityChoices',

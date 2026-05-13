@@ -14,7 +14,8 @@ from apps.events.models import (
     EventStaff, EventStaffAvailability, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
-    EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue
+    EventQuestionAnswer, EventQuestionAnswerChoice,
+    EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
 )
 from apps.common.models import AvailabilityWindow, Resource
 from apps.common.api.serializers import (
@@ -2240,54 +2241,131 @@ class EventQuestionAnswerSerializer(serializers.ModelSerializer):
         return instance
 
 
+class EventVenueRoomSerializer(serializers.ModelSerializer):
+    """Serializer for EventVenueRoom — rooms scoped to an EventVenue snapshot."""
+
+    class Meta:
+        model = EventVenueRoom
+        fields = ('id', 'event_venue', 'room_name', 'description', 'capacity', 'added_at', 'updated_at')
+        read_only_fields = ('id', 'added_at', 'updated_at')
+
+
+class EventVenueContactSerializer(serializers.ModelSerializer):
+    """Serializer for EventVenueContact — contacts scoped to an EventVenue snapshot."""
+
+    class Meta:
+        model = EventVenueContact
+        fields = ('id', 'event_venue', 'contact_name', 'phone_number', 'email', 'role', 'added_at', 'updated_at')
+        read_only_fields = ('id', 'added_at', 'updated_at')
+
+
+class EventVenueMetadataSerializer(serializers.ModelSerializer):
+    """Serializer for EventVenueMetadata — metadata entries scoped to an EventVenue snapshot."""
+
+    class Meta:
+        model = EventVenueMetadata
+        fields = ('id', 'event_venue', 'label', 'value', 'added_at', 'updated_at')
+        read_only_fields = ('id', 'added_at', 'updated_at')
+
+
 class EventVenueSerializer(serializers.ModelSerializer):
-    """Serializer for EventVenue model with HATEOAS support."""
+    """
+    Serializer for EventVenue — event-scoped venue snapshot.
+
+    On create, pass ``source_venue_id`` to clone all fields (including rooms,
+    contacts and metadata) from the matching global Venue.  If omitted the
+    caller must supply the inline venue fields directly.
+
+    Reads return fully-embedded sub-resource lists so that clients can render
+    all venue data from a single API call.
+    """
     event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
-    venue_name = serializers.CharField(source='venue.poi.name', read_only=True)
-    venue_address = serializers.CharField(source='venue.poi.address', read_only=True)
-    venue_city = serializers.CharField(source='venue.poi.city', read_only=True)
     event_title = serializers.CharField(source='event.title', read_only=True)
     event_display_code = serializers.CharField(source='event.display_code', read_only=True)
+
+    # Make name/address/source_venue_id optional at serializer level;
+    # validate() enforces that one of source_venue_id OR (name + address) is supplied.
+    source_venue_id = serializers.IntegerField(required=False, allow_null=True)
+    name = serializers.CharField(max_length=255, required=False, allow_blank=False)
+    address = serializers.CharField(max_length=500, required=False, allow_blank=False)
+
+    rooms = EventVenueRoomSerializer(many=True, read_only=True)
+    contacts = EventVenueContactSerializer(many=True, read_only=True)
+    metadata = EventVenueMetadataSerializer(many=True, read_only=True)
+
     _links = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = EventVenue
         fields = (
-            'event_venue_id', 'event', 'venue', 'event_title', 'event_display_code',
-            'venue_name', 'venue_address', 'venue_city', '_links'
+            'event_venue_id',
+            'event',
+            'event_title',
+            'event_display_code',
+            'source_venue_id',
+            'name',
+            'address',
+            'postcode',
+            'city',
+            'poi_type',
+            'latitude',
+            'longitude',
+            'description',
+            'instructions',
+            'notes',
+            'capacity',
+            'added_at',
+            'updated_at',
+            'rooms',
+            'contacts',
+            'metadata',
+            '_links',
         )
-        read_only_fields = ('event_venue_id',)
-    
+        read_only_fields = ('event_venue_id', 'added_at', 'updated_at')
+        extra_kwargs = {
+            'source_venue_id': {'required': False, 'allow_null': True},
+        }
+        validators = []
+
+    def validate(self, attrs):
+        # On create (no instance), require either source_venue_id or inline name+address.
+        if self.instance is None:
+            source_venue_id = attrs.get('source_venue_id')
+            event = attrs.get('event')
+            if source_venue_id and event:
+                if EventVenue.objects.filter(event=event, source_venue_id=source_venue_id).exists():
+                    raise serializers.ValidationError(
+                        {'source_venue_id': 'This venue is already linked to this event.'}
+                    )
+                
+            has_source = bool(attrs.get('source_venue_id'))
+            has_inline = bool(attrs.get('name')) and bool(attrs.get('address'))
+            if not has_source and not has_inline:
+                raise serializers.ValidationError(
+                    'Provide either source_venue_id (to clone a global venue) '
+                    'or both name and address (for a direct snapshot).'
+                )
+        return attrs
+
     @extend_schema_field({
         'type': 'object',
         'properties': {
-            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event venue association'},
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this event venue'},
             'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
-            'venue': {'type': 'string', 'format': 'uri', 'description': 'Link to the venue'}
         },
-        'required': ['self']
+        'required': ['self'],
     })
     def get__links(self, obj):
         request = self.context.get('request')
         if not request:
             return {}
-        
         links = {
-            'self': request.build_absolute_uri(
-                f"/api/event/venues/{obj.event_venue_id}/"
-            )
+            'self': request.build_absolute_uri(f"/api/event/venues/{obj.event_venue_id}/")
         }
-        
         if obj.event:
             links['event'] = request.build_absolute_uri(
                 f"/api/event/list/{obj.event.url_safe_title}/"
             )
-        
-        if obj.venue:
-            links['venue'] = request.build_absolute_uri(
-                f"/api/locations/venues/{obj.venue.id}/"
-            )
-        
         return links
 
 

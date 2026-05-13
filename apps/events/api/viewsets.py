@@ -1,7 +1,6 @@
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
@@ -11,6 +10,7 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from decimal import Decimal
 import uuid
+
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -27,7 +27,9 @@ from apps.events.models import (
     EventStaff, EventStaffAvailability, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionOption,
-    EventQuestionAnswer, EventQuestionAnswerChoice, EventVenue, EventRoleCategoryChoices
+    EventQuestionAnswer, EventQuestionAnswerChoice,
+    EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
+    EventRoleCategoryChoices,
 )
 from apps.common.models import AvailabilityWindow, Resource
 from apps.common.api.serializers import (
@@ -46,6 +48,7 @@ from apps.events.api.serializers import (
     EventQuestionSerializer, EventQuestionOptionSerializer,
     EventQuestionAnswerSerializer, EventQuestionAnswerChoiceSerializer,
     EventVenueSerializer, EventStaffInviteSerializer, EventStaffInviteListSerializer,
+    EventVenueRoomSerializer, EventVenueContactSerializer, EventVenueMetadataSerializer,
     EventMyBookingResponseSerializer,
         EventMyOutstandingPaymentSerializer,
         EventMyPaymentSummarySerializer,
@@ -605,7 +608,7 @@ class EventViewSet(viewsets.ModelViewSet):
         payment,
         source,
         order=None,
-        attendee=None,
+        attendee = None,
         related_orders=None,
         summary_context=None,
     ):
@@ -614,10 +617,24 @@ class EventViewSet(viewsets.ModelViewSet):
         currency = None
         original_amount = getattr(payment, 'original_amount', None)
         total_refunded_amount = getattr(payment, 'total_refunded_amount', None)
+
+
         if getattr(payment, 'base_amount', None):
+
+
+            # if there is an attendee present, check the METADATA to return the price for THAT attendee only
             amount = str(payment.final_amount)
             amount_value = str(payment.final_amount.amount)
-            currency = str(payment.final_amount.currency)
+            currency = str(payment.final_amount.currency)            
+
+            if attendee is not None:
+                metadata = payment.metadata or {}
+                selections = metadata.get('attendee_selections', [])
+                for item in selections:
+                    if item.get('attendee_id') == str(attendee.attendee_id):
+                        amount = str(item.get('frozen_price', amount))
+                        amount_value = str(Decimal(item.get('price', amount)))
+                        break
 
         method = getattr(payment, 'method', None)
         descriptor = payment.target_type.model if getattr(payment, 'target_type', None) else None
@@ -767,6 +784,8 @@ class EventViewSet(viewsets.ModelViewSet):
         if attendee_filter:
             order_qs = order_qs.filter(attendee__attendee_id=attendee_filter)
 
+        print("order_qs: " + str(order_qs))
+
         def serialize_order_context(order):
             attendee = order.attendee
             attendee_booking = getattr(attendee, 'booking', None) if attendee else None
@@ -774,6 +793,8 @@ class EventViewSet(viewsets.ModelViewSet):
                 'order_id': str(order.order_id),
                 'order_reference': order.order_reference_id,
                 'order_status': order.status,
+                'total_amount': str(order.total_amount) if order.total_amount else None,
+                'total_amount_value': str(order.total_amount.amount) if order.total_amount else None,
                 'booking_id': str(attendee_booking.id) if attendee_booking else None,
                 'booking_reference': attendee_booking.booking_reference if attendee_booking else None,
                 'attendee_id': str(attendee.attendee_id) if attendee else None,
@@ -788,11 +809,13 @@ class EventViewSet(viewsets.ModelViewSet):
                 continue
             related_orders_by_payment_id.setdefault(str(payment.payment_id), []).append(order)
 
+        attendee = get_object_or_404(booking_attendees, attendee_id=attendee_filter) if attendee_filter else None
         booking_payment_items = [
             self._serialize_payment_summary_item(
                 payment=payment,
                 source='BOOKING',
                 related_orders=[serialize_order_context(order) for order in related_orders_by_payment_id.get(str(payment.payment_id), [])],
+                attendee=attendee,
                 summary_context={
                     'section': 'booking_payments',
                     'primary_source': 'booking',
@@ -825,6 +848,8 @@ class EventViewSet(viewsets.ModelViewSet):
             for order in order_qs
             if order.payment is not None and str(order.payment.payment_id) not in canonical_payment_ids
         ]
+
+        print("shop_payment_items: " + str(shop_payment_items))
 
         for order in order_qs:
             payment = order.payment
@@ -4471,19 +4496,19 @@ class EventStaffViewSet(viewsets.ModelViewSet):
         serializer.save(assigned_by=self.request.user)
 
     def perform_destroy(self, instance):
+        # Remove all permission assignments for this user on this event
+        EventPermissionAssignment.objects.filter(
+            event=instance.event,
+            user=instance.user
+        ).delete()
+
+        # Remove all role assignments for this user on this event
+        EventRoleAssignment.objects.filter(
+            event=instance.event,
+            user=instance.user
+        ).delete()
+
         super().perform_destroy(instance)
-
-        # also remove admin roles
-        EventRoleAssignment.objects.filter(
-            event=instance.event,
-            user=instance.user
-        ).delete()
-
-        # also remove admin roles
-        EventRoleAssignment.objects.filter(
-            event=instance.event,
-            user=instance.user
-        ).delete()
 
 
 @extend_schema_view(
@@ -5747,77 +5772,179 @@ class EventQuestionAnswerChoiceViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         summary="List Event Venues",
         description=(
-            "Retrieve a paginated list of all event-venue associations showing which venues host which events. "
-            "Includes venue details, points of interest, and event information. "
-            "Supports filtering by event or venue and searching by event title or venue name."
+            "Retrieve a paginated list of all event-scoped venue snapshots. "
+            "Each record is a self-contained copy of venue data owned by its event. "
+            "Supports filtering by event and searching by name, city, or display code."
         ),
         tags=["Event Venues"],
         parameters=[
             OpenApiParameter(name='event', type=OpenApiTypes.STR, description='Filter by event URL-safe title'),
-            OpenApiParameter(name='venue', type=OpenApiTypes.INT, description='Filter by venue ID'),
-            OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Search by event title or venue name'),
+            OpenApiParameter(name='event_id', type=OpenApiTypes.STR, description='Alias: filter by event URL-safe title'),
+            OpenApiParameter(name='source_venue_id', type=OpenApiTypes.INT, description='Filter by source global venue ID'),
+            OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Search by name, city, or event display code'),
         ]
     ),
     retrieve=extend_schema(
         summary="Get Event Venue Details",
         description=(
-            "Retrieve detailed information about a specific event-venue association including "
-            "venue facilities, location, capacity, and event-specific venue configurations."
+            "Retrieve a specific event-scoped venue snapshot including all inline venue data, "
+            "rooms, contacts, and metadata — in a single API call."
         ),
         tags=["Event Venues"],
     ),
     create=extend_schema(
-        summary="Create Event Venue Association",
+        summary="Create Event Venue Snapshot",
         description=(
-            "Associate a venue with an event, specifying where the event will be held. "
-            "Can include event-specific venue details and configurations. "
-            "Only event managers and administrators can create venue associations."
+            "Create an event-scoped venue snapshot. Supply ``source_venue_id`` to clone all "
+            "fields from an existing global Venue record (rooms, contacts, and metadata are "
+            "copied automatically). Omit ``source_venue_id`` and provide inline fields directly "
+            "to create a venue that has no global counterpart. "
+            "Requires authentication."
         ),
         tags=["Event Venues"],
     ),
     update=extend_schema(
-        summary="Update Event Venue Association",
-        description=(
-            "Update an event-venue association with complete payload. "
-            "Use PATCH for partial updates. Only event managers and administrators can update associations."
-        ),
+        summary="Update Event Venue Snapshot",
+        description="Full update of an event-scoped venue snapshot. Use PATCH for partial updates.",
         tags=["Event Venues"],
     ),
     partial_update=extend_schema(
-        summary="Partially Update Event Venue Association",
-        description=(
-            "Partially update an event-venue association such as changing configurations. "
-            "Only event managers and administrators can update associations."
-        ),
+        summary="Partially Update Event Venue Snapshot",
+        description="Partial update of an event-scoped venue snapshot.",
         tags=["Event Venues"],
     ),
     destroy=extend_schema(
-        summary="Delete Event Venue Association",
-        description=(
-            "Remove a venue association from an event. "
-            "Use when changing event location or removing venue assignment. "
-            "Only event managers and administrators can delete associations."
-        ),
+        summary="Delete Event Venue Snapshot",
+        description="Remove an event-scoped venue snapshot from an event.",
         tags=["Event Venues"],
-    )
+    ),
 )
 class EventVenueViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for managing EventVenue associations linking events to physical venues.
-    
-    Provides CRUD operations for associating venues with events and managing
-    venue-specific configurations for events.
+    ViewSet for managing event-scoped venue snapshots.
+
+    On create, if ``source_venue_id`` is present in the validated data the
+    viewset will attempt to clone all fields from the matching global Venue
+    (including its rooms, contacts, and metadata) before saving.  If the
+    source cannot be found the record is still created using whatever inline
+    field values the caller provides.
     """
-    queryset = EventVenue.objects.select_related(
-        'event', 'venue', 'venue__poi'
+    queryset = EventVenue.objects.select_related('event').prefetch_related(
+        'rooms', 'contacts', 'metadata'
     ).all()
     serializer_class = EventVenueSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = EventVenueFilterSet
-    search_fields = ['event__title', 'event__display_code', 'venue__poi__name', 'venue__poi__city']
-    ordering_fields = ['event__start_datetime', 'venue__poi__name']
+    search_fields = ['event__title', 'event__display_code', 'name', 'city']
+    ordering_fields = ['event__start_datetime', 'name']
     ordering = ['-event__start_datetime']
     lookup_field = 'event_venue_id'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticatedOrReadOnly()]
+        return [permissions.IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        """
+        Clone global Venue data into the snapshot when source_venue_id is supplied.
+        """
+        from apps.locations.models import Venue as GlobalVenue
+
+        source_venue_id = serializer.validated_data.get('source_venue_id')
+        extra_fields = {}
+
+        if source_venue_id:
+            try:
+                global_venue = GlobalVenue.objects.select_related('poi').prefetch_related(
+                    'rooms', 'contacts', 'metadata'
+                ).get(pk=source_venue_id)
+                poi = global_venue.poi
+                extra_fields = {
+                    'name': poi.name,
+                    'address': poi.address,
+                    'postcode': poi.postcode,
+                    'city': poi.city,
+                    'poi_type': poi.poi_type,
+                    'latitude': poi.latitude,
+                    'longitude': poi.longitude,
+                    'description': global_venue.description,
+                    'instructions': global_venue.instructions,
+                    'notes': global_venue.notes,
+                    'capacity': global_venue.capacity,
+                }
+            except GlobalVenue.DoesNotExist:
+                pass  # Caller-supplied inline fields are used as-is
+
+        event_venue = serializer.save(**extra_fields)
+
+        # Clone sub-resources when a source was resolved
+        if source_venue_id and extra_fields:
+            EventVenueRoom.objects.bulk_create([
+                EventVenueRoom(
+                    event_venue=event_venue,
+                    room_name=r.room_name,
+                    description=r.description,
+                    capacity=r.capacity,
+                )
+                for r in global_venue.rooms.all()
+            ])
+            EventVenueContact.objects.bulk_create([
+                EventVenueContact(
+                    event_venue=event_venue,
+                    contact_name=c.contact_name,
+                    phone_number=c.phone_number,
+                    email=c.email,
+                    role=c.role,
+                )
+                for c in global_venue.contacts.all()
+            ])
+            EventVenueMetadata.objects.bulk_create([
+                EventVenueMetadata(
+                    event_venue=event_venue,
+                    label=m.label,
+                    value=m.value,
+                )
+                for m in global_venue.metadata.all()
+            ])
+
+
+# ── Sub-resource ViewSets ─────────────────────────────────────────────────────
+
+class EventVenueRoomViewSet(viewsets.ModelViewSet):
+    """Manage rooms scoped to an EventVenue snapshot."""
+    serializer_class = EventVenueRoomSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['event_venue']
+
+    def get_queryset(self):
+        return EventVenueRoom.objects.select_related('event_venue').all()
+
+
+class EventVenueContactViewSet(viewsets.ModelViewSet):
+    """Manage contacts scoped to an EventVenue snapshot."""
+    serializer_class = EventVenueContactSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['event_venue']
+
+    def get_queryset(self):
+        return EventVenueContact.objects.select_related('event_venue').all()
+
+
+class EventVenueMetadataViewSet(viewsets.ModelViewSet):
+    """Manage metadata entries scoped to an EventVenue snapshot."""
+    serializer_class = EventVenueMetadataSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['event_venue']
+
+    def get_queryset(self):
+        return EventVenueMetadata.objects.select_related('event_venue').all()
 

@@ -420,11 +420,11 @@ class EventFilterSet(filters.FilterSet):
     chapter = filters.NumberFilter(field_name='location__chapter__id')
     chapter_name = filters.CharFilter(field_name='location__chapter__chapter_name', lookup_expr='icontains')
 
-    venue = filters.NumberFilter(field_name='event_venues__venue__id')
-    venue_name = filters.CharFilter(field_name='event_venues__venue__poi__name', lookup_expr='icontains')
-    venue_address = filters.CharFilter(field_name='event_venues__venue__poi__address', lookup_expr='icontains')
-    venue_city = filters.CharFilter(field_name='event_venues__venue__poi__city', lookup_expr='icontains')
-    venue_postcode = filters.CharFilter(field_name='event_venues__venue__poi__postcode', lookup_expr='icontains')
+    venue = filters.NumberFilter(field_name='event_venues__source_venue_id')
+    venue_name = filters.CharFilter(field_name='event_venues__name', lookup_expr='icontains')
+    venue_address = filters.CharFilter(field_name='event_venues__address', lookup_expr='icontains')
+    venue_city = filters.CharFilter(field_name='event_venues__city', lookup_expr='icontains')
+    venue_postcode = filters.CharFilter(field_name='event_venues__postcode', lookup_expr='icontains')
 
     theme = filters.CharFilter(field_name='theme', lookup_expr='icontains')
     anchor_verse = filters.CharFilter(field_name='anchor_verse', lookup_expr='icontains')
@@ -470,10 +470,10 @@ class EventFilterSet(filters.FilterSet):
             Q(event_type__code__icontains=value) |
             Q(location__area_name__icontains=value) |
             Q(location__chapter__chapter_name__icontains=value) |
-            Q(event_venues__venue__poi__name__icontains=value) |
-            Q(event_venues__venue__poi__address__icontains=value) |
-            Q(event_venues__venue__poi__city__icontains=value) |
-            Q(event_venues__venue__poi__postcode__icontains=value)
+            Q(event_venues__name__icontains=value) |
+            Q(event_venues__address__icontains=value) |
+            Q(event_venues__city__icontains=value) |
+            Q(event_venues__postcode__icontains=value)
         ).distinct()
 
     def filter_fuzzy_threshold(self, queryset, name, value):
@@ -512,9 +512,9 @@ class EventFilterSet(filters.FilterSet):
                         TrigramSimilarity('event_type__code', value) +
                         TrigramSimilarity('location__area_name', value) +
                         TrigramSimilarity('location__chapter__chapter_name', value) +
-                        TrigramSimilarity('event_venues__venue__poi__name', value) +
-                        TrigramSimilarity('event_venues__venue__poi__address', value) +
-                        TrigramSimilarity('event_venues__venue__poi__city', value)
+                        TrigramSimilarity('event_venues__name', value) +
+                        TrigramSimilarity('event_venues__address', value) +
+                        TrigramSimilarity('event_venues__city', value)
                     )
                 )
                 .filter(similarity__gte=threshold)
@@ -743,10 +743,11 @@ class EventRoleAssignmentFilterSet(filters.FilterSet):
 class EventVenueFilterSet(filters.FilterSet):
     event_id = filters.CharFilter(field_name='event__url_safe_title')
     event = filters.CharFilter(field_name='event__url_safe_title')
+    source_venue_id = filters.NumberFilter(field_name='source_venue_id')
 
     class Meta:
         model = EventVenue
-        fields = ['venue', 'event']
+        fields = ['event', 'source_venue_id']
 
 
 class EventStaffInviteFilterSet(filters.FilterSet):

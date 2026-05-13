@@ -5,7 +5,8 @@ from .models import (
     EventPermissionAssignment, EventReview, EventRole, 
     EventRoleAssignment, EventStaff, EventStaffAvailability, EventStaffInvite,
     EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice,
-    EventSettings, EventVenue, EventNotification
+    EventSettings, EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
+    EventNotification
 )
 
 
@@ -466,21 +467,69 @@ class EventStaffInviteAdmin(admin.ModelAdmin):
 
 @admin.register(EventVenue)
 class EventVenueAdmin(admin.ModelAdmin):
-    list_display = ('event_venue_id', 'event', 'venue', 'get_venue_name')
-    list_filter = ('event__event_type', 'event__status')
-    search_fields = ('event__title', 'venue__poi__name', 'event__display_code')
-    readonly_fields = ('event_venue_id',)
-    autocomplete_fields = ('event', 'venue')
-    list_select_related = ('event', 'venue', 'venue__poi')
-    
+    list_display = ('event_venue_id', 'event', 'name', 'city', 'source_venue_id')
+    list_filter = ('event__event_type', 'event__status', 'poi_type')
+    search_fields = ('event__title', 'name', 'city', 'address', 'event__display_code')
+    readonly_fields = ('event_venue_id', 'added_at', 'updated_at')
+    autocomplete_fields = ('event',)
+    list_select_related = ('event',)
+
     fieldsets = (
-        ('Event Venue Association', {
-            'fields': ('event_venue_id', 'event', 'venue')
+        ('Association', {
+            'fields': ('event_venue_id', 'event', 'source_venue_id'),
+        }),
+        ('Location', {
+            'fields': ('name', 'address', 'postcode', 'city', 'poi_type', 'latitude', 'longitude'),
+        }),
+        ('Venue Details', {
+            'fields': ('description', 'instructions', 'notes', 'capacity'),
+        }),
+        ('Timestamps', {
+            'fields': ('added_at', 'updated_at'),
+            'classes': ('collapse',),
         }),
     )
-    
-    def get_venue_name(self, obj):
-        return obj.venue.poi.name if obj.venue and obj.venue.poi else '-'
-    get_venue_name.short_description = 'Venue Name'
+
+
+class EventVenueRoomInline(admin.TabularInline):
+    model = EventVenueRoom
+    extra = 0
+    readonly_fields = ('added_at', 'updated_at')
+    fields = ('room_name', 'description', 'capacity', 'added_at')
+
+
+class EventVenueContactInline(admin.TabularInline):
+    model = EventVenueContact
+    extra = 0
+    readonly_fields = ('added_at', 'updated_at')
+    fields = ('contact_name', 'phone_number', 'email', 'role', 'added_at')
+
+
+class EventVenueMetadataInline(admin.TabularInline):
+    model = EventVenueMetadata
+    extra = 0
+    readonly_fields = ('added_at', 'updated_at')
+    fields = ('label', 'value', 'added_at')
+
+
+@admin.register(EventVenueRoom)
+class EventVenueRoomAdmin(admin.ModelAdmin):
+    list_display = ('room_name', 'event_venue', 'capacity', 'added_at')
+    search_fields = ('room_name', 'event_venue__name')
+    readonly_fields = ('added_at', 'updated_at')
+
+
+@admin.register(EventVenueContact)
+class EventVenueContactAdmin(admin.ModelAdmin):
+    list_display = ('contact_name', 'event_venue', 'role', 'phone_number', 'email')
+    search_fields = ('contact_name', 'event_venue__name')
+    readonly_fields = ('added_at', 'updated_at')
+
+
+@admin.register(EventVenueMetadata)
+class EventVenueMetadataAdmin(admin.ModelAdmin):
+    list_display = ('label', 'event_venue', 'value')
+    search_fields = ('label', 'event_venue__name')
+    readonly_fields = ('added_at', 'updated_at')
 
     
