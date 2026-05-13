@@ -1240,15 +1240,16 @@ class DebitExpenseFilterSet(filters.FilterSet):
         field_name='event__id',
         help_text='Filter by event ID',
     )
-    event__event_id = filters.UUIDFilter(
-        field_name='event__event_id',
-        help_text='Filter by event UUID',
+    event_url_safe_title = filters.CharFilter(
+        field_name='event__url_safe_title',
+        lookup_expr='icontains',
+        help_text='Filter by event URL safe title',
     )
     created_by = filters.NumberFilter(
         field_name='created_by__id',
         help_text='Filter by creator user ID',
     )
-    created_by__username = filters.CharFilter(
+    created_by_username = filters.CharFilter(
         field_name='created_by__username',
         lookup_expr='icontains',
         help_text='Filter by creator username',
@@ -1298,9 +1299,10 @@ class BudgetProposalFilterSet(filters.FilterSet):
         field_name='event__id',
         help_text='Filter by event ID',
     )
-    event__event_id = filters.UUIDFilter(
-        field_name='event__event_id',
-        help_text='Filter by event UUID',
+    event_url_safe_title = filters.CharFilter(
+        field_name='event__url_safe_title',
+        lookup_expr='icontains',
+        help_text='Filter by event URL safe title',
     )
     verification_status = filters.MultipleChoiceFilter(
         field_name='verification_status',
@@ -1311,7 +1313,7 @@ class BudgetProposalFilterSet(filters.FilterSet):
         field_name='proposed_by__id',
         help_text='Filter by proposer user ID',
     )
-    proposed_by__username = filters.CharFilter(
+    proposed_by_username = filters.CharFilter(
         field_name='proposed_by__username',
         lookup_expr='icontains',
         help_text='Filter by proposer username',

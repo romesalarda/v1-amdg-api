@@ -2322,7 +2322,7 @@ class DebitExpenseCreateSerializer(serializers.ModelSerializer):
     """Create serializer for DebitExpense. amount is computed from quantity × unit_price."""
 
     event = serializers.SlugRelatedField(
-        slug_field='event_id', queryset=Event.objects.all()
+        slug_field='url_safe_title', queryset=Event.objects.all()
         )
     unit_price = MoneyField(max_digits=14, decimal_places=2)
 
@@ -2536,7 +2536,7 @@ class BudgetProposalDetailSerializer(BudgetProposalListSerializer):
 class BudgetProposalCreateSerializer(serializers.ModelSerializer):
     """Create serializer for BudgetProposal. Sets proposed_by from request user."""
     event = serializers.SlugRelatedField(
-        slug_field='event_id',
+        slug_field='url_safe_title',
         queryset=Event.objects.all(),
     )
     class Meta:

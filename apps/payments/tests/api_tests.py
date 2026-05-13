@@ -2734,7 +2734,7 @@ class DebitExpenseAPITestCase(APITestCase):
         client.force_authenticate(user=user)
         url = reverse('payments:debitexpense-list')
         data = client.post(url, {
-            'event': str(event.event_id),
+            'event': str(event.url_safe_title),
             'quantity': quantity,
             'unit_price': unit_price,
             'description': description,
@@ -2872,7 +2872,7 @@ class BudgetProposalAPITestCase(APITestCase):
         event = event or self.event
         url = reverse('payments:budgetproposal-list')
         data = self.client.post(url, {
-            'event': str(event.event_id),
+            'event': str(event.url_safe_title),
             'proposal_title': title,
             'proposal_description': 'Test budget',
         }, format='json')

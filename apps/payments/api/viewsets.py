@@ -27,8 +27,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
 from django.db.models import Q, Prefetch, OuterRef, Subquery
-from django.utils import timezone
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, get_list_or_404
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -2596,6 +2595,9 @@ class BudgetProposalViewSet(viewsets.ModelViewSet):
         summary='List credits linked to proposal',
         description='Returns all credit expenses currently linked to this budget proposal.',
         tags=['Budget'],
+        responses={
+            200: CreditExpenseListSerializer(many=True)
+        }
     )
     @action(detail=True, methods=['get'], url_path='credits')
     def credits(self, request, proposal_id=None):
@@ -2668,6 +2670,9 @@ class BudgetProposalViewSet(viewsets.ModelViewSet):
         summary='List debits linked to proposal',
         description='Returns all debit expenses currently linked to this budget proposal.',
         tags=['Budget'],
+        responses={
+            200: DebitExpenseListSerializer(many=True)
+        }
     )
     @action(detail=True, methods=['get'], url_path='debits')
     def debits(self, request, proposal_id=None):
@@ -2820,10 +2825,11 @@ class BudgetProposalViewSet(viewsets.ModelViewSet):
         if not event_id:
             raise ValidationError({'event_id': 'This query parameter is required.'})
 
-        proposals = self.get_queryset().filter(event__event_id=event_id)
-        if not proposals.exists():
-            raise ValidationError({'event_id': 'No budget proposals found for this event.'})
+        proposals = self.get_queryset().filter(event__url_safe_title=event_id).select_related('event').prefetch_related('credit_expenses', 'debit_expenses')
 
+        if not proposals:
+            return Response({'detail': 'No budget proposals found for this event.'}, status=status.HTTP_404_NOT_FOUND)
+    
         event = proposals.first().event
         currency = 'GBP'
 
