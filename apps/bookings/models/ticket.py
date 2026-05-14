@@ -56,6 +56,22 @@ class TicketType(models.Model): # e.g. VIP, General Admission, Early Bird
             raise ValidationError({
                 'valid_until': 'Valid until date must be after valid from date.'
             })
+        
+    @property
+    def can_delete(self) -> bool:
+        '''
+        A ticket type can only be deleted if there are no active tickets of this type.
+        This prevents data integrity issues with existing tickets that reference this type.
+        '''
+        return not self.tickets.filter(status=TicketStatusChoices.ACTIVE).exists()
+    
+    @property
+    def number_of_active_tickets(self) -> int:
+        return self.tickets.filter(status=TicketStatusChoices.ACTIVE).count()
+    
+    @property
+    def number_of_tickets(self) -> int:
+        return self.tickets.count()
     
     def save(self, *args, **kwargs):
         

@@ -6,7 +6,7 @@ User = get_user_model()
 class Consent(models.Model):
     
     event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='consents')
-    code = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=100)
     title = models.CharField(max_length=255)
     description = models.TextField()
     external_link = models.URLField(null=True, blank=True)
@@ -26,7 +26,7 @@ class Consent(models.Model):
         return f"<Consent {self.code} for Event {self.event.id if self.event else 'N/A'}>"
     
     def save(self, *args, **kwargs):
-        self.clean()
+
         super().save(*args, **kwargs)
     
     def clean(self):

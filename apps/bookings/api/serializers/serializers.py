@@ -315,6 +315,7 @@ class TicketTypeListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'code', 'title', 'event', 'event_name', 'scope', 'scope_display',
             'valid_from', 'valid_until', 'is_active', 'created_by', 'created_by_name',
+            'number_of_active_tickets', 'number_of_tickets', 'can_delete',
             'created_at', '_links'
         )
         read_only_fields = ('id', 'code', 'created_at')
@@ -687,7 +688,8 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
         fields = (
             'id','name', 'event', 'event_name', 'ticket_type', 'ticket_type_title','description',
             'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount', 'is_active',
-            'created_by', 'created_by_name', 'created_at', 'availability_windows', '_links'
+            'created_by', 'created_by_name', 'created_at', 'availability_windows', 'can_delete', 
+            'number_of_active_tickets', 'number_of_tickets', '_links'
         )
         read_only_fields = ('id', 'created_at', 'modified_amount')
     

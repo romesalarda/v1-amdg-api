@@ -56,6 +56,29 @@ class BookingPackage(PayableModel, HasAvailabilityMixin):
     def __repr__(self):
         return f"<BookingPackage id={self.id} name={self.name} event={self.event.id}>"
     
+    @property
+    def can_delete(self) -> bool:
+        '''
+        A booking package can only be deleted if there are no active tickets of its type linked to it.
+        This prevents data integrity issues with existing tickets that reference this package.
+        '''
+        return not self.ticket_type.tickets.filter(package=self, status='ACTIVE').exists()
+    
+    @property
+    def number_of_active_tickets(self) -> int:
+        """Return count of active tickets linked to this package."""
+        return self.ticket_type.tickets.filter(package=self, status='ACTIVE').count()
+    
+    @property
+    def number_of_tickets(self) -> int:
+        """Return count of all tickets linked to this package."""
+        return self.ticket_type.tickets.filter(package=self).count()
+    
+    def related_tickets(self):
+        """Return queryset of active tickets linked to this package."""
+        return self.ticket_type.tickets.filter(package=self, status='ACTIVE')
+    
+    
     class Meta:
         ordering = ['-created_at']
         verbose_name = 'Booking Package'

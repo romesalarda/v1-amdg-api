@@ -53,7 +53,7 @@ class EventAlternativeSigninIdentifier(RequiresVerificationModel):
     def save(self, *args, **kwargs):
 
         self.full_clean()
-        self.title = self.title.strip().title()
+        self.title = self.title.strip().upper()  # Normalize title to uppercase and strip whitespace
         super().save(*args, **kwargs)
 
     def clean(self):

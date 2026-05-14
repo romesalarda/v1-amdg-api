@@ -1919,6 +1919,16 @@ class TicketTypeViewSet(viewsets.ModelViewSet):
                 pass
         return context
     
+    def destroy(self, request, *args, **kwargs):
+        """Override destroy to prevent deletion if tickets exist for this type."""
+        instance = self.get_object()
+        if instance.can_delete is False:
+            return Response(
+                {'detail': 'Cannot delete ticket type with existing tickets.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().destroy(request, *args, **kwargs)
+    
     def perform_create(self, serializer):
         """Set created_by when creating ticket type."""
         serializer.save(created_by=self.request.user)
@@ -2099,6 +2109,18 @@ class BookingPackageViewSet(viewsets.ModelViewSet):
             'event', 'ticket_type', 'created_by'
         ).prefetch_related('rules')
     
+    def destroy(self, request, *args, **kwargs):
+        """
+        Override destroy to prevent deletion if packages are linked to existing bookings.
+        """
+        instance = self.get_object()
+        if instance.can_delete is False:
+            return Response(
+                {'detail': 'Cannot delete booking package linked to existing bookings.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().destroy(request, *args, **kwargs)
+        
     @extend_schema(
         summary="List rules for booking package",
         description="Retrieve all rules associated with this booking package.",

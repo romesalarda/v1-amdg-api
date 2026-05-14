@@ -305,6 +305,16 @@ class EventViewSet(viewsets.ModelViewSet):
         
         
         return queryset
+
+    def get_non_restrictive_object(self):
+        """
+        Get the event object without applying restrictive filters for non-staff users. 
+        This allows event creators and staff to access their events even if they are in draft or deleted status.
+        """
+        obj = get_object_or_404(Event.objects.select_related(
+            'event_type', 'organisation', 'created_by'
+        ).prefetch_related('settings'), url_safe_title=self.kwargs['url_safe_title'])
+        return obj
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -3905,7 +3915,7 @@ class EventViewSet(viewsets.ModelViewSet):
             permission_classes=[permissions.IsAuthenticated])
     def accept_invite(self, request, url_safe_title=None, invite_id=None):
         """Accept a staff invite for this event."""
-        event = self.get_object()
+        event = self.get_non_restrictive_object()
         
         try:
             invite = EventStaffInvite.objects.get(id=invite_id, event=event)
