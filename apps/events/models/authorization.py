@@ -33,6 +33,10 @@ class EventAuthorization(models.Model):
     def save(self, *args, **kwargs):
         if not self.review_code:
             self.review_code = f"EVT-AUTH-{uuid.uuid4().hex[:10].upper()}"
+
+        if self.status == EventAuthorizationStatusChoices.REJECTED:
+            self.event.force_close()
+
         super().save(*args, **kwargs)
     
     def __str__(self):
@@ -40,6 +44,18 @@ class EventAuthorization(models.Model):
     
     def __repr__(self):
         return f"<EventAuthorization(event={self.event}, reviewed_by={self.reviewed_by}, status={self.status})>"
+    
+    @property
+    def is_rejected(self):
+        return self.status == EventAuthorizationStatusChoices.REJECTED
+    
+    @property
+    def is_approved(self):
+        return self.status == EventAuthorizationStatusChoices.APPROVED
+    
+    @property
+    def is_pending(self):
+        return self.status == EventAuthorizationStatusChoices.PENDING
     
     class Meta:
         unique_together = ('event', 'reviewed_by')

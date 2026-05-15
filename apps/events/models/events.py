@@ -153,6 +153,8 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     
     last_opened = models.DateTimeField(blank=True, null=True, help_text=_("The last time this event was opened for registration."))
     last_closed = models.DateTimeField(blank=True, null=True, help_text=_("The last time this event was closed for registration."))
+    closed_message = models.TextField(blank=True, null=True, help_text=_("Optional message to display to users when the event is closed for registration."))
+    published_message = models.TextField(blank=True, null=True, help_text=_("Optional message to display to users when the event is published but not yet open for registration."))
 
     external_link = models.URLField(blank=True, null=True, help_text=_("External link for the event, e.g. a website or registration page."))
     external_event = models.BooleanField(default=False, help_text=_("Whether this event is primarily external and only listed on the platform for visibility. External events will not have registration or product selling features enabled."))
@@ -200,6 +202,21 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             raise ValidationError("Event start_datetime and end_datetime cannot be the same.")            
         if self.created_by is None:
             raise ValidationError("Event must have a created_by user.")
+        
+    def force_close(self, reason=None):
+        '''
+        Forcefully transition the event to a closed status, regardless of current status or allowed transitions.
+        This is intended for use in admin actions where an override of normal status rules is necessary.
+        '''
+        if self.status in open_statuses:
+            self.last_closed = timezone.now()
+        self.status = EventStatusChoices.CLOSED
+        if reason:
+            self.closed_message = reason
+        else:
+            self.closed_message = "This event has been closed by an administrator."
+
+        self.save(update_fields=['status', 'last_closed', 'closed_message'])
         
             
     def latest_authorisation(self):
