@@ -752,7 +752,9 @@ class EventVenueFilterSet(filters.FilterSet):
 
 class EventStaffInviteFilterSet(filters.FilterSet):
     event = filters.CharFilter(field_name='event__url_safe_title')
-
+    user_email = filters.CharFilter(field_name='target_user__email', lookup_expr='icontains')
+    username = filters.CharFilter(field_name='target_user__username', lookup_expr='icontains')
+    accepted = filters.BooleanFilter(field_name='accepted')
     class Meta:
         model = EventStaffInvite
         fields = ['event', 'target_user', 'accepted']

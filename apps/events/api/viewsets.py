@@ -3465,7 +3465,8 @@ class EventViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(
                     Q(target_user__email__icontains=search) |
                     Q(target_user__first_name__icontains=search) |
-                    Q(target_user__last_name__icontains=search)
+                    Q(target_user__last_name__icontains=search) |
+                    Q(target_user__username__icontains=search)
                 )
             
             page = self.paginate_queryset(queryset)

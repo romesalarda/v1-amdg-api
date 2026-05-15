@@ -103,7 +103,6 @@ class AttendeeListSerializer(serializers.ModelSerializer):
         
         return links
 
-
 class AttendeeDetailSerializer(AttendeeListSerializer):
     """Detailed serializer for Attendee with extended fields."""
     
@@ -112,19 +111,46 @@ class AttendeeDetailSerializer(AttendeeListSerializer):
     self_registered = serializers.BooleanField(read_only=True)
    
     area_from_name = serializers.CharField(source='area_from.area_name', read_only=True, allow_null=True)
-    
+    alternative_signins = serializers.SerializerMethodField()
     class Meta(AttendeeListSerializer.Meta):
         fields = AttendeeListSerializer.Meta.fields + (
             'area_from', 'area_from_name', 'booking',
             'is_event_staff', 'staff_role_names', 'self_registered',
             # 'is_cancelled', 'is_registered', 'is_checked_in',
-            'defined_by', 'updated_at', 'deleted_at', 'deleted_by'
+            'defined_by', 'updated_at', 'deleted_at', 'deleted_by', 'alternative_signins'
         )
         read_only_fields = AttendeeListSerializer.Meta.read_only_fields + (
             'is_event_staff', 'staff_role_names', 'self_registered',
             # 'is_cancelled', 'is_registered', 'is_checked_in', 
-            'updated_at', 'deleted_at'
+            'updated_at', 'deleted_at', 'alternative_signins'
         )
+
+    @extend_schema_field({
+        'type': 'array',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'sign_id': {'type': 'string', 'format': 'uuid'},
+                'identifier': {'type': 'string'},
+                'uses': {'type': 'integer'},
+                'ticket': {'type': 'string', 'format': 'uuid', 'nullable': True},
+            }
+        }
+    })
+    def get_alternative_signins(self, obj):
+        """Get alternative sign-in identifiers for the attendee."""
+    
+        alternative_signins = obj.alternative_signins.all()
+
+        return [
+            {
+                "sign_id": str(alt.sign_id),
+                "identifier": alt.identifier,
+                "uses": alt.uses,
+                "ticket": str(alt.ticket.ticket_id) if alt.ticket else None,
+            } for alt in alternative_signins
+        ] 
+    
 
 
 class AttendeeCreateSerializer(serializers.ModelSerializer):
