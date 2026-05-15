@@ -1297,12 +1297,12 @@ class EventResourceAPITest(BaseEventAPITestCase):
         )
         
         response = self.client.get(
-            f'/api/event/list/{self.event.url_safe_title}/resources/?tag=LANDING_PHOTO_MAIN'
+            f'/api/event/list/{self.event.url_safe_title}/resources/?tag=SCHEDULE'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get('results', response.data)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]['tag'], 'LANDING_PHOTO_MAIN')
+        self.assertEqual(results[0]['tag'], 'SCHEDULE')
     
     def test_filter_resources_by_type(self):
         """Test filtering resources by resource type"""

@@ -135,7 +135,7 @@ class EventModelTest(TestCase):
             created_by=self.user
         )
         
-        self.start_time = timezone.now() + timedelta(days=30)
+        self.start_time = timezone.now() + timedelta(days=15)
         self.end_time = timezone.now() + timedelta(days=32)
     
     def test_event_creation(self):
@@ -190,7 +190,7 @@ class EventModelTest(TestCase):
     def test_event_start_before_end_validation(self):
         """Test that start_datetime must be before end_datetime"""
         with self.assertRaises(ValidationError):
-            Event.objects.create(
+            test_event = Event(
                 title='Invalid Event',
                 display_code='IE2025',
                 created_by=self.user,
@@ -199,13 +199,15 @@ class EventModelTest(TestCase):
                 end_datetime=self.start_time,
                 organisation=self.organisation
             )
+            test_event.full_clean()
+            test_event.save()
             
     def test_event_start_equals_end_validation(self):
         """Test that start_datetime cannot equal end_datetime"""
         same_time = timezone.now() + timedelta(days=30)
         
         with self.assertRaises(ValidationError):
-            Event.objects.create(
+            test_event = Event(
                 title='Invalid Event',
                 display_code='IE2025',
                 created_by=self.user,
@@ -214,11 +216,14 @@ class EventModelTest(TestCase):
                 end_datetime=same_time,
                 organisation=self.organisation
             )
+            test_event.full_clean()
+            test_event.save()
             
     def test_event_created_by_required(self):
         """Test that created_by is required"""
         with self.assertRaises(ValidationError):
-            Event.objects.create(
+
+            new_event = Event(
                 title='Invalid Event',
                 display_code='IE2025',
                 event_type=self.event_type,
@@ -227,6 +232,8 @@ class EventModelTest(TestCase):
                 created_by=None,
                 organisation=self.organisation
             )
+            new_event.full_clean()
+            new_event.save()
             
     def test_event_unique_display_code(self):
         """Test that display_code must be unique"""
@@ -239,17 +246,19 @@ class EventModelTest(TestCase):
             end_datetime=self.end_time,
             organisation=self.organisation
         )
-        
+        new_event = Event(
+            title='Event 2',
+            display_code='EV2025',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=self.start_time,
+            end_datetime=self.end_time,
+            organisation=self.organisation
+        )
         with self.assertRaises(ValidationError):
-            Event.objects.create(
-                title='Event 2',
-                display_code='EV2025',
-                created_by=self.user,
-                event_type=self.event_type,
-                start_datetime=self.start_time,
-                end_datetime=self.end_time,
-                organisation=self.organisation
-            )
+            new_event.full_clean()
+            new_event.save()
+                
             
     def test_event_duration_days_property(self):
         """Test the duration_days property"""

@@ -349,12 +349,12 @@ class Booking(models.Model, PaymentMixin):
             try:
                 self.booking_reference = try_generate_unique_display_code(
                     model_class=Booking,
-                    length=50,
+                    length=35,
                     prefix='BK',
                     args=[str(self.event.display_code)],
                     lookup_field='booking_reference',
                     max_attempts=5
-                )
+                ).lower()
             except ValueError as e:
                 raise ValidationError({'booking_reference': 'Could not generate unique booking reference.'})
         self.clean()

@@ -96,10 +96,10 @@ class BookingCheckoutFinalizer:
                     "already_finalized": True,
                 }
 
-            booking_reference = generate_human_readable_id(50, "BKG", intent.event.display_code[:10])
+            # booking_reference = generate_human_readable_id(50, "BKG", intent.event.display_code[:10])
             booking = Booking.objects.create(
                 event=intent.event,
-                booking_reference=booking_reference,
+                # booking_reference=booking_reference,
                 made_by=payment.user,
             )
 
