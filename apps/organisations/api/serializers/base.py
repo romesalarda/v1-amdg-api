@@ -319,7 +319,9 @@ class UserOrganisationMembershipListSerializer(serializers.ModelSerializer):
     organisation_name = serializers.CharField(source='organisation.title', read_only=True)
     user_name = serializers.CharField(source='user.username', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
+    profile_image = serializers.SerializerMethodField()
     added_by_name = serializers.CharField(source='added_by.username', read_only=True, allow_null=True)
+    area_from = serializers.CharField(source='user.profile.area_from.area_name', read_only=True, allow_null=True)
     requires_verification = serializers.BooleanField(read_only=True)
     is_verified = serializers.SerializerMethodField()
     
@@ -327,7 +329,7 @@ class UserOrganisationMembershipListSerializer(serializers.ModelSerializer):
         model = UserOrganisationMembership
         fields = (
             'id', 'organisation', 'organisation_name', 'user', 'user_name', 'user_email',
-            'added_by', 'added_by_name', 'verified_at', 'requires_verification',
+            'profile_image', 'added_by', 'added_by_name', 'verified_at', 'requires_verification', 'area_from',
             'is_verified', 'added_at', '_links'
         )
         read_only_fields = ('id', 'verified_at', 'added_at')
@@ -339,6 +341,14 @@ class UserOrganisationMembershipListSerializer(serializers.ModelSerializer):
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_is_verified(self, obj) -> bool:
         return obj.verified_at is not None
+    
+    def get_profile_image(self, obj) -> Optional[str]:
+        if obj.user.profile.profile_picture:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.user.profile.profile_picture.url)
+            return obj.user.profile.profile_picture.url
+        return None
     
     @extend_schema_field({
         'type': 'object',
