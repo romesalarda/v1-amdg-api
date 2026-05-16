@@ -108,7 +108,10 @@ variant_remove_availability_window = ProductVariantViewSet.as_view({
 urlpatterns = [
     # Include main router
     path('products/', include(router.urls)),
-    
+
+    # Inventory breakdown endpoint (canonical short URL)
+    path('products/inventory/', ProductViewSet.as_view({'get': 'inventory'}), name='product-inventory'),
+
     # Nested routes for product variants
     path('products/list/<uuid:product_product_id>/variants/', variant_list, name='product-variants-list'),
     path('products/list/<uuid:product_product_id>/variants/<uuid:variant_id>/', variant_detail, name='product-variants-detail'),

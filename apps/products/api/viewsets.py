@@ -56,6 +56,7 @@ from .serializers import (
     OrderListSerializer, OrderDetailSerializer, OrderCreateSerializer, OrderUpdateSerializer,
     OrderItemSerializer, OrderItemCreateSerializer,
 )
+from .serializers.inventory import EventInventoryBreakdownSerializer
 from .filtersets import (
     ProductCategoryFilterSet, EventProductCategoryFilterSet,
     ProductFilterSet, ProductVariantFilterSet, OrderFilterSet,
@@ -1317,6 +1318,63 @@ class ProductViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
         
         window.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(
+        summary="Event inventory breakdown",
+        description=(
+            "Returns a complete inventory breakdown for every product in the specified event. "
+            "For each variant the response includes: current stock, units to reorder (when a "
+            "max_stock_quantity cap is set), unit price, and the cost to fully restock. "
+            "Aggregate totals are provided at the product and event level. "
+            "Intended for end-of-day admin restocking reports."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='event',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    "URL-safe title of the event (the `url_safe_title` field on the Event model, "
+                    "e.g. `summer-conference-2026-ab12cd34`). Required."
+                ),
+                required=True,
+            ),
+        ],
+        responses={
+            200: EventInventoryBreakdownSerializer,
+            400: OpenApiResponse(description="Missing or invalid `event` query parameter."),
+            403: OpenApiResponse(description="Permission denied – administrative access required."),
+            404: OpenApiResponse(description="No event found matching the supplied slug."),
+        },
+        tags=["Products"],
+        operation_id="products_inventory_breakdown",
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="inventory",
+        permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly],
+    )
+    def inventory(self, request):
+        """Return the inventory breakdown for an event (admin-only)."""
+        from apps.events.models import Event
+        from apps.products.services.inventory import compute_event_inventory
+
+        event_slug = request.query_params.get("event", "").strip()
+        if not event_slug:
+            raise ValidationError({"event": "The 'event' query parameter is required."})
+
+        try:
+            event = Event.objects.get(url_safe_title=event_slug)
+        except Event.DoesNotExist:
+            return Response(
+                {"detail": f"No event found with url_safe_title '{event_slug}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        summary = compute_event_inventory(event)
+        serializer = EventInventoryBreakdownSerializer(summary)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # ============================================================================
