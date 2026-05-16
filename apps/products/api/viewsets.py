@@ -3002,6 +3002,14 @@ class OrderViewSet(viewsets.ModelViewSet):
             locked_order.total_amount = locked_order.get_total_amount()
             locked_order.save(update_fields=['total_amount', 'updated_at'])
 
+            if locked_order.order_items.count() == 0:
+                locked_order.delete()
+                return Response({
+                    'status': 'success',
+                    'message': 'Order item updated. Order has no more items and was deleted.',
+                    'order_total': 'GBP 0.00',
+                }, status=status.HTTP_200_OK)
+
             item_serializer = OrderItemSerializer(order_item, context={'request': request})
             return Response({
                 'status': 'success',
@@ -3062,6 +3070,9 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             locked_order.total_amount = locked_order.get_total_amount()
             locked_order.save(update_fields=['total_amount', 'updated_at'])
+
+            if locked_order.order_items.count() == 0:
+                locked_order.delete()
 
             return Response({
                 'status': 'success',

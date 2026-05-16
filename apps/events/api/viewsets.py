@@ -859,8 +859,6 @@ class EventViewSet(viewsets.ModelViewSet):
             if order.payment is not None and str(order.payment.payment_id) not in canonical_payment_ids
         ]
 
-        print("shop_payment_items: " + str(shop_payment_items))
-
         for order in order_qs:
             payment = order.payment
             if payment is None:

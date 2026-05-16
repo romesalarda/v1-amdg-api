@@ -678,6 +678,7 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
     _links = serializers.SerializerMethodField()
     event_name = serializers.CharField(source='event.title', read_only=True)
     ticket_type_title = serializers.CharField(source='ticket_type.title', read_only=True)
+    scope = serializers.CharField(source='ticket_type.scope', read_only=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
     base_amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
     modified_amount = MoneyField(max_digits=10, decimal_places=2, read_only=True)
@@ -686,7 +687,7 @@ class BookingPackageListSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookingPackage
         fields = (
-            'id','name', 'event', 'event_name', 'ticket_type', 'ticket_type_title','description',
+            'id','name', 'event', 'event_name', 'ticket_type', 'ticket_type_title','scope','description',
             'base_amount', 'base_amount_currency', 'percentage_modifier', 'modified_amount', 'is_active',
             'created_by', 'created_by_name', 'created_at', 'availability_windows', 'can_delete', 
             'number_of_active_tickets', 'number_of_tickets', '_links'
