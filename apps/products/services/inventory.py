@@ -7,13 +7,23 @@ Separated from viewset concerns to allow reuse and easier testing.
 Provides:
     - Per-variant stock levels
     - Reorder quantities (based on max_stock_quantity cap + live order demand)
+    - Live order cost (cost of units already committed in pending/processing orders)
     - Unit and restock costs
     - Aggregated event-level inventory summary
+
+Filtering (all optional, applied at DB level where possible):
+    is_active     – filter products by active status
+    category_id   – filter products by category FK
+    product_id    – filter to a specific product by UUID
+    size          – filter variants by size code
+    color         – filter variants by hex colour
+    needs_reorder – post-filter: only include variants where quantity_to_order > 0
+    has_stock     – post-filter: only include variants where current_stock > 0
 
 Author: AMDG Platform Team
 Version: 1.0.0
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
@@ -28,7 +38,7 @@ from apps.products.models import Product, ProductVariant, OrderStatusChoices
 _LIVE_ORDER_STATUSES = (
     OrderStatusChoices.PENDING,
     OrderStatusChoices.PROCESSING,
-    OrderStatusChoices.COMPLETED,  # include completed orders to account for any unfulfilled items
+    OrderStatusChoices.COMPLETED,
 )
 
 
@@ -41,7 +51,9 @@ class VariantInventoryLine:
     is_active: bool
     current_stock: int
     max_stock_quantity: Optional[int]
-    live_order_units: int  # units in confirmed in-flight orders (pending/processing)
+    live_order_units: int          # units in confirmed in-flight orders (pending/processing)
+    live_order_cost_amount: Decimal  # cost of those in-flight units (live_order_units × unit_price)
+    live_order_cost_currency: str
     quantity_to_order: Optional[int]  # None when no max_stock cap is set
     unit_price_amount: Decimal
     unit_price_currency: str
@@ -61,6 +73,9 @@ class ProductInventoryLine:
     verified: bool
     variant_lines: list[VariantInventoryLine]
     total_current_stock: int
+    total_live_order_units: int
+    total_live_order_cost_amount: Decimal
+    total_live_order_cost_currency: str
     total_restock_cost_amount: Optional[Decimal]
     total_restock_cost_currency: str
     total_current_stock_value_amount: Decimal
@@ -77,6 +92,9 @@ class EventInventorySummary:
     total_products: int
     total_variants: int
     total_stock_units: int
+    total_live_order_units: int
+    grand_total_live_order_cost_amount: Decimal   # cost of all in-flight committed orders
+    grand_total_live_order_cost_currency: str
     grand_total_stock_value_amount: Decimal
     grand_total_restock_cost_amount: Optional[Decimal]  # None when no variants have a max cap
     has_restock_data: bool  # True when at least one variant has max_stock_quantity set
@@ -115,6 +133,7 @@ def _build_variant_line(
         restock_cost_amount = (unit_price.amount * Decimal(quantity_to_order)).quantize(Decimal("0.01"))
 
     current_stock_value_amount = (unit_price.amount * Decimal(current_stock)).quantize(Decimal("0.01"))
+    live_order_cost_amount = (unit_price.amount * Decimal(live_order_units)).quantize(Decimal("0.01"))
 
     return VariantInventoryLine(
         variant_id=str(variant.variant_id),
@@ -124,6 +143,8 @@ def _build_variant_line(
         current_stock=current_stock,
         max_stock_quantity=max_stock,
         live_order_units=live_order_units,
+        live_order_cost_amount=live_order_cost_amount,
+        live_order_cost_currency=str(unit_price.currency),
         quantity_to_order=quantity_to_order,
         unit_price_amount=unit_price.amount,
         unit_price_currency=str(unit_price.currency),
@@ -147,6 +168,8 @@ def _build_product_line(
 
     total_current_stock = sum(v.current_stock for v in variant_lines)
     total_current_stock_value = sum(v.current_stock_value_amount for v in variant_lines)
+    total_live_order_units = sum(v.live_order_units for v in variant_lines)
+    total_live_order_cost = sum(v.live_order_cost_amount for v in variant_lines)
 
     # Only aggregate restock cost when every variant has a max cap (otherwise partial sums are misleading)
     all_have_restock = all(v.restock_cost_amount is not None for v in variant_lines) if variant_lines else False
@@ -164,46 +187,91 @@ def _build_product_line(
         verified=product.verified,
         variant_lines=variant_lines,
         total_current_stock=total_current_stock,
+        total_live_order_units=total_live_order_units,
+        total_live_order_cost_amount=Decimal(total_live_order_cost).quantize(Decimal("0.01")),
+        total_live_order_cost_currency=currency,
         total_restock_cost_amount=total_restock_cost,
         total_restock_cost_currency=currency,
-        total_current_stock_value_amount=total_current_stock_value.quantize(Decimal("0.01")),
+        total_current_stock_value_amount=Decimal(total_current_stock_value).quantize(Decimal("0.01")),
         total_current_stock_value_currency=currency,
     )
 
 
-def compute_event_inventory(event) -> EventInventorySummary:
+def compute_event_inventory(
+    event,
+    *,
+    is_active: Optional[bool] = None,
+    category_id: Optional[int] = None,
+    product_id: Optional[str] = None,
+    size: Optional[str] = None,
+    color: Optional[str] = None,
+    needs_reorder: Optional[bool] = None,
+    has_stock: Optional[bool] = None,
+) -> EventInventorySummary:
     """
     Compute the full inventory breakdown for a given event.
 
-    Fetches all products and their variants for the event in a single
-    optimised query, then performs all calculations in Python to avoid
-    complex DB aggregations.
+    All filters are optional.  DB-level filters (is_active, category_id,
+    product_id, size, color) are applied before any Python processing.
+    Post-computation filters (needs_reorder, has_stock) prune variant and
+    product lines from the result after calculations are done.
 
     :param event: Event model instance
+    :param is_active: If set, only include products matching this active flag.
+    :param category_id: If set, only include products in this category.
+    :param product_id: If set, only return results for the product with this UUID.
+    :param size: If set, only include variants with this size code (e.g. ``LG``).
+    :param color: If set, only include variants with this hex colour (e.g. ``#FF0000``).
+    :param needs_reorder: If True, only include variants where quantity_to_order > 0.
+    :param has_stock: If True, only include variants where current_stock > 0.
     :returns: EventInventorySummary dataclass
     """
-    # Determine the dominant currency from the first product, fall back to GBP
-    first_product = event.products.select_related().first()
-    currency = str(first_product.base_amount.currency) if first_product else "GBP"
-
-    products = list(
-        event.products
-        .prefetch_related("variants")
-        .order_by("title")
-    )
-
-    # --- Single batch query for live in-flight order counts ---
-    # Fetch the sum of quantities per variant across confirmed in-flight orders
-    # in one DB round-trip to avoid N+1 queries.
     from apps.products.models.orders import OrderItem
 
+    # --- Build product queryset with DB-level filters ---
+    product_qs = event.products.order_by("title")
+
+    if is_active is not None:
+        product_qs = product_qs.filter(is_active=is_active)
+    if category_id is not None:
+        product_qs = product_qs.filter(categories__id=category_id)
+    if product_id is not None:
+        product_qs = product_qs.filter(product_id=product_id)
+
+    # Build variant queryset for DB-level variant filters
+    variant_filters: dict = {}
+    if size is not None:
+        variant_filters["size__iexact"] = size
+    if color is not None:
+        variant_filters["color__iexact"] = color
+
+    # Prefetch only the filtered variants
+    from django.db.models import Prefetch
+    variant_qs = ProductVariant.objects.all()
+    if variant_filters:
+        variant_qs = variant_qs.filter(**variant_filters)
+
+    products = list(
+        product_qs.prefetch_related(
+            Prefetch("variants", queryset=variant_qs)
+        )
+    )
+
+    # Exclude products that have no variants after variant-level filtering
+    if variant_filters:
+        products = [p for p in products if p.variants.all()]
+
+    # Determine the dominant currency from the first product, fall back to GBP
+    first_product = products[0] if products else None
+    currency = str(first_product.base_amount.currency) if first_product else "GBP"
+
+    # --- Single batch query for live in-flight order counts ---
     variant_pks = [
         variant.pk
         for product in products
         for variant in product.variants.all()
     ]
     live_counts: dict[int, int] = {}
-    print(f"Computing inventory for event {event.title} ({event.event_id}) with {len(products)} products and {len(variant_pks)} variants.")
     if variant_pks:
         rows = (
             OrderItem.objects
@@ -214,18 +282,61 @@ def compute_event_inventory(event) -> EventInventorySummary:
             .values("product_variant_id")
             .annotate(total=Sum("quantity"))
         )
-        print(rows)
         live_counts = {row["product_variant_id"]: row["total"] for row in rows}
 
     product_lines = [_build_product_line(p, currency, live_counts) for p in products]
 
+    # --- Post-computation filtering ---
+    if needs_reorder is not None or has_stock is not None:
+        filtered_lines: list[ProductInventoryLine] = []
+        for pl in product_lines:
+            filtered_variants = []
+            for v in pl.variant_lines:
+                if needs_reorder is True and not (v.quantity_to_order is not None and v.quantity_to_order > 0):
+                    continue
+                if has_stock is True and v.current_stock <= 0:
+                    continue
+                if has_stock is False and v.current_stock > 0:
+                    continue
+                filtered_variants.append(v)
+
+            # Re-aggregate product totals over the filtered variant set
+            if not filtered_variants:
+                continue
+
+            total_cs = sum(fv.current_stock for fv in filtered_variants)
+            total_csv = sum(fv.current_stock_value_amount for fv in filtered_variants)
+            total_lou = sum(fv.live_order_units for fv in filtered_variants)
+            total_loc = sum(fv.live_order_cost_amount for fv in filtered_variants)
+            all_restock = all(fv.restock_cost_amount is not None for fv in filtered_variants)
+            t_restock: Optional[Decimal] = (
+                sum(fv.restock_cost_amount for fv in filtered_variants)  # type: ignore[misc]
+                if all_restock else None
+            )
+
+            import dataclasses
+            filtered_lines.append(dataclasses.replace(
+                pl,
+                variant_lines=filtered_variants,
+                total_current_stock=total_cs,
+                total_live_order_units=total_lou,
+                total_live_order_cost_amount=Decimal(total_loc).quantize(Decimal("0.01")),
+                total_restock_cost_amount=t_restock,
+                total_current_stock_value_amount=Decimal(total_csv).quantize(Decimal("0.01")),
+            ))
+        product_lines = filtered_lines
+
+    # --- Event-level aggregation ---
     total_variants = sum(len(pl.variant_lines) for pl in product_lines)
     total_stock_units = sum(pl.total_current_stock for pl in product_lines)
+    total_live_order_units = sum(pl.total_live_order_units for pl in product_lines)
     grand_total_stock_value = sum(
         pl.total_current_stock_value_amount for pl in product_lines
     ) or Decimal("0.00")
+    grand_total_live_order_cost = sum(
+        pl.total_live_order_cost_amount for pl in product_lines
+    ) or Decimal("0.00")
 
-    # Determine whether restock cost can be computed at a global level
     has_restock_data = any(
         any(v.quantity_to_order is not None for v in pl.variant_lines)
         for pl in product_lines
@@ -247,6 +358,9 @@ def compute_event_inventory(event) -> EventInventorySummary:
         total_products=len(product_lines),
         total_variants=total_variants,
         total_stock_units=total_stock_units,
+        total_live_order_units=total_live_order_units,
+        grand_total_live_order_cost_amount=Decimal(grand_total_live_order_cost).quantize(Decimal("0.01")),
+        grand_total_live_order_cost_currency=currency,
         grand_total_stock_value_amount=Decimal(grand_total_stock_value).quantize(Decimal("0.01")),
         grand_total_restock_cost_amount=(
             Decimal(grand_total_restock).quantize(Decimal("0.01"))

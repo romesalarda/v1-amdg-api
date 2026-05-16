@@ -56,7 +56,7 @@ from .serializers import (
     OrderListSerializer, OrderDetailSerializer, OrderCreateSerializer, OrderUpdateSerializer,
     OrderItemSerializer, OrderItemCreateSerializer,
 )
-from .serializers.inventory import EventInventoryBreakdownSerializer
+from .serializers.inventory import EventInventoryBreakdownSerializer, InventoryAttendeeSerializer
 from .filtersets import (
     ProductCategoryFilterSet, EventProductCategoryFilterSet,
     ProductFilterSet, ProductVariantFilterSet, OrderFilterSet,
@@ -1323,21 +1323,67 @@ class ProductViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
         summary="Event inventory breakdown",
         description=(
             "Returns a complete inventory breakdown for every product in the specified event. "
-            "For each variant the response includes: current stock, units to reorder (when a "
-            "max_stock_quantity cap is set), unit price, and the cost to fully restock. "
-            "Aggregate totals are provided at the product and event level. "
-            "Intended for end-of-day admin restocking reports."
+            "For each variant the response includes: current stock, in-flight live order units "
+            "and their cost, units to reorder (when a max_stock_quantity cap is set), unit price, "
+            "and the cost to fully restock. Aggregate totals are provided at the product and "
+            "event level. Intended for end-of-day admin restocking reports."
         ),
         parameters=[
             OpenApiParameter(
                 name='event',
                 type=OpenApiTypes.STR,
                 location=OpenApiParameter.QUERY,
-                description=(
-                    "URL-safe title of the event (the `url_safe_title` field on the Event model, "
-                    "e.g. `summer-conference-2026-ab12cd34`). Required."
-                ),
+                description="URL-safe title of the event (`url_safe_title` field). Required.",
                 required=True,
+            ),
+            OpenApiParameter(
+                name='is_active',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description="Filter products by active status (true or false).",
+                required=False,
+            ),
+            OpenApiParameter(
+                name='category',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Filter products by category ID.",
+                required=False,
+            ),
+            OpenApiParameter(
+                name='product',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description="Narrow results to a single product by its UUID.",
+                required=False,
+            ),
+            OpenApiParameter(
+                name='size',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Filter variants by size code (e.g. SM, LG, OS). Case-insensitive.",
+                required=False,
+            ),
+            OpenApiParameter(
+                name='color',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Filter variants by hex colour (e.g. #FF0000). Case-insensitive.",
+                required=False,
+            ),
+            OpenApiParameter(
+                name='needs_reorder',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description="If true, only return variants where quantity_to_order > 0.",
+                required=False,
+            ),
+            OpenApiParameter(
+                name='has_stock',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description="If true, only return variants where current_stock > 0.",
+                required=False,
             ),
         ],
         responses={
@@ -1372,9 +1418,176 @@ class ProductViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        summary = compute_event_inventory(event)
+        def _parse_bool(key: str):
+            val = request.query_params.get(key)
+            if val is None:
+                return None
+            return val.lower() in ("true", "1", "yes")
+
+        def _parse_int(key: str):
+            val = request.query_params.get(key)
+            if val is None:
+                return None
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                raise ValidationError({key: f"'{val}' is not a valid integer."})
+
+        summary = compute_event_inventory(
+            event,
+            is_active=_parse_bool("is_active"),
+            category_id=_parse_int("category"),
+            product_id=request.query_params.get("product") or None,
+            size=request.query_params.get("size") or None,
+            color=request.query_params.get("color") or None,
+            needs_reorder=_parse_bool("needs_reorder"),
+            has_stock=_parse_bool("has_stock"),
+        )
         serializer = EventInventoryBreakdownSerializer(summary)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Attendees by product variant",
+        description=(
+            "Returns a paginated list of attendees who have purchased a specific product variant, "
+            "enriched with order context (order reference, status, quantity, price). "
+            "Requires both `event` and `product_variant` parameters."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='event',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="URL-safe title of the event (`url_safe_title` field). Required.",
+                required=True,
+            ),
+            OpenApiParameter(
+                name='product_variant',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description="UUID of the product variant to query. Required.",
+                required=True,
+            ),
+            OpenApiParameter(
+                name='order_status',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    "Filter by order status. One of: draft, pending, processing, "
+                    "completed, cancelled, pending_refund, partially_refunded, refunded."
+                ),
+                required=False,
+            ),
+            OpenApiParameter(
+                name='item_status',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    "Filter by order item status. One of: pending, completed, cancelled, "
+                    "pending_refund, refunded."
+                ),
+                required=False,
+            ),
+            OpenApiParameter(
+                name='attendee_status',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Filter by attendee registration status (e.g. registered, checked_in).",
+                required=False,
+            ),
+        ],
+        responses={
+            200: InventoryAttendeeSerializer(many=True),
+            400: OpenApiResponse(description="Missing required query parameters."),
+            403: OpenApiResponse(description="Permission denied – administrative access required."),
+            404: OpenApiResponse(description="Event or variant not found."),
+        },
+        tags=["Products"],
+        operation_id="products_inventory_attendees",
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="inventory/attendees",
+        permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly],
+    )
+    def inventory_attendees(self, request):
+        """Return a paginated list of attendees who hold a specific product variant (admin-only)."""
+        from apps.events.models import Event
+        from apps.products.models.orders import OrderItem
+
+        event_slug = request.query_params.get("event", "").strip()
+        variant_uuid = request.query_params.get("product_variant", "").strip()
+
+        if not event_slug:
+            raise ValidationError({"event": "The 'event' query parameter is required."})
+        if not variant_uuid:
+            raise ValidationError({"product_variant": "The 'product_variant' query parameter is required."})
+
+        try:
+            event = Event.objects.get(url_safe_title=event_slug)
+        except Event.DoesNotExist:
+            return Response(
+                {"detail": f"No event found with url_safe_title '{event_slug}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            from apps.products.models import ProductVariant
+            variant = ProductVariant.objects.get(variant_id=variant_uuid, product__event=event)
+        except ProductVariant.DoesNotExist:
+            return Response(
+                {"detail": f"No variant found with id '{variant_uuid}' for this event."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        qs = (
+            OrderItem.objects
+            .filter(
+                product_variant=variant,
+                order__attendee__isnull=False,
+            )
+            .select_related(
+                "order",
+                "order__attendee",
+            )
+            .values(
+                "order__attendee__attendee_id",
+                "order__attendee__attendee_display_id",
+                "order__attendee__first_name",
+                "order__attendee__last_name",
+                "order__attendee__email",
+                "order__attendee__status",
+                "order__order_id",
+                "order__order_reference_id",
+                "order__status",
+                "status",
+                "quantity",
+                "unit_price",
+                "unit_price_currency",
+                "total_price",
+                "total_price_currency",
+            )
+            .order_by("order__attendee__last_name", "order__attendee__first_name")
+        )
+
+        # Optional filters
+        order_status = request.query_params.get("order_status")
+        item_status = request.query_params.get("item_status")
+        attendee_status = request.query_params.get("attendee_status")
+
+        if order_status:
+            qs = qs.filter(order__status=order_status)
+        if item_status:
+            qs = qs.filter(status=item_status)
+        if attendee_status:
+            qs = qs.filter(order__attendee__status=attendee_status)
+
+        # Paginate
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(qs, request)
+        serializer = InventoryAttendeeSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 # ============================================================================

@@ -10,4 +10,5 @@ from .inventory import (
     VariantInventoryLineSerializer,
     ProductInventoryLineSerializer,
     EventInventoryBreakdownSerializer,
+    InventoryAttendeeSerializer,
 )

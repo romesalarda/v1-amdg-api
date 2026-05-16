@@ -109,8 +109,9 @@ urlpatterns = [
     # Include main router
     path('products/', include(router.urls)),
 
-    # Inventory breakdown endpoint (canonical short URL)
+    # Inventory breakdown endpoints (canonical short URLs)
     path('products/inventory/', ProductViewSet.as_view({'get': 'inventory'}), name='product-inventory'),
+    path('products/inventory/attendees/', ProductViewSet.as_view({'get': 'inventory_attendees'}), name='product-inventory-attendees'),
 
     # Nested routes for product variants
     path('products/list/<uuid:product_product_id>/variants/', variant_list, name='product-variants-list'),
