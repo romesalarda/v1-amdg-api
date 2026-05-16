@@ -1609,6 +1609,13 @@ class OrderCheckoutSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Optional reserved payment UUID. When provided, checkout reuses this draft payment."
     )
+    discount_code = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=100,
+        help_text="Optional discount code to apply to this order checkout. Invalid or inapplicable codes silently yield no discount.",
+    )
 
     def _extract_bank_transfer_evidence_payload(self) -> dict | None:
         request = self.context.get('request')
@@ -1807,5 +1814,8 @@ class OrderCheckoutSerializer(serializers.Serializer):
                 })
 
         attrs['_bank_transfer_evidence_payload'] = bank_transfer_evidence_payload
-        
+
+        # Normalise discount_code: strip whitespace; treat blank as None.
+        raw_code = attrs.get('discount_code')
+        attrs['discount_code'] = raw_code.strip() if isinstance(raw_code, str) and raw_code.strip() else None
         return attrs

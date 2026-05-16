@@ -56,6 +56,7 @@ from .serializers import (
     OrderListSerializer, OrderDetailSerializer, OrderCreateSerializer, OrderUpdateSerializer,
     OrderItemSerializer, OrderItemCreateSerializer,
 )
+from .serializers.inventory import EventInventoryBreakdownSerializer
 from .filtersets import (
     ProductCategoryFilterSet, EventProductCategoryFilterSet,
     ProductFilterSet, ProductVariantFilterSet, OrderFilterSet,
@@ -65,6 +66,9 @@ from .permissions import (
     IsOrderOwnerOrAdministrative, IsReadOnly,
     CanManageProducts, CanManageCategories,
 )
+from apps.payments.evaluator import discount_applies as _discount_applies
+from apps.payments.models.discounts import DiscountType as _DiscountType
+from djmoney.money import Money
 
 import decimal
 
@@ -1314,6 +1318,63 @@ class ProductViewSet(PurchaseContextMixin, viewsets.ModelViewSet):
         
         window.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(
+        summary="Event inventory breakdown",
+        description=(
+            "Returns a complete inventory breakdown for every product in the specified event. "
+            "For each variant the response includes: current stock, units to reorder (when a "
+            "max_stock_quantity cap is set), unit price, and the cost to fully restock. "
+            "Aggregate totals are provided at the product and event level. "
+            "Intended for end-of-day admin restocking reports."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='event',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    "URL-safe title of the event (the `url_safe_title` field on the Event model, "
+                    "e.g. `summer-conference-2026-ab12cd34`). Required."
+                ),
+                required=True,
+            ),
+        ],
+        responses={
+            200: EventInventoryBreakdownSerializer,
+            400: OpenApiResponse(description="Missing or invalid `event` query parameter."),
+            403: OpenApiResponse(description="Permission denied – administrative access required."),
+            404: OpenApiResponse(description="No event found matching the supplied slug."),
+        },
+        tags=["Products"],
+        operation_id="products_inventory_breakdown",
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="inventory",
+        permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly],
+    )
+    def inventory(self, request):
+        """Return the inventory breakdown for an event (admin-only)."""
+        from apps.events.models import Event
+        from apps.products.services.inventory import compute_event_inventory
+
+        event_slug = request.query_params.get("event", "").strip()
+        if not event_slug:
+            raise ValidationError({"event": "The 'event' query parameter is required."})
+
+        try:
+            event = Event.objects.get(url_safe_title=event_slug)
+        except Event.DoesNotExist:
+            return Response(
+                {"detail": f"No event found with url_safe_title '{event_slug}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        summary = compute_event_inventory(event)
+        serializer = EventInventoryBreakdownSerializer(summary)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # ============================================================================
@@ -3082,11 +3143,20 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary='Preview order pricing',
-        description='Simulate product order totals and discount impacts for an attendee without creating a persisted order.',
+        description=(
+            'Simulate product order totals and discount impacts for an attendee without creating a persisted order. '
+            'Pass an optional discount_code to see code-based discount reductions on top of any existing attendee discounts.'
+        ),
         request=inline_serializer(
             name='OrderPricingPreviewRequest',
             fields={
                 'attendee_id': serializers.UUIDField(help_text='Attendee UUID used for pricing context'),
+                'discount_code': serializers.CharField(
+                    required=False,
+                    allow_null=True,
+                    allow_blank=True,
+                    help_text='Optional discount code to apply when previewing pricing.',
+                ),
                 'items': serializers.ListField(
                     child=inline_serializer(
                         name='OrderPricingPreviewItem',
@@ -3116,6 +3186,12 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         attendee_id = request.data.get('attendee_id')
         items = request.data.get('items') or []
+
+        raw_code = request.data.get('discount_code')
+        discount_code = raw_code.strip() if isinstance(raw_code, str) and raw_code.strip() else None
+        if discount_code and len(discount_code) > 100:
+            discount_code = None
+
         if not attendee_id:
             raise ValidationError({'attendee_id': 'This field is required.'})
         if not isinstance(items, list) or len(items) == 0:
@@ -3124,7 +3200,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         attendee = get_object_or_404(Attendee.objects.select_related('booking', 'event', 'user'), attendee_id=attendee_id)
         self._assert_attendee_access(attendee, request.user)
 
-        attendee_context = attendee.pricing_context()
+        attendee_context = attendee.pricing_context(code=discount_code)
+        print(f"Attendee context for pricing preview: {attendee_context}")  # Debug log
         currency_code = 'GBP'
         lines = []
         subtotal = decimal.Decimal('0.00')
@@ -3153,11 +3230,21 @@ class OrderViewSet(viewsets.ModelViewSet):
                 raise ValidationError({'items': f'Variant {variant.variant_id} does not belong to attendee event.'})
             if not variant.can_attendee_purchase(attendee):
                 raise ValidationError({'items': f'Attendee cannot purchase variant {variant.variant_id}.'})
-            if not variant.can_attendee_purchase_quantity(attendee, quantity_int):
-                raise ValidationError({'items': f'Requested quantity exceeds stock or limits for variant {variant.variant_id}.'})
+            # if not variant.can_attendee_purchase_quantity(attendee, quantity_int):
+            #     raise ValidationError({'items': f'Requested quantity exceeds stock or limits for variant {variant.variant_id}.'})
+            variant.can_attendee_purchase_quantity(attendee, quantity_int, raise_exception=True)
 
             modified_amount = variant.modified_amount.amount.quantize(decimal.Decimal('0.01'))
-            final_amount = variant.get_attendee_final_price(attendee).amount.quantize(decimal.Decimal('0.01'))
+            # Discounts are attached to the parent Product; apply them against
+            # the variant's own price so that per-variant pricing is respected.
+            product_discount_money = variant.product.calculate_total_discounts(
+                discount_base=variant.modified_amount,
+                context=attendee_context,
+            )
+            final_money = variant.modified_amount - product_discount_money
+            if final_money.amount < decimal.Decimal('0.00'):
+                final_money = Money(decimal.Decimal('0.00'), final_money.currency)
+            final_amount = final_money.amount.quantize(decimal.Decimal('0.01'))
             discount_per_unit = max(modified_amount - final_amount, decimal.Decimal('0.00'))
 
             line_subtotal = (modified_amount * quantity_int).quantize(decimal.Decimal('0.01'))
@@ -3168,14 +3255,22 @@ class OrderViewSet(viewsets.ModelViewSet):
             total_discount += line_discount
 
             applied_discounts = []
-            for discount in variant.discounts:
+            for discount in variant.product.discounts:
                 if not discount_applies(discount, attendee_context):
                     continue
+                if discount.discount_type == DiscountType.PERCENTAGE:
+                    discount_amount = variant.modified_amount * (discount.percentage / decimal.Decimal('100'))
+                    value = str(discount.percentage)
+                else:
+                    discount_amount = discount.amount
+                    value = str(discount.amount.amount)
                 applied_discounts.append({
                     'discount_id': str(discount.discount_id),
                     'name': discount.name,
                     'discount_type': discount.discount_type,
-                    'value': str(discount.percentage if discount.discount_type == DiscountType.PERCENTAGE else discount.amount),
+                    'value': value,
+                    'amount': str(discount_amount.amount.quantize(decimal.Decimal('0.01'))),
+                    'currency': modified_amount and variant.modified_amount.currency.code or 'GBP',
                 })
 
             lines.append({
@@ -3203,6 +3298,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             'attendee_id': str(attendee.attendee_id),
             'event_id': str(attendee.event.event_id) if attendee.event else None,
             'currency': currency_code,
+            'discount_code_applied': discount_code or None,
             'has_open_order': bool(open_order),
             'open_order_reference': open_order.order_reference_id if open_order else None,
             'subtotal': str(subtotal.quantize(decimal.Decimal('0.01'))),
@@ -3365,7 +3461,13 @@ class OrderViewSet(viewsets.ModelViewSet):
                     required=False,
                     allow_null=True,
                     help_text="Optional reserved bank transfer payment UUID to reuse during checkout."
-                )
+                ),
+                'discount_code': serializers.CharField(
+                    required=False,
+                    allow_null=True,
+                    allow_blank=True,
+                    help_text="Optional discount code. When valid, the payment amount will reflect the discounted total."
+                ),
             }
         ),
         responses={
@@ -3471,6 +3573,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             payment_method = serializer.validated_data['payment_method']
             reserved_payment = serializer.validated_data.get('reserved_payment')
             bank_transfer_evidence_payload = serializer.validated_data.get('_bank_transfer_evidence_payload')
+            discount_code = serializer.validated_data.get('discount_code') or None
 
             # Check if order is free (£0 total)
             if locked_order.total_amount.amount == 0:
@@ -3508,26 +3611,115 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             locked_order.transition_to(OrderStatusChoices.PENDING)
 
+            # ----------------------------------------------------------------
+            # Recalculate the payment total using the attendee's pricing context
+            # so that code-based discounts (CODE_MATCHES rules) are applied on
+            # top of any non-code discounts already captured in order.total_amount.
+            # When no code is supplied the result equals order.total_amount.
+            # ----------------------------------------------------------------
+            
+
+            attendee_context = attendee.pricing_context(code=discount_code)
+            discounted_total = Money(0, locked_order.total_amount.currency.code)
+            applied_discounts_snapshot = []
+
+            for item_idx, order_item in enumerate(
+                locked_order.order_items.select_related('product_variant__product').all()
+            ):
+                variant = order_item.product_variant
+                if not variant:
+                    discounted_total += order_item.total_price
+                    continue
+
+                # Discounts are attached to the parent Product; apply them against
+                # the variant's own price so that per-variant pricing is respected.
+                product_discount_money = variant.product.calculate_total_discounts(
+                    discount_base=variant.modified_amount,
+                    context=attendee_context,
+                )
+                item_unit_price = variant.modified_amount - product_discount_money
+                if item_unit_price.amount < decimal.Decimal('0.00'):
+                    item_unit_price = Money(decimal.Decimal('0.00'), item_unit_price.currency)
+                rounded_unit_price = Money(
+                    item_unit_price.amount.quantize(decimal.Decimal('0.01')),
+                    item_unit_price.currency,
+                )
+                item_line_total = rounded_unit_price * order_item.quantity
+                discounted_total += item_line_total
+
+                # Persist the discounted price on the item so the order record
+                # stays consistent with the actual charged amount.
+                if rounded_unit_price != order_item.unit_price:
+                    order_item.set_unit_price(rounded_unit_price)
+
+                # Build per-item discount breakdown for metadata snapshot.
+                item_discount_breakdown = []
+                for disc in variant.product.discounts:
+                    if not _discount_applies(disc, attendee_context):
+                        continue
+                    if disc.discount_type == _DiscountType.PERCENTAGE:
+                        disc_amount = variant.modified_amount * (disc.percentage / decimal.Decimal('100'))
+                        disc_value = str(disc.percentage)
+                    else:
+                        disc_amount = disc.amount
+                        disc_value = str(disc.amount.amount)
+                    item_discount_breakdown.append({
+                        'discount_id': str(disc.discount_id),
+                        'name': disc.name,
+                        'discount_type': disc.discount_type,
+                        'value': disc_value,
+                        'amount': str(disc_amount.amount.quantize(decimal.Decimal('0.01'))),
+                        'currency': disc_amount.currency.code,
+                    })
+
+                per_unit_discount = max(
+                    variant.modified_amount.amount - rounded_unit_price.amount,
+                    decimal.Decimal('0.00'),
+                )
+                applied_discounts_snapshot.append({
+                    'item_index': item_idx,
+                    'variant_id': str(variant.variant_id),
+                    'product_title': variant.product.title if variant.product else '',
+                    'quantity': order_item.quantity,
+                    'unit_price_before_discount': str(variant.modified_amount.amount.quantize(decimal.Decimal('0.01'))),
+                    'unit_price_after_discount': str(rounded_unit_price.amount),
+                    'total_discount': str((per_unit_discount * order_item.quantity).quantize(decimal.Decimal('0.01'))),
+                    'currency': rounded_unit_price.currency.code,
+                    'discount_breakdown': item_discount_breakdown,
+                })
+
+            if discounted_total.amount < decimal.Decimal('0.00'):
+                discounted_total = Money(decimal.Decimal('0.00'), locked_order.total_amount.currency.code)
+
+            # Bring the order total in line with the updated item prices.
+            locked_order.recalculate_total_amount()
+
             attendee_name = (
                 f"{attendee.first_name} {attendee.last_name}".strip()
                 or str(attendee.attendee_id)
             )
             payment_description = (
                 f"Payment made for attendee {attendee_name} "
-                f"for {order_event.title} with price of {locked_order.total_amount}"
+                f"for {order_event.title} with price of {discounted_total}"
             )
+
+            payment_metadata_base = {
+                **(locked_order.get_metadata() or {}),
+                'order_id': str(locked_order.order_id),
+                'order_reference': locked_order.order_reference_id,
+                'payment_type': 'order_checkout_pending_finalization',
+                'discount_code': discount_code,
+                'applied_discounts_snapshot': applied_discounts_snapshot,
+            }
 
             if reserved_payment:
                 payment = reserved_payment
-                payment.base_amount = locked_order.total_amount
+                payment.base_amount = discounted_total
                 payment.description = payment_description
                 payment.target = locked_order
 
                 merged_metadata = payment.metadata if isinstance(payment.metadata, dict) else {}
-                merged_metadata.update(locked_order.get_metadata() or {})
-                merged_metadata['order_id'] = str(locked_order.order_id)
-                merged_metadata['order_reference'] = locked_order.order_reference_id
-                merged_metadata['payment_type'] = 'order_checkout_pending_finalization'
+                merged_metadata.update(payment_metadata_base)
                 payment.metadata = merged_metadata
 
                 payment.status = PaymentStatusChoices.PENDING
@@ -3538,16 +3730,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                     user=request.user,
                     event=order_event,
                     method=payment_method,
-                    base_amount=locked_order.total_amount,
+                    base_amount=discounted_total,
                     status=PaymentStatusChoices.PENDING,
                     target=locked_order,
                     description=payment_description,
-                    metadata={
-                        **(locked_order.get_metadata() or {}),
-                        'order_id': str(locked_order.order_id),
-                        'order_reference': locked_order.order_reference_id,
-                        'payment_type': 'order_checkout_pending_finalization',
-                    },
+                    metadata=payment_metadata_base,
                 )
 
             bank_transfer_evidence = None
@@ -3575,7 +3762,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             
             logger.info(
                 f"Created payment {payment.payment_reference} for order {locked_order.order_reference_id}, "
-                f"amount: {locked_order.total_amount}"
+                f"amount: {discounted_total} (original: {locked_order.total_amount})"
             )
             
             # Prepare response data with amount and currency as separate fields
@@ -3585,8 +3772,9 @@ class OrderViewSet(viewsets.ModelViewSet):
                 'payment_id': str(payment.payment_id),
                 'payment_reference': payment.payment_reference,
                 'payment_description': payment.description,
-                'total_amount': str(locked_order.total_amount.amount),
-                'currency': str(locked_order.total_amount.currency.code),
+                'total_amount': str(discounted_total.amount.quantize(decimal.Decimal('0.01'))),
+                'currency': str(discounted_total.currency.code),
+                'discount_code_applied': discount_code or None,
                 'bank_transfer_evidence_id': str(bank_transfer_evidence.bank_transfer_id) if bank_transfer_evidence else None,
                 '_links': {
                     'self': request.build_absolute_uri(),
@@ -3604,8 +3792,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                 try:
                     stripe_metadata = payment.prepare_stripe_metadata()
                     payment_intent = PaymentIntentService.create(
-                        amount=locked_order.total_amount,
-                        currency=locked_order.total_amount.currency.code,
+                        amount=discounted_total,
+                        currency=discounted_total.currency.code,
                         payment_reference=payment.payment_reference,
                         customer_email=request.user.email,
                         metadata=stripe_metadata,
@@ -3630,7 +3818,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 # Generate bank transfer reference (already done in Payment model)
                 response_data['bank_transfer_reference'] = payment.bank_transfer_reference
                 response_data['bank_transfer_instructions'] = (
-                    f"Please transfer {locked_order.total_amount} to the event account using reference: "
+                    f"Please transfer {discounted_total} to the event account using reference: "
                     f"{payment.bank_transfer_reference}. Your order will be processed after verification."
                 )
                 response_data['status'] = 'pending_verification'
@@ -3660,6 +3848,97 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             
             return Response(response_data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        summary="Validate a discount code for an order",
+        description=(
+            "Check whether a discount code is valid for the products in a specific order. "
+            "A code is considered valid when at least one active CODE_MATCHES DiscountRule "
+            "exists whose parent Discount targets a Product or ProductVariant present in the order. "
+            "Returns only {\"valid\": true/false} to prevent code enumeration."
+        ),
+        request=inline_serializer(
+            name='OrderValidateCodeRequest',
+            fields={
+                'code': serializers.CharField(help_text='Discount code to validate'),
+                'order_id': serializers.UUIDField(help_text='UUID of the order to validate the code against'),
+            },
+        ),
+        responses={
+            200: {
+                'description': 'Validation result',
+                'content': {
+                    'application/json': {
+                        'schema': {
+                            'type': 'object',
+                            'properties': {'valid': {'type': 'boolean'}},
+                        }
+                    }
+                },
+            },
+            400: {'description': 'Validation error'},
+            429: {'description': 'Rate limit exceeded'},
+        },
+        tags=['Orders'],
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='validate-code',
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def validate_code(self, request):
+        """
+        Validate a discount code against the products in a specific order.
+        Returns only {"valid": bool} — no detail to prevent code enumeration.
+        """
+        from apps.payments.models.discounts import DiscountRuleTypeChoices
+        from apps.payments.models import DiscountRule
+
+        code = request.data.get('code')
+        order_id = request.data.get('order_id')
+
+        if not code or not isinstance(code, str):
+            raise ValidationError({'code': 'A non-empty string code is required.'})
+
+        if not order_id:
+            raise ValidationError({'order_id': 'order_id is required.'})
+
+        code = code.strip()
+        if len(code) > 100:
+            return Response({'valid': False}, status=status.HTTP_200_OK)
+
+        order = get_object_or_404(
+            Order.objects.select_related('attendee'),
+            order_id=order_id,
+        )
+
+        # Ensure the requesting user owns this order (or is staff).
+        if not request.user.is_staff and order.customer_id != request.user.id:
+            return Response({'valid': False}, status=status.HTTP_200_OK)
+
+        # Discounts are attached to Products only — collect the product PKs for
+        # every variant in the order.
+        product_pks = []
+        for item in order.order_items.all():
+            if item.product_variant and item.product_variant.product_id:
+                product_pks.append(item.product_variant.product_id)
+
+        if not product_pks:
+            return Response({'valid': False}, status=status.HTTP_200_OK)
+
+        product_ct = ContentType.objects.get_for_model(Product)
+
+        valid = DiscountRule.objects.filter(
+            rule_type=DiscountRuleTypeChoices.CODE_MATCHES,
+            value=code,
+            active=True,
+            discount__active=True,
+            discount__target_type=product_ct,
+            discount__target_id__in=product_pks,
+        ).exists()
+
+        return Response({'valid': valid}, status=status.HTTP_200_OK)
 
 
 # ============================================================================

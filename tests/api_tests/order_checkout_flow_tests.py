@@ -25,7 +25,8 @@ from apps.products.models import (
 )
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentMethodTypeChoices,
-    PaymentStatusChoices, BankTransferEvidence
+    PaymentStatusChoices, BankTransferEvidence,
+    Discount, DiscountRule, DiscountType, DiscountRuleTypeChoices,
 )
 from apps.events.models import Event, EventType, EventStatusChoices, EventSettings
 from apps.attendee.models import Attendee, AttendeeRelationship
@@ -1126,3 +1127,459 @@ class OrderPaymentCompletionSignalTestCase(TransactionTestCase):
         metadata = payment.metadata or {}
         self.assertTrue(metadata.get('requires_manual_review'))
         self.assertIn('processing_error', metadata)
+
+
+# ============================================================================
+# ORDER CHECKOUT DISCOUNT CODE TESTS
+# ============================================================================
+
+class OrderCheckoutDiscountCodeTests(TestCase):
+    """
+    Tests for discount code support in the order checkout flow.
+
+    Covers:
+    - validate-code endpoint (Product-level, ProductVariant-level, invalid, inactive)
+    - preview-pricing with discount_code
+    - checkout with discount_code (payment amount reflects discount)
+    - Regression: no code → unchanged behaviour
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+
+        self.user = User.objects.create_user(
+            username='discountorder_user',
+            email='discountorder@example.com',
+            password='testpass123',
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.admin_user = User.objects.create_user(
+            username='discountorder_admin',
+            email='discountorder_admin@example.com',
+            password='admin123',
+            is_staff=True,
+        )
+
+        self.event_type = EventType.objects.create(
+            title='DiscountOrderConf',
+            code='DOC',
+            created_by=self.user,
+        )
+        self.organisation = Organisation.objects.create(
+            title='Discount Order Org',
+            created_by=self.user,
+        )
+        self.event = Event.objects.create(
+            title='Discount Order Event',
+            display_code='DOE26',
+            display_identifier='DOE26CONF001',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            status=EventStatusChoices.OPEN,
+            organisation=self.organisation,
+        )
+
+        self.booking = Booking.objects.create(
+            event=self.event,
+            made_by=self.user,
+        )
+        self.attendee = Attendee.objects.create(
+            first_name='Discount',
+            last_name='Tester',
+            user=self.user,
+            event=self.event,
+            date_of_birth=date(1995, 6, 1),
+            relationship_to_user=AttendeeRelationship.SELF,
+            booking=self.booking,
+            defined_by=self.user,
+        )
+
+        self.product = Product.objects.create(
+            title='Discount Test Product',
+            event=self.event,
+            base_amount=Money(50, 'GBP'),
+            added_by=self.user,
+            verified=True,
+            is_active=True,
+        )
+        self.variant = ProductVariant.objects.create(
+            product=self.product,
+            size=ProductSizeChoices.MEDIUM,
+            color='#FF0000',
+            stock_quantity=100,
+            max_stock_quantity=200,
+            max_purchase_quantity_per_order=10,
+            added_by=self.user,
+            verified=True,
+            is_active=True,
+        )
+
+        self.payment_method = PaymentMethod.objects.create(
+            event=self.event,
+            method_type=PaymentMethodTypeChoices.BANK_TRANSFER,
+            title='Bank Transfer',
+            is_active=True,
+            created_by=self.user,
+        )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _create_product_code_discount(self, code, amount=None, percentage=None, active=True):
+        """Create a CODE_MATCHES Discount targeting self.product."""
+        from django.contrib.contenttypes.models import ContentType
+        discount_type = DiscountType.FIXED if amount is not None else DiscountType.PERCENTAGE
+        discount = Discount.objects.create(
+            name=f'Code Discount ({code})',
+            discount_type=discount_type,
+            amount=Money(amount, 'GBP') if amount is not None else None,
+            percentage=percentage,
+            target_type=ContentType.objects.get_for_model(Product),
+            target_id=self.product.pk,
+            active=active,
+            created_by=self.user,
+        )
+        DiscountRule.objects.create(
+            rule_type=DiscountRuleTypeChoices.CODE_MATCHES,
+            name=f'Code rule ({code})',
+            discount=discount,
+            value=code,
+            active=True,
+            added_by=self.user,
+        )
+        return discount
+
+    def _create_variant_code_discount(self, code, amount=None, percentage=None, active=True):
+        """Create a CODE_MATCHES Discount targeting self.variant."""
+        from django.contrib.contenttypes.models import ContentType
+        discount_type = DiscountType.FIXED if amount is not None else DiscountType.PERCENTAGE
+        discount = Discount.objects.create(
+            name=f'Variant Code Discount ({code})',
+            discount_type=discount_type,
+            amount=Money(amount, 'GBP') if amount is not None else None,
+            percentage=percentage,
+            target_type=ContentType.objects.get_for_model(ProductVariant),
+            target_id=self.variant.pk,
+            active=active,
+            created_by=self.user,
+        )
+        DiscountRule.objects.create(
+            rule_type=DiscountRuleTypeChoices.CODE_MATCHES,
+            name=f'Variant code rule ({code})',
+            discount=discount,
+            value=code,
+            active=True,
+            added_by=self.user,
+        )
+        return discount
+
+    def _create_order(self, quantity=1):
+        order = Order.objects.create(
+            customer=self.user,
+            attendee=self.attendee,
+            status=OrderStatusChoices.DRAFT,
+            total_amount=Money(0, 'GBP'),
+            created_by=self.user,
+        )
+        order.add_order_item(self.variant, quantity)
+        order.refresh_from_db()
+        return order
+
+    # ------------------------------------------------------------------
+    # validate-code tests
+    # ------------------------------------------------------------------
+
+    def test_validate_code_valid_product_level_returns_true(self):
+        """A code targeting a Product in the order must be valid."""
+        self._create_product_code_discount(code='PROD10', amount=10)
+        order = self._create_order()
+
+        response = self.client.post(
+            '/api/products/orders/validate-code/',
+            {'code': 'PROD10', 'order_id': str(order.order_id)},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['valid'])
+
+    def test_validate_code_variant_level_returns_false(self):
+        """A code targeting a ProductVariant (not a Product) must not be valid."""
+        self._create_variant_code_discount(code='VAR15', amount=15)
+        order = self._create_order()
+
+        response = self.client.post(
+            '/api/products/orders/validate-code/',
+            {'code': 'VAR15', 'order_id': str(order.order_id)},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['valid'])
+
+    def test_validate_code_wrong_code_returns_false(self):
+        """An unrecognised code must return valid=false."""
+        order = self._create_order()
+
+        response = self.client.post(
+            '/api/products/orders/validate-code/',
+            {'code': 'DOESNOTEXIST', 'order_id': str(order.order_id)},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['valid'])
+
+    def test_validate_code_inactive_discount_returns_false(self):
+        """A code whose parent discount is inactive must return valid=false."""
+        self._create_product_code_discount(code='INACTIVE20', amount=20, active=False)
+        order = self._create_order()
+
+        response = self.client.post(
+            '/api/products/orders/validate-code/',
+            {'code': 'INACTIVE20', 'order_id': str(order.order_id)},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['valid'])
+
+    def test_validate_code_requires_code_field(self):
+        """Missing code field must return 400."""
+        order = self._create_order()
+        response = self.client.post(
+            '/api/products/orders/validate-code/',
+            {'order_id': str(order.order_id)},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_validate_code_requires_order_id_field(self):
+        """Missing order_id field must return 400."""
+        response = self.client.post(
+            '/api/products/orders/validate-code/',
+            {'code': 'ANYCODE'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_validate_code_requires_authentication(self):
+        """Unauthenticated requests must be rejected."""
+        order = self._create_order()
+        self.client.force_authenticate(user=None)
+        response = self.client.post(
+            '/api/products/orders/validate-code/',
+            {'code': 'PROD10', 'order_id': str(order.order_id)},
+            format='json',
+        )
+        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+    # ------------------------------------------------------------------
+    # preview-pricing with discount_code
+    # ------------------------------------------------------------------
+
+    def test_preview_pricing_with_code_reduces_total(self):
+        """preview-pricing with a valid code should return a lower total."""
+        self._create_product_code_discount(code='PREVIEW10', amount=10)
+
+        response = self.client.post(
+            '/api/products/orders/preview-pricing/',
+            {
+                'attendee_id': str(self.attendee.attendee_id),
+                'discount_code': 'PREVIEW10',
+                'items': [{'product_variant_id': str(self.variant.variant_id), 'quantity': 1}],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['discount_code_applied'], 'PREVIEW10')
+        # Product base is £50, discount is £10 → total should be £40
+        self.assertEqual(response.data['total_amount'], '40.00')
+        self.assertEqual(response.data['total_discount'], '10.00')
+
+        item = response.data['items'][0]
+        self.assertEqual(item['unit_price'], '40.00')
+        self.assertEqual(item['line_discount'], '10.00')
+        self.assertEqual(len(item['applied_discounts']), 1)
+
+    def test_preview_pricing_without_code_unchanged(self):
+        """preview-pricing without a code must return the original total (regression)."""
+        self._create_product_code_discount(code='NOTUSED', amount=10)
+
+        response = self.client.post(
+            '/api/products/orders/preview-pricing/',
+            {
+                'attendee_id': str(self.attendee.attendee_id),
+                'items': [{'product_variant_id': str(self.variant.variant_id), 'quantity': 1}],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.data['discount_code_applied'])
+        self.assertEqual(response.data['total_amount'], '50.00')
+        self.assertEqual(response.data['total_discount'], '0.00')
+
+    def test_preview_pricing_with_wrong_code_no_discount(self):
+        """An unrecognised code in preview must not apply any discount."""
+        response = self.client.post(
+            '/api/products/orders/preview-pricing/',
+            {
+                'attendee_id': str(self.attendee.attendee_id),
+                'discount_code': 'WRONGCODE',
+                'items': [{'product_variant_id': str(self.variant.variant_id), 'quantity': 1}],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Code is passed through but yields no discount
+        self.assertEqual(response.data['discount_code_applied'], 'WRONGCODE')
+        self.assertEqual(response.data['total_amount'], '50.00')
+        self.assertEqual(response.data['total_discount'], '0.00')
+
+    def test_preview_pricing_with_percentage_code(self):
+        """Percentage-type code discounts must be correctly applied in preview."""
+        self._create_product_code_discount(code='PERCENT20', percentage=20)
+
+        response = self.client.post(
+            '/api/products/orders/preview-pricing/',
+            {
+                'attendee_id': str(self.attendee.attendee_id),
+                'discount_code': 'PERCENT20',
+                'items': [{'product_variant_id': str(self.variant.variant_id), 'quantity': 2}],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # 20% of £50 = £10 per unit; 2 units → total discount £20, total amount £80
+        self.assertEqual(response.data['total_discount'], '20.00')
+        self.assertEqual(response.data['total_amount'], '80.00')
+
+    # ------------------------------------------------------------------
+    # checkout with discount_code
+    # ------------------------------------------------------------------
+
+    def test_checkout_with_code_creates_discounted_payment(self):
+        """Checkout with a valid code must create a payment for the discounted amount."""
+        self._create_product_code_discount(code='CHECKOUT10', amount=10)
+        order = self._create_order()
+
+        response = self.client.post(
+            f'/api/products/orders/{order.order_id}/checkout/',
+            {'payment_method_id': self.payment_method.id, 'discount_code': 'CHECKOUT10'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['total_amount'], '40.00')
+        self.assertEqual(response.data['discount_code_applied'], 'CHECKOUT10')
+
+        order.refresh_from_db()
+        self.assertIsNotNone(order.payment)
+        # Payment amount must be the discounted total
+        self.assertEqual(order.payment.base_amount, Money(40, 'GBP'))
+        # Order total_amount is updated to reflect the discounted amount
+        self.assertEqual(order.total_amount, Money(40, 'GBP'))
+
+    def test_checkout_with_code_stores_metadata_snapshot(self):
+        """Payment metadata must include discount_code and applied_discounts_snapshot."""
+        self._create_product_code_discount(code='SNAP10', amount=10)
+        order = self._create_order()
+
+        response = self.client.post(
+            f'/api/products/orders/{order.order_id}/checkout/',
+            {'payment_method_id': self.payment_method.id, 'discount_code': 'SNAP10'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        order.refresh_from_db()
+        metadata = order.payment.metadata or {}
+        self.assertEqual(metadata.get('discount_code'), 'SNAP10')
+
+        snapshot = metadata.get('applied_discounts_snapshot')
+        self.assertIsNotNone(snapshot)
+        self.assertIsInstance(snapshot, list)
+        self.assertEqual(len(snapshot), 1)
+
+        entry = snapshot[0]
+        self.assertEqual(entry['item_index'], 0)
+        self.assertEqual(str(entry['variant_id']), str(self.variant.variant_id))
+        self.assertEqual(len(entry['discount_breakdown']), 1)
+        self.assertEqual(entry['total_discount'], '10.00')
+
+    def test_checkout_without_code_payment_amount_unchanged(self):
+        """Regression: checkout without a code must create a payment at the original order total."""
+        self._create_product_code_discount(code='NOTUSED', amount=10)
+        order = self._create_order()
+
+        response = self.client.post(
+            f'/api/products/orders/{order.order_id}/checkout/',
+            {'payment_method_id': self.payment_method.id},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['total_amount'], '50.00')
+        self.assertIsNone(response.data['discount_code_applied'])
+
+        order.refresh_from_db()
+        self.assertEqual(order.payment.base_amount, Money(50, 'GBP'))
+        metadata = order.payment.metadata or {}
+        self.assertIsNone(metadata.get('discount_code'))
+
+    def test_checkout_with_inapplicable_code_no_discount(self):
+        """A code that exists but targets a different product must not reduce the payment."""
+        # Discount on a different product
+        other_product = Product.objects.create(
+            title='Other Product',
+            event=self.event,
+            base_amount=Money(30, 'GBP'),
+            added_by=self.user,
+            verified=True,
+            is_active=True,
+        )
+        from django.contrib.contenttypes.models import ContentType
+        other_discount = Discount.objects.create(
+            name='Other Discount',
+            discount_type=DiscountType.FIXED,
+            amount=Money(5, 'GBP'),
+            target_type=ContentType.objects.get_for_model(Product),
+            target_id=other_product.pk,
+            active=True,
+            created_by=self.user,
+        )
+        DiscountRule.objects.create(
+            rule_type=DiscountRuleTypeChoices.CODE_MATCHES,
+            name='Other code rule',
+            discount=other_discount,
+            value='OTHERPROD',
+            active=True,
+            added_by=self.user,
+        )
+
+        order = self._create_order()
+        response = self.client.post(
+            f'/api/products/orders/{order.order_id}/checkout/',
+            {'payment_method_id': self.payment_method.id, 'discount_code': 'OTHERPROD'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # Code OTHERPROD targets a different product; no discount on this order's variant
+        self.assertEqual(response.data['total_amount'], '50.00')
+
+        order.refresh_from_db()
+        self.assertEqual(order.payment.base_amount, Money(50, 'GBP'))
+
+    def test_checkout_with_variant_level_code_has_no_effect(self):
+        """A code targeting a ProductVariant (not a Product) must not apply any discount."""
+        self._create_variant_code_discount(code='VARCODE5', amount=5)
+        order = self._create_order()
+
+        response = self.client.post(
+            f'/api/products/orders/{order.order_id}/checkout/',
+            {'payment_method_id': self.payment_method.id, 'discount_code': 'VARCODE5'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['total_amount'], '50.00')
+
+        order.refresh_from_db()
+        self.assertEqual(order.payment.base_amount, Money(50, 'GBP'))
