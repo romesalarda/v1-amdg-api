@@ -3143,6 +3143,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         self._assert_attendee_access(attendee, request.user)
 
         attendee_context = attendee.pricing_context(code=discount_code)
+        print(f"Attendee context for pricing preview: {attendee_context}")  # Debug log
         currency_code = 'GBP'
         lines = []
         subtotal = decimal.Decimal('0.00')
@@ -3171,12 +3172,21 @@ class OrderViewSet(viewsets.ModelViewSet):
                 raise ValidationError({'items': f'Variant {variant.variant_id} does not belong to attendee event.'})
             if not variant.can_attendee_purchase(attendee):
                 raise ValidationError({'items': f'Attendee cannot purchase variant {variant.variant_id}.'})
-            if not variant.can_attendee_purchase_quantity(attendee, quantity_int):
-                raise ValidationError({'items': f'Requested quantity exceeds stock or limits for variant {variant.variant_id}.'})
+            # if not variant.can_attendee_purchase_quantity(attendee, quantity_int):
+            #     raise ValidationError({'items': f'Requested quantity exceeds stock or limits for variant {variant.variant_id}.'})
+            variant.can_attendee_purchase_quantity(attendee, quantity_int, raise_exception=True)
 
             modified_amount = variant.modified_amount.amount.quantize(decimal.Decimal('0.01'))
-            # Use context-aware pricing so that code-based discounts are included.
-            final_amount = variant.total_amount_for_context(attendee_context).amount.quantize(decimal.Decimal('0.01'))
+            # Discounts are attached to the parent Product; apply them against
+            # the variant's own price so that per-variant pricing is respected.
+            product_discount_money = variant.product.calculate_total_discounts(
+                discount_base=variant.modified_amount,
+                context=attendee_context,
+            )
+            final_money = variant.modified_amount - product_discount_money
+            if final_money.amount < decimal.Decimal('0.00'):
+                final_money = Money(decimal.Decimal('0.00'), final_money.currency)
+            final_amount = final_money.amount.quantize(decimal.Decimal('0.01'))
             discount_per_unit = max(modified_amount - final_amount, decimal.Decimal('0.00'))
 
             line_subtotal = (modified_amount * quantity_int).quantize(decimal.Decimal('0.01'))
@@ -3187,7 +3197,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             total_discount += line_discount
 
             applied_discounts = []
-            for discount in variant.discounts:
+            for discount in variant.product.discounts:
                 if not discount_applies(discount, attendee_context):
                     continue
                 if discount.discount_type == DiscountType.PERCENTAGE:
@@ -3563,13 +3573,30 @@ class OrderViewSet(viewsets.ModelViewSet):
                     discounted_total += order_item.total_price
                     continue
 
-                item_unit_price = variant.total_amount_for_context(attendee_context)
-                item_line_total = item_unit_price * order_item.quantity
+                # Discounts are attached to the parent Product; apply them against
+                # the variant's own price so that per-variant pricing is respected.
+                product_discount_money = variant.product.calculate_total_discounts(
+                    discount_base=variant.modified_amount,
+                    context=attendee_context,
+                )
+                item_unit_price = variant.modified_amount - product_discount_money
+                if item_unit_price.amount < decimal.Decimal('0.00'):
+                    item_unit_price = Money(decimal.Decimal('0.00'), item_unit_price.currency)
+                rounded_unit_price = Money(
+                    item_unit_price.amount.quantize(decimal.Decimal('0.01')),
+                    item_unit_price.currency,
+                )
+                item_line_total = rounded_unit_price * order_item.quantity
                 discounted_total += item_line_total
+
+                # Persist the discounted price on the item so the order record
+                # stays consistent with the actual charged amount.
+                if rounded_unit_price != order_item.unit_price:
+                    order_item.set_unit_price(rounded_unit_price)
 
                 # Build per-item discount breakdown for metadata snapshot.
                 item_discount_breakdown = []
-                for disc in variant.discounts:
+                for disc in variant.product.discounts:
                     if not _discount_applies(disc, attendee_context):
                         continue
                     if disc.discount_type == _DiscountType.PERCENTAGE:
@@ -3588,7 +3615,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                     })
 
                 per_unit_discount = max(
-                    variant.modified_amount.amount - item_unit_price.amount,
+                    variant.modified_amount.amount - rounded_unit_price.amount,
                     decimal.Decimal('0.00'),
                 )
                 applied_discounts_snapshot.append({
@@ -3597,14 +3624,17 @@ class OrderViewSet(viewsets.ModelViewSet):
                     'product_title': variant.product.title if variant.product else '',
                     'quantity': order_item.quantity,
                     'unit_price_before_discount': str(variant.modified_amount.amount.quantize(decimal.Decimal('0.01'))),
-                    'unit_price_after_discount': str(item_unit_price.amount.quantize(decimal.Decimal('0.01'))),
+                    'unit_price_after_discount': str(rounded_unit_price.amount),
                     'total_discount': str((per_unit_discount * order_item.quantity).quantize(decimal.Decimal('0.01'))),
-                    'currency': item_unit_price.currency.code,
+                    'currency': rounded_unit_price.currency.code,
                     'discount_breakdown': item_discount_breakdown,
                 })
 
             if discounted_total.amount < decimal.Decimal('0.00'):
                 discounted_total = Money(decimal.Decimal('0.00'), locked_order.total_amount.currency.code)
+
+            # Bring the order total in line with the updated item prices.
+            locked_order.recalculate_total_amount()
 
             attendee_name = (
                 f"{attendee.first_name} {attendee.last_name}".strip()
@@ -3684,7 +3714,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 'payment_id': str(payment.payment_id),
                 'payment_reference': payment.payment_reference,
                 'payment_description': payment.description,
-                'total_amount': str(discounted_total.amount),
+                'total_amount': str(discounted_total.amount.quantize(decimal.Decimal('0.01'))),
                 'currency': str(discounted_total.currency.code),
                 'discount_code_applied': discount_code or None,
                 'bank_transfer_evidence_id': str(bank_transfer_evidence.bank_transfer_id) if bank_transfer_evidence else None,
@@ -3829,29 +3859,25 @@ class OrderViewSet(viewsets.ModelViewSet):
         if not request.user.is_staff and order.customer_id != request.user.id:
             return Response({'valid': False}, status=status.HTTP_200_OK)
 
-        # Collect all product PKs and variant PKs present in the order.
+        # Discounts are attached to Products only — collect the product PKs for
+        # every variant in the order.
         product_pks = []
-        variant_pks = []
         for item in order.order_items.all():
-            if item.product_variant:
-                variant_pks.append(item.product_variant.pk)
-                if item.product_variant.product_id:
-                    product_pks.append(item.product_variant.product_id)
+            if item.product_variant and item.product_variant.product_id:
+                product_pks.append(item.product_variant.product_id)
 
-        if not product_pks and not variant_pks:
+        if not product_pks:
             return Response({'valid': False}, status=status.HTTP_200_OK)
 
         product_ct = ContentType.objects.get_for_model(Product)
-        variant_ct = ContentType.objects.get_for_model(ProductVariant)
 
         valid = DiscountRule.objects.filter(
             rule_type=DiscountRuleTypeChoices.CODE_MATCHES,
             value=code,
             active=True,
             discount__active=True,
-        ).filter(
-            Q(discount__target_type=product_ct, discount__target_id__in=product_pks)
-            | Q(discount__target_type=variant_ct, discount__target_id__in=variant_pks)
+            discount__target_type=product_ct,
+            discount__target_id__in=product_pks,
         ).exists()
 
         return Response({'valid': valid}, status=status.HTTP_200_OK)

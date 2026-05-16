@@ -1306,8 +1306,8 @@ class OrderCheckoutDiscountCodeTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['valid'])
 
-    def test_validate_code_valid_variant_level_returns_true(self):
-        """A code targeting a ProductVariant in the order must be valid."""
+    def test_validate_code_variant_level_returns_false(self):
+        """A code targeting a ProductVariant (not a Product) must not be valid."""
         self._create_variant_code_discount(code='VAR15', amount=15)
         order = self._create_order()
 
@@ -1317,7 +1317,7 @@ class OrderCheckoutDiscountCodeTests(TestCase):
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['valid'])
+        self.assertFalse(response.data['valid'])
 
     def test_validate_code_wrong_code_returns_false(self):
         """An unrecognised code must return valid=false."""
@@ -1380,7 +1380,7 @@ class OrderCheckoutDiscountCodeTests(TestCase):
 
     def test_preview_pricing_with_code_reduces_total(self):
         """preview-pricing with a valid code should return a lower total."""
-        self._create_variant_code_discount(code='PREVIEW10', amount=10)
+        self._create_product_code_discount(code='PREVIEW10', amount=10)
 
         response = self.client.post(
             '/api/products/orders/preview-pricing/',
@@ -1438,7 +1438,7 @@ class OrderCheckoutDiscountCodeTests(TestCase):
 
     def test_preview_pricing_with_percentage_code(self):
         """Percentage-type code discounts must be correctly applied in preview."""
-        self._create_variant_code_discount(code='PERCENT20', percentage=20)
+        self._create_product_code_discount(code='PERCENT20', percentage=20)
 
         response = self.client.post(
             '/api/products/orders/preview-pricing/',
@@ -1460,7 +1460,7 @@ class OrderCheckoutDiscountCodeTests(TestCase):
 
     def test_checkout_with_code_creates_discounted_payment(self):
         """Checkout with a valid code must create a payment for the discounted amount."""
-        self._create_variant_code_discount(code='CHECKOUT10', amount=10)
+        self._create_product_code_discount(code='CHECKOUT10', amount=10)
         order = self._create_order()
 
         response = self.client.post(
@@ -1474,14 +1474,14 @@ class OrderCheckoutDiscountCodeTests(TestCase):
 
         order.refresh_from_db()
         self.assertIsNotNone(order.payment)
-        # Payment amount must be the discounted total, not the original order total
+        # Payment amount must be the discounted total
         self.assertEqual(order.payment.base_amount, Money(40, 'GBP'))
-        # Order total_amount must remain unchanged
-        self.assertEqual(order.total_amount, Money(50, 'GBP'))
+        # Order total_amount is updated to reflect the discounted amount
+        self.assertEqual(order.total_amount, Money(40, 'GBP'))
 
     def test_checkout_with_code_stores_metadata_snapshot(self):
         """Payment metadata must include discount_code and applied_discounts_snapshot."""
-        self._create_variant_code_discount(code='SNAP10', amount=10)
+        self._create_product_code_discount(code='SNAP10', amount=10)
         order = self._create_order()
 
         response = self.client.post(
@@ -1568,8 +1568,8 @@ class OrderCheckoutDiscountCodeTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(order.payment.base_amount, Money(50, 'GBP'))
 
-    def test_checkout_with_variant_level_code(self):
-        """A code targeting the ProductVariant directly must be applied at checkout."""
+    def test_checkout_with_variant_level_code_has_no_effect(self):
+        """A code targeting a ProductVariant (not a Product) must not apply any discount."""
         self._create_variant_code_discount(code='VARCODE5', amount=5)
         order = self._create_order()
 
@@ -1579,7 +1579,7 @@ class OrderCheckoutDiscountCodeTests(TestCase):
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['total_amount'], '45.00')
+        self.assertEqual(response.data['total_amount'], '50.00')
 
         order.refresh_from_db()
-        self.assertEqual(order.payment.base_amount, Money(45, 'GBP'))
+        self.assertEqual(order.payment.base_amount, Money(50, 'GBP'))

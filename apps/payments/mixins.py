@@ -180,6 +180,8 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
             context=context
         )
 
+        print(f"Calculated total discounts: {discount} for context: {context}")  # Debug log
+
         total = price - discount
         zero = Money(0, price.currency)
         result = max(total, zero)
