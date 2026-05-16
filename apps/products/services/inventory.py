@@ -129,7 +129,7 @@ def _build_variant_line(
     restock_cost_amount: Optional[Decimal] = None
 
     if max_stock is not None:
-        quantity_to_order = max(0, max_stock - current_stock + live_order_units)
+        quantity_to_order = max(0, live_order_units)
         restock_cost_amount = (unit_price.amount * Decimal(quantity_to_order)).quantize(Decimal("0.01"))
 
     current_stock_value_amount = (unit_price.amount * Decimal(current_stock)).quantize(Decimal("0.01"))

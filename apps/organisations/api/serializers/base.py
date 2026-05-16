@@ -903,11 +903,11 @@ class EventSponsorCreateUpdateSerializer(serializers.ModelSerializer):
 
         return attrs
 
-
+from apps.events.models import Event
 class EventSponsorCheckoutSerializer(serializers.Serializer):
     """Payload serializer for sponsor checkout action."""
 
-    event_id = serializers.UUIDField(required=False)
+    event_id = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all(), required=True)
     package_id = serializers.UUIDField(required=True)
     payment_method_id = serializers.IntegerField(required=True)
     organisation_id = serializers.IntegerField(required=False)

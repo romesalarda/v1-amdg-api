@@ -19,6 +19,8 @@ ViewSets:
 Author: AMDG Platform Team
 Version: 1.0.0
 """
+import uuid
+
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -1050,9 +1052,9 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             organisation = get_organisation_or_url_safe_title(organisation_id)
         except Http404:
             return Response({'organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
-
+        
         try:
-            event = Event.objects.get(event_id=event_id)
+            event = Event.objects.get(url_safe_title=event_id)
         except Event.DoesNotExist:
             return Response({'event_id': ['Event not found.']}, status=status.HTTP_404_NOT_FOUND)
 
