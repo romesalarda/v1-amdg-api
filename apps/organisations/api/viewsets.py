@@ -926,15 +926,30 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             except Organisation.DoesNotExist:
                 return Response({'organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
 
+        # When invite has no pre-linked organisation, create one on-the-fly using the
+        # name provided by the external sponsor. The new org + controller are saved
+        # inside the atomic transaction below.
+        org_created_inline = False
         if organisation is None:
-            return Response({'organisation_id': ['Unable to resolve organisation for this checkout.']}, status=status.HTTP_400_BAD_REQUEST)
+            if invite:
+                org_name = (data.get('organisation_name') or '').strip()
+                if not org_name:
+                    return Response(
+                        {'organisation_name': ['organisation_name is required when the invite has no pre-linked organisation.']},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                organisation = Organisation(title=org_name, created_by=request.user)
+                org_created_inline = True
+            else:
+                return Response({'organisation_id': ['Unable to resolve organisation for this checkout.']}, status=status.HTTP_400_BAD_REQUEST)
 
-        is_org_controller = request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
-            organisation=organisation,
-            user=request.user,
-        ).exists()
-        if not is_org_controller:
-            return Response({'error': 'You must control this organisation to checkout sponsorship.'}, status=status.HTTP_403_FORBIDDEN)
+        if not org_created_inline:
+            is_org_controller = request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
+                organisation=organisation,
+                user=request.user,
+            ).exists()
+            if not is_org_controller:
+                return Response({'error': 'You must control this organisation to checkout sponsorship.'}, status=status.HTTP_403_FORBIDDEN)
 
         chapter_location = invite.chapter_location if invite and invite.chapter_location_id else None
         if data.get('chapter_location'):
@@ -944,7 +959,8 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             except ChapterLocation.DoesNotExist:
                 return Response({'chapter_location': ['Chapter location not found.']}, status=status.HTTP_404_NOT_FOUND)
 
-        if EventSponsor.objects.filter(
+        # A freshly-created (unsaved) organisation cannot already be a sponsor.
+        if not org_created_inline and EventSponsor.objects.filter(
             event=event,
             organisation=organisation,
             chapter_location=chapter_location,
@@ -956,6 +972,14 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             return Response({'name': ['Sponsor name cannot be empty.']}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
+            if org_created_inline:
+                organisation.save()
+                OrganisationControl.objects.create(
+                    organisation=organisation,
+                    user=request.user,
+                    added_by=request.user,
+                )
+
             sponsor = EventSponsor.objects.create(
                 name=sponsor_name,
                 description=data.get('description', ''),
@@ -1307,6 +1331,54 @@ class EventSponsorInviteViewSet(viewsets.ModelViewSet):
 
         serializer = EventSponsorInviteDetailSerializer(invite, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Retrieve sponsor invite by token",
+        description=(
+            "Retrieve sponsor invite details and event info by token. "
+            "Does not require authentication. Used by the external sponsor checkout page. "
+            "Returns 400 if the invite has already been accepted or declined."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='token',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Invite token UUID.',
+            ),
+        ],
+        responses={200: EventSponsorInviteDetailSerializer},
+        tags=["Event Sponsor Invites"],
+    )
+    @action(detail=False, methods=['get'], url_path='retrieve-by-token', permission_classes=[permissions.AllowAny])
+    def retrieve_by_token(self, request):
+        token = request.query_params.get('token')
+        if not token:
+            return Response({'error': 'token query parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            uuid.UUID(token)
+        except ValueError:
+            return Response({'error': 'token must be a valid UUID.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            invite = EventSponsorInvite.objects.select_related(
+                'event', 'organisation', 'chapter_location'
+            ).get(token=token)
+        except EventSponsorInvite.DoesNotExist:
+            return Response({'error': 'Invite not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = EventSponsorInviteDetailSerializer(invite, context={'request': request})
+        data = dict(serializer.data)
+
+        # Embed event details needed for the external checkout page.
+        event = invite.event
+        data['event_title'] = event.title
+        data['event_url_safe_title'] = event.url_safe_title
+        data['event_start_datetime'] = event.start_datetime.isoformat() if event.start_datetime else None
+        data['event_end_datetime'] = event.end_datetime.isoformat() if event.end_datetime else None
+        data['event_id'] = str(event.event_id)
+
+        return Response(data, status=status.HTTP_200_OK)
 
 
 # ============================================================================

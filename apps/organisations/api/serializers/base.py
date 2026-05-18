@@ -908,10 +908,13 @@ class EventSponsorCheckoutSerializer(serializers.Serializer):
     """Payload serializer for sponsor checkout action."""
 
     # event_id must be a UUID string (the Event.event_id field) — NOT url_safe_title.
-    event_id = serializers.UUIDField(required=True)
+    # Optional when invite_token is provided (event is derived from the invite server-side).
+    event_id = serializers.UUIDField(required=False)
     package_id = serializers.UUIDField(required=True)
     payment_method_id = serializers.IntegerField(required=True)
     organisation_id = serializers.IntegerField(required=False)
+    # Used to create an Organisation on-the-fly when invite has no pre-linked organisation.
+    organisation_name = serializers.CharField(required=False, allow_blank=True)
     invite_token = serializers.UUIDField(required=False)
     chapter_location = serializers.IntegerField(required=False)
     name = serializers.CharField(required=False, allow_blank=True)
