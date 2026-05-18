@@ -15,7 +15,9 @@ from rest_framework.response import Response
 from apps.organisations import statistics
 from apps.organisations.api.serializers.statistics import (
 	EventPerformanceSerializer,
+	EventsOnMapSerializer,
 	LeaderDistributionSerializer,
+	LeadersOnMapSerializer,
 	OverviewStatisticsSerializer,
 	PaymentSourcesSerializer,
 	SponsorInviteConversionSerializer,
@@ -24,7 +26,7 @@ from apps.organisations.api.serializers.statistics import (
 	SponsorFlowStatisticsSerializer,
 )
 from apps.events.models import Event
-from apps.organisations.models import Organisation, OrganisationControl
+from apps.organisations.models import Leader, Organisation, OrganisationControl
 from apps.utils.querying import get_event_or_url_safe_title, get_organisation_or_url_safe_title
 
 
@@ -498,6 +500,7 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 		summary="Events on Map",
 		description="Returns a GeoJSON FeatureCollection of events for a given organisation.",
 		parameters=[ORGANISATION_ID_PARAM],
+		responses={200: EventsOnMapSerializer},
 		tags=["Organisation Statistics"],
 	)
 	@action(detail=False, methods=["get"], url_path="events-on-map")
@@ -506,23 +509,26 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 		organisation_ids = scope["organisation_ids"]
 
 		events = Event.objects.filter(
-			event_venues__isnull=False,
+			event_venues__latitude__isnull=False,
+			event_venues__longitude__isnull=False,
 		).distinct()
 		if organisation_ids is not None:
 			events = events.filter(organisation_id__in=organisation_ids)
 
 		features = []
-		for event in events.select_related("organisation").prefetch_related("attendees"):
-			event_venue = event.event_venues.first()
-			poi = event_venue.venue.poi if event_venue and event_venue.venue_id else None
-			if poi and poi.latitude is not None and poi.longitude is not None:
+		for event in events.prefetch_related("event_venues", "attendees"):
+			event_venue = event.event_venues.filter(
+				latitude__isnull=False,
+				longitude__isnull=False,
+			).first()
+			if event_venue:
 				features.append({
 					"type": "Feature",
 					"geometry": {
 						"type": "Point",
 						"coordinates": [
-							float(poi.longitude),
-							float(poi.latitude),
+							float(event_venue.longitude),
+							float(event_venue.latitude),
 						]
 					},
 					"properties": {
@@ -544,6 +550,7 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 		summary="Leaders on Map",
 		description="Returns a GeoJSON FeatureCollection of leaders for a given organisation.",
 		parameters=[ORGANISATION_ID_PARAM],
+		responses={200: LeadersOnMapSerializer},
 		tags=["Organisation Statistics"],
 	)
 	@action(detail=False, methods=["get"], url_path="leaders-on-map")
@@ -551,24 +558,29 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 		scope = self._get_scope(request)
 		organisation_ids = scope["organisation_ids"]
 
-		leaders = OrganisationControl.objects.all()
+		leaders = Leader.objects.select_related("user", "organisation", "target_type").all()
 		if organisation_ids is not None:
 			leaders = leaders.filter(organisation_id__in=organisation_ids)
 
 		features = []
 		for leader in leaders:
-			# Placeholder for calculating leader's location
-			# This needs to be implemented based on how leader locations are determined
-			# For now, we'll use a placeholder location
+			location = leader.authority_object
+			if location is None:
+				continue
+			latitude = getattr(location, "latitude", None)
+			longitude = getattr(location, "longitude", None)
+			if latitude is None or longitude is None:
+				continue
 			features.append({
 				"type": "Feature",
 				"geometry": {
 					"type": "Point",
-					"coordinates": [0, 0]  # Placeholder
+					"coordinates": [float(longitude), float(latitude)],
 				},
 				"properties": {
-					"name": leader.user.get_full_name(),
-					"role": "Leader"
+					"name": leader.user.get_full_name() or leader.user.username,
+					"role": leader.location_type or "Leader",
+					"location_name": leader.location_name,
 				}
 			})
 

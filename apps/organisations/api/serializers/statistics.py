@@ -382,3 +382,25 @@ class SponsorFlowStatisticsSerializer(BaseOrganisationStatisticsSerializer):
 
 	class Meta:
 		ref_name = "OrganisationSponsorFlowStatistics"
+
+
+class GeoJSONFeatureSerializer(serializers.Serializer):
+	type = serializers.CharField()
+	geometry = serializers.DictField()
+	properties = serializers.DictField()
+
+
+class EventsOnMapSerializer(serializers.Serializer):
+	type = serializers.CharField()
+	features = GeoJSONFeatureSerializer(many=True)
+
+	class Meta:
+		ref_name = "EventsOnMapGeoJSON"
+
+
+class LeadersOnMapSerializer(serializers.Serializer):
+	type = serializers.CharField()
+	features = GeoJSONFeatureSerializer(many=True)
+
+	class Meta:
+		ref_name = "LeadersOnMapGeoJSON"
