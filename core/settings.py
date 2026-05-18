@@ -545,25 +545,37 @@ CELERY_BEAT_SCHEDULE = {
 # =============================================================================
 # EMAIL CONFIGURATION
 # =============================================================================
+# Local dev:  EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+#             EMAIL_HOST=mailpit (or localhost), EMAIL_PORT=1025
+# Production: EMAIL_BACKEND=django_ses.SESBackend
+# =============================================================================
 EMAIL_BACKEND = get_secret(
     "EMAIL_BACKEND",
-    "django.core.mail.backends.console.EmailBackend"
+    "django.core.mail.backends.smtp.EmailBackend"
 )
 
 if "ses" in EMAIL_BACKEND.lower():
-    # AWS SES Configuration
+    # AWS SES Configuration (production)
     AWS_SES_REGION_NAME = get_secret("AWS_SES_REGION_NAME", "eu-west-2")
     AWS_SES_REGION_ENDPOINT = f'email.{AWS_SES_REGION_NAME}.amazonaws.com'
     DEFAULT_FROM_EMAIL = get_secret("DEFAULT_FROM_EMAIL", "noreply@rsalarda.works")
     SERVER_EMAIL = get_secret("SERVER_EMAIL", "noreply@rsalarda.works")
 else:
-    # SMTP/Console fallback
-    EMAIL_HOST = get_secret("EMAIL_HOST", "smtp.gmail.com")
-    EMAIL_PORT = int(get_secret("EMAIL_PORT", "587"))
-    EMAIL_USE_TLS = get_secret("EMAIL_USE_TLS", "True") == "True"
+    # SMTP fallback — defaults to Mailpit for local development
+    # Mailpit SMTP: port 1025 | Mailpit Web UI: port 8025
+    EMAIL_HOST = get_secret("EMAIL_HOST", "localhost")
+    EMAIL_PORT = int(get_secret("EMAIL_PORT", "1025"))
+    EMAIL_USE_TLS = get_secret("EMAIL_USE_TLS", "False") == "True"
+    EMAIL_USE_SSL = get_secret("EMAIL_USE_SSL", "False") == "True"
     EMAIL_HOST_USER = get_secret("EMAIL_HOST_USER", "")
     EMAIL_HOST_PASSWORD = get_secret("EMAIL_HOST_PASSWORD", "")
-    DEFAULT_FROM_EMAIL = get_secret("DEFAULT_FROM_EMAIL", "noreply@example.com")
+    DEFAULT_FROM_EMAIL = get_secret("DEFAULT_FROM_EMAIL", "noreply@amdg.local")
+
+# Frontend URL — used when building links included in emails (e.g. password reset)
+FRONTEND_URL = get_secret("FRONTEND_URL", "http://localhost:3000")
+
+# Password reset token validity in seconds (default: 1 hour)
+PASSWORD_RESET_TIMEOUT = int(get_secret("PASSWORD_RESET_TIMEOUT", "3600"))
 
 # =============================================================================
 # STRIPE CONFIGURATION

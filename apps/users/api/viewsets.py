@@ -44,6 +44,8 @@ from .serializers import (
     UserUpdateSerializer,
     ChangePasswordSerializer,
     EmailVerificationSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
     CustomTokenObtainPairSerializer,
     GoogleOAuthSerializer,
     GoogleOAuthCallbackSerializer,
@@ -605,6 +607,112 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
     
+    @extend_schema(
+        summary="Request Password Reset",
+        description=(
+            "Send a password reset link to the provided email address. "
+            "Always returns 200 regardless of whether the email exists to prevent account enumeration."
+        ),
+        tags=['Users'],
+        request=PasswordResetRequestSerializer,
+        responses={
+            200: OpenApiResponse(description="Reset link sent if account exists"),
+        }
+    )
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny],
+            url_path='forgot-password')
+    def forgot_password(self, request):
+        """
+        Initiate password reset by email.
+
+        Generates a Django PasswordResetTokenGenerator uid+token pair, builds a
+        link pointing at the frontend reset page, and dispatches the email via
+        Celery.  The response is always 200 to avoid leaking whether an account
+        exists for a given email address.
+        """
+        from django.utils.http import urlsafe_base64_encode
+        from django.utils.encoding import force_bytes
+        from django.contrib.auth.tokens import PasswordResetTokenGenerator
+        from apps.users.tasks import send_password_reset_email
+
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+
+        NEUTRAL_RESPONSE = Response(
+            {'detail': 'If an account exists with this email, a password reset link has been sent.'},
+            status=status.HTTP_200_OK
+        )
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            print(f"Password reset requested for non-existent email: {email}")
+            return NEUTRAL_RESPONSE
+        print("Password reset requested for email: {email} (user ID: {user.id})")
+        if not user.is_active:
+            return NEUTRAL_RESPONSE
+
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = PasswordResetTokenGenerator().make_token(user)
+        reset_url = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
+
+        send_password_reset_email.delay(user.id, reset_url)
+
+        return NEUTRAL_RESPONSE
+
+    @extend_schema(
+        summary="Confirm Password Reset",
+        description=(
+            "Set a new password using the uid and token received via the reset email. "
+            "The token is single-use and expires after the configured timeout."
+        ),
+        tags=['Users'],
+        request=PasswordResetConfirmSerializer,
+        responses={
+            200: OpenApiResponse(description="Password reset successfully"),
+            400: OpenApiResponse(description="Invalid or expired reset link"),
+        }
+    )
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny],
+            url_path='reset-password')
+    def reset_password(self, request):
+        """
+        Complete password reset with uid, token, and new password.
+        """
+        from django.utils.http import urlsafe_base64_decode
+        from django.utils.encoding import force_str
+        from django.contrib.auth.tokens import PasswordResetTokenGenerator
+
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        uid = serializer.validated_data['uid']
+        token = serializer.validated_data['token']
+        new_password = serializer.validated_data['new_password']
+
+        INVALID_RESPONSE = Response(
+            {'detail': 'Invalid or expired reset link.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+        try:
+            user_pk = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=user_pk)
+        except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+            return INVALID_RESPONSE
+
+        if not PasswordResetTokenGenerator().check_token(user, token):
+            return INVALID_RESPONSE
+
+        user.set_password(new_password)
+        user.save()
+
+        return Response(
+            {'detail': 'Password has been reset successfully.'},
+            status=status.HTTP_200_OK
+        )
+
     @extend_schema(
         summary="Get User's Profile",
         description=(

@@ -76,21 +76,29 @@ def send_email_verification(user_id, verification_url):
 @shared_task
 def send_password_reset_email(user_id, reset_url):
     """
-    Send password reset link to user.
-    
-    Example task for password reset workflow.
+    Send a password reset email to the user.
+
+    Uses the branded HTML template at templates/emails/password_reset.html
+    via the shared send_templated_email helper.
     """
+    from apps.common.email import send_templated_email
+
     try:
         user = User.objects.get(id=user_id)
-        
-        send_mail(
+
+        expiry_hours = max(1, getattr(settings, 'PASSWORD_RESET_TIMEOUT', 3600) // 3600)
+
+        send_templated_email(
             subject='Reset your AMDG password',
-            message=f'Hello {user.get_display_name()},\n\nYou requested to reset your password. Click this link to proceed:\n{reset_url}\n\nIf you didn\'t request this, please ignore this email.\n\nBest regards,\nThe AMDG Team',
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            template_name='emails/password_reset.html',
+            context={
+                'user_display_name': user.get_display_name(),
+                'reset_url': reset_url,
+                'expiry_hours': expiry_hours,
+            },
             recipient_list=[user.email],
-            fail_silently=False,
         )
-        
+
         return f'Password reset email sent to {user.email}'
     except User.DoesNotExist:
         return f'User with id {user_id} not found'

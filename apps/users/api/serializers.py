@@ -664,6 +664,60 @@ class EmailVerificationSerializer(serializers.Serializer):
         return value.lower().strip()
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """
+    Serializer for initiating a password reset.
+
+    Accepts an email address and returns it normalised.  The view is
+    responsible for looking up the user and queuing the reset email.
+    The response is always 200 regardless of whether the email is found
+    (anti-enumeration).
+    """
+    email = serializers.EmailField(
+        required=True,
+        help_text="Email address associated with the account"
+    )
+
+    def validate_email(self, value: str) -> str:
+        return value.lower().strip()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    Serializer for confirming a password reset.
+
+    Validates the uid/token pair produced by Django's built-in
+    PasswordResetTokenGenerator and ensures the two password fields match
+    and satisfy Django's password validators.
+    """
+    uid = serializers.CharField(required=True, help_text="Base-64 encoded user ID")
+    token = serializers.CharField(required=True, help_text="Password reset token")
+    new_password = serializers.CharField(
+        required=True,
+        write_only=True,
+        style={'input_type': 'password'},
+        help_text="New password"
+    )
+    new_password_confirm = serializers.CharField(
+        required=True,
+        write_only=True,
+        style={'input_type': 'password'},
+        help_text="New password confirmation"
+    )
+
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError(
+                {"new_password_confirm": "Password fields did not match."}
+            )
+        try:
+            from django.contrib.auth.password_validation import validate_password as _vp
+            _vp(attrs['new_password'])
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"new_password": list(exc.messages)})
+        return attrs
+
+
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     Custom JWT token serializer with enhanced user data and claims.
