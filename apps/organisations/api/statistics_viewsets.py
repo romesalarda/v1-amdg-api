@@ -507,15 +507,13 @@ class OrganisationStatisticsViewSet(viewsets.GenericViewSet):
 
 		events = Event.objects.filter(
 			event_venues__isnull=False,
-			event_venues__venue__poi__latitude__isnull=False,
-			event_venues__venue__poi__longitude__isnull=False,
 		).distinct()
 		if organisation_ids is not None:
 			events = events.filter(organisation_id__in=organisation_ids)
 
 		features = []
-		for event in events.select_related("organisation").prefetch_related("event_venues__venue__poi", "attendees"):
-			event_venue = event.event_venues.select_related("venue__poi").first()
+		for event in events.select_related("organisation").prefetch_related("attendees"):
+			event_venue = event.event_venues.first()
 			poi = event_venue.venue.poi if event_venue and event_venue.venue_id else None
 			if poi and poi.latitude is not None and poi.longitude is not None:
 				features.append({

@@ -992,6 +992,14 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
                 from apps.payments.services.stripe.exceptions import StripeServiceError
 
                 try:
+                    stripe_account_id = payment_method.get_stripe_account_id()
+                    if not stripe_account_id:
+                        use_platform = bool((payment_method.provided_details or {}).get('use_platform_account'))
+                        if not use_platform:
+                            raise DjangoValidationError(
+                                "This Stripe payment method has no connected account configured. "
+                                "Please contact the event organiser."
+                            )
                     payment_intent = PaymentIntentService.create(
                         amount=payment.base_amount,
                         currency=payment.base_amount.currency.code,
@@ -1000,7 +1008,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
                         customer_email=payment.user.email,
                         customer_id=payment.stripe_customer_id,
                         description=f"Sponsorship payment for {event.title}",
-                        stripe_account_id=payment_method.get_stripe_account_id(),
+                        stripe_account_id=stripe_account_id,
                     )
                     payment.stripe_payment_intent = payment_intent.id
                     payment.save(update_fields=['stripe_payment_intent', 'updated_at'])
@@ -1054,7 +1062,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             return Response({'organisation_id': ['Organisation not found.']}, status=status.HTTP_404_NOT_FOUND)
         
         try:
-            event = Event.objects.get(url_safe_title=event_id)
+            event = Event.objects.get(event_id=event_id)
         except Event.DoesNotExist:
             return Response({'event_id': ['Event not found.']}, status=status.HTTP_404_NOT_FOUND)
 

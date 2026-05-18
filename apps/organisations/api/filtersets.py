@@ -558,7 +558,12 @@ class EventSponsorFilterSet(filters.FilterSet):
         help_text="Filter by organisation id or url_safe_title"
     )
 
-    event_id = filters.CharFilter(
+    event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text="Filter by event UUID"
+    )
+
+    event = filters.CharFilter(
         field_name='event__url_safe_title',
         help_text="Filter by event URL-safe title"
     )
@@ -603,7 +608,7 @@ class EventSponsorFilterSet(filters.FilterSet):
     
     class Meta:
         model = EventSponsor
-        fields = ['organisation_id', 'event_id', 'package_id', 'added_by']
+        fields = ['organisation_id', 'event_id', 'event', 'package_id', 'added_by']
     
     def filter_search(self, queryset, name, value):
         """Search in name and description."""
@@ -713,7 +718,12 @@ class EventSponsorPackageFilterSet(filters.FilterSet):
 class EventSponsorInviteFilterSet(filters.FilterSet):
     """Filterset for EventSponsorInvite model."""
 
-    event_id = filters.CharFilter(
+    event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text="Filter by event UUID"
+    )
+
+    event = filters.CharFilter(
         field_name='event__url_safe_title',
         help_text="Filter by event URL-safe title"
     )
@@ -758,7 +768,7 @@ class EventSponsorInviteFilterSet(filters.FilterSet):
 
     class Meta:
         model = EventSponsorInvite
-        fields = ['event_id', 'organisation_id', 'email', 'accepted', 'declined']
+        fields = ['event_id', 'event', 'organisation_id', 'email', 'accepted', 'declined']
 
     def filter_organisation_id(self, queryset, name, value):
         return _filter_by_organisation_identifier(queryset, 'organisation', value)

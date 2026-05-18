@@ -907,7 +907,8 @@ from apps.events.models import Event
 class EventSponsorCheckoutSerializer(serializers.Serializer):
     """Payload serializer for sponsor checkout action."""
 
-    event_id = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all(), required=True)
+    # event_id must be a UUID string (the Event.event_id field) — NOT url_safe_title.
+    event_id = serializers.UUIDField(required=True)
     package_id = serializers.UUIDField(required=True)
     payment_method_id = serializers.IntegerField(required=True)
     organisation_id = serializers.IntegerField(required=False)
