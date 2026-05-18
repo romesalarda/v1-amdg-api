@@ -8,3 +8,20 @@ class MediaStorage(S3Boto3Storage):
     """Custom storage for media files"""
     location = 'media'
     file_overwrite = False
+
+
+class VariantMediaStorage(S3Boto3Storage):
+    """Storage for django-imagekit generated variant files.
+
+    Variants are content-hash-addressed by imagekit, so their filenames
+    never change for a given source file. This makes it safe to serve
+    them with ``Cache-Control: max-age=31536000, immutable`` — Cloudflare
+    will cache them aggressively and clients will never receive stale data.
+    """
+    location = 'media'
+    file_overwrite = True  # imagekit manages its own filename hashing
+
+    def object_parameters(self, name: str) -> dict:
+        params = super().object_parameters(name)
+        params['CacheControl'] = 'max-age=31536000, immutable'
+        return params

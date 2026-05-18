@@ -155,6 +155,7 @@ class ResourceSerializer(serializers.ModelSerializer):
     
     resource_url = serializers.SerializerMethodField()
     added_by_email = serializers.EmailField(source='added_by.email', read_only=True)
+    image_urls = serializers.SerializerMethodField()
     # Target fields for internal use only - not exposed in API responses
     target_type = serializers.PrimaryKeyRelatedField(
         queryset=ContentType.objects.all(),
@@ -175,9 +176,10 @@ class ResourceSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'tag', 'resource_type',
             'public', 'protected', 'file', 'link',
             'image', 'resource_url', 'added_by', 'added_by_email',
-            'target_type', 'target_id', 'created_at', 'updated_at'
+            'target_type', 'target_id', 'created_at', 'updated_at',
+            'image_urls', 'image_width', 'image_height',
         )
-        read_only_fields = ('id', 'created_at', 'updated_at', 'added_by')
+        read_only_fields = ('id', 'created_at', 'updated_at', 'added_by', 'image_width', 'image_height')
         extra_kwargs = {
             'name': {'help_text': 'Name of the resource'},
             'description': {'help_text': 'Optional description'},
@@ -196,7 +198,48 @@ class ResourceSerializer(serializers.ModelSerializer):
     def get_resource_url(self, obj):
         """Returns the URL/path to access the resource."""
         return obj.resource_url
-    
+
+    @extend_schema_field({
+        'type': 'object',
+        'nullable': True,
+        'properties': {
+            'thumbnail': {'type': 'string', 'format': 'uri', 'nullable': True},
+            'medium': {'type': 'string', 'format': 'uri', 'nullable': True},
+            'large': {'type': 'string', 'format': 'uri', 'nullable': True},
+            'original': {'type': 'string', 'format': 'uri', 'nullable': True},
+        },
+    })
+    def get_image_urls(self, obj):
+        """Return a dict of image variant URLs, or None for non-image resources.
+
+        All entries are optional/nullable so callers must handle missing variants
+        gracefully. Existing consumers of ``image`` and ``resource_url`` are
+        unaffected — this field is purely additive.
+        """
+        if not obj.image:
+            return None
+
+        request = self.context.get('request')
+
+        def _build_url(url):
+            if request is not None:
+                return request.build_absolute_uri(url)
+            return url
+
+        def _variant_url(spec_field):
+            try:
+                url = spec_field.url
+                return _build_url(url) if url else None
+            except Exception:
+                return None
+
+        return {
+            'thumbnail': _variant_url(obj.image_thumbnail),
+            'medium': _variant_url(obj.image_medium),
+            'large': _variant_url(obj.image_large),
+            'original': _build_url(obj.image.url),
+        }
+
     def validate(self, attrs):
         """Validate resource based on resource_type."""
         resource_type = attrs.get('resource_type')
