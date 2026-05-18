@@ -183,6 +183,7 @@ THIRD_PARTY_APPS = [
     'djmoney',
     'timezone_field',
     'colorfield',
+    'imagekit',
 ]
 
 LOCAL_APPS = [
