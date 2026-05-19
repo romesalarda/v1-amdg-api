@@ -36,6 +36,10 @@ class Organisation(models.Model):
 
     required_acceptance_code = models.BooleanField(default=False)
     requires_manual_verification = models.BooleanField(default=False)
+    verified = models.BooleanField(
+        default=False, help_text="Indicates whether the organisation has been verified by an admin. This is separate from membership verification and can be used to denote that the organisation itself is legitimate or approved.")
+    initially_sponsorship = models.BooleanField(
+        default=False, help_text="Indicates whether the organisation is an initial sponsor. This can be used to highlight certain organisations on the platform.")
 
     def __str__(self):
         return self.title
@@ -80,6 +84,10 @@ class UserOrganisationMembership(models.Model): # adminregister
     
     def __str__(self):
         return f"{self.user.username} member of {self.organisation.title}"
+    
+    @property
+    def is_organisation_controller(self) -> bool:
+        return self.user.organisations_controlled.filter(organisation=self.organisation).exists()
     
     @property
     def requires_verification(self):

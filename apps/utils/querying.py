@@ -28,3 +28,11 @@ def get_event_or_url_safe_title(event_id):
     except ValueError:
         # If it's not a valid UUID, treat it as a URL-safe title
         return get_object_or_404(Event, url_safe_title=event_id)
+    
+def get_object_or_url_safe_title(model_queryset, identifier):
+    """Generic helper function to retrieve an object by numeric id or URL-safe title."""
+    try:
+        obj_id = int(identifier)
+        return get_object_or_404(model_queryset, pk=obj_id)
+    except (TypeError, ValueError):
+        return get_object_or_404(model_queryset, url_safe_title=identifier)
