@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
+  <title>{% block title %}AMDG{% endblock %}</title>
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
+  <style>
+    /* Reset */
+    * { box-sizing: border-box; }
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
+    body { margin: 0; padding: 0; width: 100% !important; min-width: 100%; background-color: #f1f4f6; }
+
+    /* Outlook link fix */
+    a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; }
+
+    /* Mobile */
+    @media only screen and (max-width: 600px) {
+      .wrapper { width: 100% !important; max-width: 100% !important; }
+      .content-cell { padding: 24px 16px !important; }
+      .btn a { display: block !important; }
+      .hide-mobile { display: none !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f4f6;font-family:'Inter',Arial,Helvetica,sans-serif;">
+
+  <!-- Preheader (hidden preview text) -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#f1f4f6;line-height:1px;">
+    {% block preheader %}AMDG — Ad Majorem Dei Gloriam{% endblock %}
+    &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+  </div>
+
+  <!-- Outer wrapper -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f1f4f6;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+
+        <!-- Card container -->
+        <table role="presentation" class="wrapper" width="600" cellpadding="0" cellspacing="0" border="0"
+               style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;
+                      border:1px solid #dbe4eb;box-shadow:0 4px 12px rgba(26,43,72,0.05);">
+
+          <!-- ─── HEADER ─────────────────────────────────────────────────────── -->
+          <tr>
+            <td style="background-color:#006c4b;padding:28px 40px;text-align:center;">
+              <!-- Wordmark -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center">
+                    <span style="font-family:'Plus Jakarta Sans',Georgia,serif;font-size:28px;font-weight:800;
+                                 letter-spacing:-0.02em;color:#ffffff;line-height:1.2;">AMDG</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding-top:4px;">
+                    <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                                 font-weight:400;letter-spacing:0.12em;text-transform:uppercase;
+                                 color:rgba(255,255,255,0.75);">Ad Majorem Dei Gloriam</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ─── BODY ───────────────────────────────────────────────────────── -->
+          <tr>
+            <td class="content-cell" style="padding:40px 40px 32px;">
+
+              <!-- Email title -->
+              {% block email_heading %}{% endblock %}
+
+              <!-- Main content -->
+              {% block content %}{% endblock %}
+
+              <!-- CTA button (optional) -->
+              {% block cta %}{% endblock %}
+
+            </td>
+          </tr>
+
+          <!-- ─── DIVIDER ────────────────────────────────────────────────────── -->
+          <tr>
+            <td style="padding:0 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-top:1px solid #e5e9eb;font-size:0;line-height:0;">&nbsp;</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ─── FOOTER ─────────────────────────────────────────────────────── -->
+          <tr>
+            <td style="padding:24px 40px 32px;text-align:center;">
+
+              <!-- Extra footer content per-email -->
+              {% block footer_extra %}{% endblock %}
+
+              <p style="margin:0 0 8px;font-family:'Inter',Arial,Helvetica,sans-serif;
+                         font-size:12px;color:#6d7a72;line-height:1.5;">
+                This email was sent by the <strong>AMDG Event Platform</strong>.<br>
+                If you have questions, please contact your community administrator.
+              </p>
+              <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;
+                         font-size:11px;color:#9eaaa2;letter-spacing:0.05em;
+                         text-transform:uppercase;">
+                Ad Majorem Dei Gloriam
+              </p>
+            </td>
+          </tr>
+
+        </table>
+        <!-- / Card container -->
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

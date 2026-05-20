@@ -51,7 +51,7 @@ from apps.organisations.models import (
 )
 from apps.events.models import Event
 from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
-from apps.utils.querying import get_organisation_or_url_safe_title
+from apps.utils.querying import get_organisation_or_url_safe_title, get_object_or_url_safe_title
 from .serializers import (
     OrganisationListSerializer, OrganisationDetailSerializer, OrganisationCreateUpdateSerializer,
     OrganisationContactSerializer, OrganisationContactCreateUpdateSerializer,
@@ -129,7 +129,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     
     queryset = Organisation.objects.select_related('created_by').prefetch_related(
         'contacts', 'memberships', 'controllers'
-    )
+    ).filter(verified=True)
     lookup_field = 'url_safe_title'
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOrganisationControllerOrEventAdmin | IsReadOnly]
     pagination_class = StandardPagination
@@ -141,7 +141,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
 
     def get_object(self):
         lookup_value = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
-        organisation = get_organisation_or_url_safe_title(lookup_value)
+        organisation = get_object_or_url_safe_title(self.get_queryset(), lookup_value)
         self.check_object_permissions(self.request, organisation)
         return organisation
     
@@ -185,6 +185,28 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         )
         return Response(serializer.data)
 
+    @extend_schema(
+        summary="List organisation controllers",
+        description="Get all controllers for a specific organisation.",
+        responses={200: {
+            "type": "object",
+            "properties": {
+                "organisation" : {"type": "string"},
+                "organisation_url_safe_title" : {"type": "string"},
+                "can_view": {"type": "boolean"},
+            }
+        }},
+        tags=["Organisations"],
+    )
+    @action(detail=True, methods=["GET"], url_path="my-permissions")
+    def my_permissions(self, request, url_safe_title):
+        obj = self.get_object()
+        permissions = {
+            "organisation": obj.title,
+            "organisation_url_safe_title": obj.url_safe_title,
+            "can_view": request.user.has_perm('view_organisation', obj),
+        }
+        return Response(permissions)
 
 # ============================================================================
 # ORGANISATION CONTACT VIEWSETS

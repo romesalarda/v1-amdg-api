@@ -149,10 +149,7 @@ class IsOrganisationControllerOrEventAdmin(permissions.BasePermission):
     def _get_organisation_from_object(self, obj) -> Any:
         """Extract the organisation from various object types."""
         from apps.organisations.models import (
-            Organisation, OrganisationContact, OrganisationControl,
-            UserOrganisationMembership, OrganisationAcceptanceCode,
-            OrganisationInvite, InvolvedEventOrganisation,
-            EventSponsor, EventSponsorPackage, Leader
+            Organisation, Leader
         )
         
         if isinstance(obj, Organisation):
@@ -167,9 +164,7 @@ class IsOrganisationControllerOrEventAdmin(permissions.BasePermission):
     
     def _get_event_from_object(self, obj) -> Any:
         """Extract the event from various object types."""
-        from apps.organisations.models import (
-            InvolvedEventOrganisation, EventSponsor, EventSponsorPackage
-        )
+        from apps.organisations.models import EventSponsorPackage
         
         if hasattr(obj, 'event'):
             return obj.event

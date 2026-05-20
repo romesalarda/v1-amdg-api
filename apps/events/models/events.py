@@ -240,7 +240,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             return "ONGOING"
         
     @property
-    def uptime(self):
+    def uptime(self) -> str:
         # return the number of days, hours, minute this event has been open for registration, or time until registration opens if in the future
         now = timezone.now().astimezone(self.timezone)
         if self.start_datetime.astimezone(self.timezone) > now:

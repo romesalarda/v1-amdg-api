@@ -32,8 +32,6 @@ ENV/
 .env.production
 
 # Docker
-docker-compose*.yml
-Dockerfile
 .dockerignore
 
 # Database

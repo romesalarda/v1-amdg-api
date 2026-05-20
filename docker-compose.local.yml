@@ -1,0 +1,140 @@
+# Local development — all services in Docker
+#
+# First-time / after code changes (PowerShell):
+#   $env:COMPOSE_BAKE="false"; docker compose -f docker-compose.local.yml up --build
+#
+# Subsequent runs (image already built locally):
+#   docker compose -f docker-compose.local.yml up -d
+#
+# Teardown:
+#   docker compose -f docker-compose.local.yml down
+#
+# DB_HOST / REDIS_HOST / broker URLs are overridden per-service below so the
+# .env file (which targets localhost for host-only runs) stays unmodified.
+
+# ---------------------------------------------------------------------------
+# Shared fragments
+# ---------------------------------------------------------------------------
+x-app-env: &app-env
+  DB_HOST: db
+  REDIS_HOST: redis
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CHANNEL_LAYERS_HOST: redis:6379
+  EMAIL_HOST: mailpit
+  EMAIL_PORT: "1025"
+
+x-app-base: &app-base
+  image: amdg-local:latest
+  env_file: .env
+  environment:
+    <<: *app-env
+  volumes:
+    - .:/app
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+services:
+
+  # PostgreSQL — localhost:5432
+  db:
+    image: postgres:16-alpine
+    container_name: postgres_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-amdg_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Redis — localhost:6379
+  redis:
+    image: redis:7-alpine
+    container_name: redis_server
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+  # Mailpit — SMTP: localhost:1025 | Web UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+  # Django web — http://localhost:8000
+  # Only this service has a build section; celery services reuse the same image.
+  web:
+    <<: *app-base
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: django_app
+    command: uvicorn core.asgi:application --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  # Celery worker
+  celery_worker:
+    <<: *app-base
+    container_name: celery_worker
+    command: celery -A core worker --loglevel=info --pool=solo
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+
+  # Celery beat (scheduled tasks)
+  celery_beat:
+    <<: *app-base
+    container_name: celery_beat
+    command: celery -A core beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:

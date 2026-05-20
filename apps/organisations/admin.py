@@ -32,7 +32,7 @@ class OrganisationAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('title', 'description', 'external_website', 'url_safe_title', 'short_description')
+            'fields': ('title', 'description', 'external_website', 'url_safe_title', 'short_description', 'verified', 'initially_sponsorship')
         }),
         ('Verification Settings', {
             'fields': ('required_acceptance_code', 'requires_manual_verification')

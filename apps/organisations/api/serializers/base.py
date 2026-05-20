@@ -330,8 +330,9 @@ class UserOrganisationMembershipListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'organisation', 'organisation_name', 'user', 'user_name', 'user_email',
             'profile_image', 'added_by', 'added_by_name', 'verified_at', 'requires_verification', 'area_from',
-            'is_verified', 'added_at', '_links'
+            'is_verified', 'added_at', 'is_organisation_controller', '_links'
         )
+        
         read_only_fields = ('id', 'verified_at', 'added_at')
         extra_kwargs = {
             'added_at': {'default': None},
