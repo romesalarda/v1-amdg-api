@@ -63,6 +63,14 @@ from .pre_removal import (
     AttendeePreRemovalSummarySerializer,
 )
 
+from .checkin import (
+    CheckInCreateSerializer,
+    CheckInResponseSerializer,
+    CheckInBroadcastSerializer,
+    CheckInFilterSerializer,
+    CheckInHistoryRequestSerializer,
+)
+
 __all__ = [
     # Base serializers
     'AttendeeListSerializer',

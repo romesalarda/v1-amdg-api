@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.models import ContentType
 from core.utils.validators import PhoneNumberValidator
 from core.utils import dates as date_validation, display 
+from django.contrib.auth import get_user_model
 
 from datetime import date
 import uuid
@@ -521,7 +522,7 @@ class AttendeeAction(models.Model): # used to track actions on attendees
     '''
     action = models.CharField(max_length=50, choices=AttendeeActionChoices.choices, default=AttendeeActionChoices.REGISTERED)
     attendee = models.ForeignKey(Attendee, on_delete=models.CASCADE, related_name='actions')
-    performed_by = models.ForeignKey(Attendee, on_delete=models.SET_NULL, related_name='performed_attendee_actions', null=True, blank=True)
+    performed_by = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, related_name='performed_attendee_actions', null=True, blank=True)
     performed_at = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(null=True, blank=True)
     
