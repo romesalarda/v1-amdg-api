@@ -322,7 +322,7 @@ class AttendeeActionSerializer(serializers.ModelSerializer):
         
         if obj.performed_by:
             links['performed_by'] = request.build_absolute_uri(
-                f"/api/attendee/attendees/{obj.performed_by.attendee_id}/"
+                f"/api/attendee/attendees/{obj.performed_by}/"
             )
         
         return links

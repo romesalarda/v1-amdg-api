@@ -6,7 +6,9 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 
 from apps.attendee.api.serializers import AttendeePreRemovalSummarySerializer
-
+from apps.bookings.models import Ticket, TicketStatusChoices
+from apps.payments.models import PaymentStatusChoices
+from apps.products.models import Order, OrderStatusChoices
 
 class AttendeePreRemovalSummaryService:
 	"""Build and validate attendee pre-removal summaries."""
@@ -16,10 +18,7 @@ class AttendeePreRemovalSummaryService:
 
 	def build_summary(self, attendee):
 		"""Build a validated pre-removal summary payload."""
-		from apps.bookings.models import Ticket, TicketStatusChoices
-		from apps.payments.models import PaymentStatusChoices
-		from apps.products.models import Order, OrderStatusChoices
-
+		
 		blockers = []
 		summary_counts = {
 			'active_tickets': 0,

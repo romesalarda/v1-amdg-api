@@ -45,6 +45,7 @@ from apps.attendee.api.serializers.statistics import (
     PersonalInfoCombinedSerializer,
     AttendeeOverviewStatsSerializer,
     DemographicsSerializer,
+    CheckInDayStatsSerializer,
 )
 
 from apps.utils.querying import get_event_or_url_safe_title
@@ -564,4 +565,54 @@ class AttendeeStatisticsViewSet(viewsets.GenericViewSet):
         data = self._add_filter_metadata(data, request)
         
         serializer = AttendeeOverviewStatsSerializer(data, context={'request': request})
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Check-in statistics by event day",
+        description=(
+            "Per-event-day check-in breakdown showing checked-in counts, not-checked-in counts, "
+            "check-in rates, and hourly timeline. "
+            "Day 1 = event start date (event timezone). "
+            "Negative day values indicate check-ins before the event window. "
+            "Filter to a specific day with ?event_day=1."
+        ),
+        parameters=[
+            EVENT_ID_PARAM,
+            FORMAT_PARAM,
+            INCLUDE_DELETED_PARAM,
+            OpenApiParameter(
+                name='event_day',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter to a specific event day number (e.g. 1, 2, -1).',
+                required=False,
+            ),
+        ],
+        responses={200: CheckInDayStatsSerializer},
+        tags=["Attendee Statistics"],
+    )
+    @action(detail=False, methods=['get'], url_path='checkin-stats')
+    def checkin_stats(self, request):
+        """Get per-event-day check-in statistics."""
+        filters = self._get_common_filters(request)
+
+        event_day_param = request.query_params.get('event_day')
+        event_day = None
+        if event_day_param is not None:
+            try:
+                event_day = int(event_day_param)
+            except ValueError:
+                return Response(
+                    {'error': 'Invalid event_day. Must be an integer.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        data = statistics.calculate_checkin_stats_by_day(
+            event_id=filters.get('event_id'),
+            event_day=event_day,
+            include_deleted=filters.get('include_deleted', False),
+        )
+        data = self._add_filter_metadata(data, request)
+
+        serializer = CheckInDayStatsSerializer(data, context={'request': request})
         return Response(serializer.data)

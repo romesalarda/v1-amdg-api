@@ -3,8 +3,10 @@ from django.contrib.auth import get_user_model
 from django.core import validators
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.models import ContentType
+from apps.attendee.models.checkin import CheckInAction
 from core.utils.validators import PhoneNumberValidator
 from core.utils import dates as date_validation, display 
+from django.contrib.auth import get_user_model
 
 from datetime import date
 import uuid
@@ -303,10 +305,11 @@ class Attendee(SoftDeleteModel):
         '''
         Determine if the attendee is currently checked in based on their latest event attendance.
         '''
-        latest_check_in = self.event_attendances.filter(event__isnull=False).order_by('-event__start_datetime')
-        if latest_check_in.exists():
-            latest_check_in = latest_check_in.first()
-            return latest_check_in.is_checked_in
+        latest_check_in = self.check_in_records.order_by('-performed_at').first()
+        print(f"Latest check-in records for attendee {self.attendee_display_id}: {latest_check_in}")
+        if latest_check_in:
+            print(f"Latest check-in action: {latest_check_in.action}, status snapshot: {latest_check_in.attendee_status_snapshot}")
+            return latest_check_in.action == CheckInAction.CHECK_IN and latest_check_in.attendee_status_snapshot == AttendeeStatus.CHECKED_IN
         return False
     
     @property
@@ -521,7 +524,7 @@ class AttendeeAction(models.Model): # used to track actions on attendees
     '''
     action = models.CharField(max_length=50, choices=AttendeeActionChoices.choices, default=AttendeeActionChoices.REGISTERED)
     attendee = models.ForeignKey(Attendee, on_delete=models.CASCADE, related_name='actions')
-    performed_by = models.ForeignKey(Attendee, on_delete=models.SET_NULL, related_name='performed_attendee_actions', null=True, blank=True)
+    performed_by = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, related_name='performed_attendee_actions', null=True, blank=True)
     performed_at = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(null=True, blank=True)
     

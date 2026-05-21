@@ -24,6 +24,7 @@ from apps.attendee.api.viewsets import (
     AttendeeConsentViewSet,
     EventAttendanceViewSet,
     AttendeeOrganisationViewSet,
+    CheckInViewSet,
 )
 from apps.attendee.api.statistics_viewset import AttendeeStatisticsViewSet
 
@@ -51,6 +52,7 @@ router.register(r'dietary-requirements', DietaryRequirementViewSet, basename='di
 router.register(r'medical-conditions', MedicalConditionViewSet, basename='medicalcondition')
 router.register(r'consents', ConsentViewSet, basename='consent')
 router.register(r'event-attendances', EventAttendanceViewSet, basename='eventattendance')
+router.register(r'checkins', CheckInViewSet, basename='checkin')
 
 # Nested URL patterns for attendee-specific resources
 nested_patterns = [

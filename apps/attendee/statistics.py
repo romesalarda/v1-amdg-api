@@ -826,3 +826,136 @@ def calculate_overview_stats(
         },
         'generated_at': timezone.now().isoformat()
     }
+
+
+# ============================================================================
+# CHECK-IN DAY STATISTICS
+# ============================================================================
+
+def calculate_checkin_stats_by_day(
+    event_id: Optional[str] = None,
+    event_day: Optional[int] = None,
+    include_deleted: bool = False,
+) -> Dict[str, Any]:
+    """
+    Calculate per-event-day check-in statistics.
+
+    Day 1 = event start calendar date (event timezone).
+    Negative day values = check-ins before the event.
+    Values > event duration = check-ins after the event window.
+
+    Args:
+        event_id:        Optional event UUID to scope results.
+        event_day:       If provided, return statistics for that specific day only.
+        include_deleted: Whether to include soft-deleted attendees.
+
+    Returns:
+        Dict with keys: days, total_attendees, event_days_count, event_metadata
+    """
+    from apps.attendee.models import AttendeeCheckIn, CheckInAction, CheckInScanResult
+    from apps.events.models import Event
+    from django.db.models import Max
+    import pytz
+
+    attendee_qs = _get_base_queryset(event_id, include_deleted)
+    total_attendees = attendee_qs.count()
+
+    # Resolve event for day-label computation
+    event = None
+    event_tz = pytz.UTC
+    event_start_date = None
+    event_days_count = None
+
+    if event_id:
+        try:
+            event = Event.objects.filter(event_id=event_id).first()
+            if event:
+                if hasattr(event, 'timezone') and event.timezone:
+                    event_tz = pytz.timezone(str(event.timezone))
+                event_start_date = event.start_datetime.astimezone(event_tz).date()
+                event_end_date = event.end_datetime.astimezone(event_tz).date()
+                event_days_count = (event_end_date - event_start_date).days + 1
+        except Exception:
+            pass
+
+    # Successful CHECK_IN records scoped to this event
+    checkin_qs = AttendeeCheckIn.objects.filter(
+        attendee__in=attendee_qs,
+        action=CheckInAction.CHECK_IN,
+        scan_result=CheckInScanResult.SUCCESS,
+    )
+    if event_day is not None:
+        checkin_qs = checkin_qs.filter(event_day=event_day)
+
+    # Per-day aggregate: count of distinct attendees who checked in
+    per_day_rows = (
+        checkin_qs
+        .values('event_day')
+        .annotate(
+            checked_in_count=Count('attendee_id', distinct=True),
+        )
+        .order_by('event_day')
+    )
+
+    # Hourly breakdown per day (for trend chart)
+    from django.db.models.functions import TruncHour
+    hourly_qs = (
+        checkin_qs
+        .annotate(hour=TruncHour('performed_at'))
+        .values('event_day', 'hour')
+        .annotate(count=Count('check_in_id'))
+        .order_by('event_day', 'hour')
+    )
+
+    # Build hourly map: {event_day: [{hour, count}, ...]}
+    hourly_map: Dict[int, List[Dict]] = {}
+    for row in hourly_qs:
+        day_key = row['event_day']
+        if day_key is None:
+            continue
+        if day_key not in hourly_map:
+            hourly_map[day_key] = []
+        hourly_map[day_key].append({
+            'hour': row['hour'].astimezone(event_tz).strftime('%H:%M') if row['hour'] else None,
+            'count': row['count'],
+        })
+
+    # Build per-day result list
+    days_data = []
+    for row in per_day_rows:
+        day_num = row['event_day']
+        checked_in = row['checked_in_count']
+        not_checked_in = total_attendees - checked_in
+
+        # Derive calendar date label
+        day_date = None
+        if event_start_date and day_num is not None:
+            try:
+                day_date = (event_start_date + timedelta(days=day_num - 1)).isoformat()
+            except Exception:
+                pass
+
+        days_data.append({
+            'event_day': day_num,
+            'date': day_date,
+            'checked_in': checked_in,
+            'not_checked_in': not_checked_in,
+            'total_attendees': total_attendees,
+            'check_in_rate': round(checked_in / total_attendees * 100, 2) if total_attendees > 0 else 0,
+            'hourly_timeline': hourly_map.get(day_num, []),
+        })
+
+    # If no checkins yet, return empty list (still useful to know total_attendees)
+    return {
+        'days': days_data,
+        'total_attendees': total_attendees,
+        'event_days_count': event_days_count,
+        'event_metadata': {
+            'event_id': event_id,
+            'start_date': event_start_date.isoformat() if event_start_date else None,
+            'end_date': (event_start_date + timedelta(days=event_days_count - 1)).isoformat()
+                if event_start_date and event_days_count else None,
+            'timezone': str(event_tz),
+        },
+        'generated_at': timezone.now().isoformat(),
+    }
