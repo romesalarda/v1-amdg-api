@@ -69,6 +69,9 @@ from .checkin import (
     CheckInBroadcastSerializer,
     CheckInFilterSerializer,
     CheckInHistoryRequestSerializer,
+    AttendeeRosterFilterSerializer,
+    AttendeeRosterRequestSerializer,
+    AttendeeRosterItemSerializer,
 )
 
 __all__ = [

@@ -478,6 +478,49 @@ class DemographicsSerializer(BaseStatisticsSerializer):
     def format_for_echarts(self, representation: Dict[str, Any], instance: Dict[str, Any]) -> Dict[str, Any]:
         """Format demographics with multiple charts."""
         charts = {}
+
+
+# ============================================================================
+# CHECK-IN DAY STATISTICS
+# ============================================================================
+
+class CheckInDayBreakdownSerializer(serializers.Serializer):
+    """Serializer for a single event day's check-in statistics."""
+    event_day = serializers.IntegerField(allow_null=True)
+    date = serializers.CharField(allow_null=True)
+    checked_in = serializers.IntegerField()
+    not_checked_in = serializers.IntegerField()
+    total_attendees = serializers.IntegerField()
+    check_in_rate = serializers.FloatField()
+    hourly_timeline = serializers.ListField(child=serializers.DictField())
+
+
+class CheckInDayStatsSerializer(BaseStatisticsSerializer):
+    """Serializer for per-event-day check-in statistics."""
+    days = CheckInDayBreakdownSerializer(many=True)
+    total_attendees = serializers.IntegerField()
+    event_days_count = serializers.IntegerField(allow_null=True)
+    event_metadata = serializers.DictField()
+
+    def format_for_echarts(self, representation: Dict[str, Any], instance: Dict[str, Any]) -> Dict[str, Any]:
+        """Format per-day check-in rates as a bar chart."""
+        days = instance.get('days', [])
+        if not days:
+            return {}
+        from apps.attendee import formatters
+        bar_data = [
+            {
+                'label': f"Day {d['event_day']}" + (f" ({d['date']})" if d.get('date') else ''),
+                'value': d['check_in_rate'],
+            }
+            for d in days
+        ]
+        return formatters.format_bar_chart(
+            data=bar_data,
+            title='Check-in Rate by Event Day',
+            x_axis_label='Event Day',
+            y_axis_label='Check-in Rate (%)',
+        )
         
         # Gender chart
         gender_dist = instance.get('gender', {}).get('distribution', [])

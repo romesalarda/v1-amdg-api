@@ -110,6 +110,18 @@ class AttendeeCheckIn(models.Model):
     attendee_status_snapshot = models.CharField(max_length=30, blank=True)
     has_outstanding_payments = models.BooleanField(default=False)
 
+    # Event day tracking (Day 1 = event start date, negative = before event, >N = after)
+    event_day = models.IntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Calendar day relative to event start (Day 1 = event start date in event timezone). "
+            "Negative values indicate check-ins before the event window; "
+            "values beyond the event duration indicate check-ins after the event."
+        ),
+    )
+
     # Optional metadata
     notes = models.TextField(blank=True)
     device_info = models.JSONField(null=True, blank=True)
@@ -121,6 +133,7 @@ class AttendeeCheckIn(models.Model):
         indexes = [
             models.Index(fields=['attendee', 'performed_at']),
             models.Index(fields=['performed_at']),
+            models.Index(fields=['event_day', 'performed_at']),
         ]
 
     def __str__(self):

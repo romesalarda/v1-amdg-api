@@ -48,6 +48,9 @@ class CheckInCreateSerializer(serializers.Serializer):
 class CheckInResponseSerializer(serializers.ModelSerializer):
     """Full detail response for a created AttendeeCheckIn record."""
 
+    attendee_uuid = serializers.UUIDField(
+        source='attendee.attendee_id', read_only=True
+    )
     attendee_display_id = serializers.CharField(
         source='attendee.attendee_display_id', read_only=True
     )
@@ -79,6 +82,7 @@ class CheckInResponseSerializer(serializers.ModelSerializer):
         fields = (
             'check_in_id',
             'attendee_id',
+            'attendee_uuid',
             'attendee_display_id',
             'attendee_full_name',
             'ticket_id',
@@ -98,6 +102,7 @@ class CheckInResponseSerializer(serializers.ModelSerializer):
             'performed_by_name',
             'performed_at',
             'notes',
+            'event_day',
         )
         read_only_fields = fields
 
@@ -170,6 +175,7 @@ class CheckInBroadcastSerializer(serializers.ModelSerializer):
             'area_from',
             'performed_at',
             'performed_by_id',
+            'event_day',
         )
         read_only_fields = fields
 
@@ -198,3 +204,64 @@ class CheckInHistoryRequestSerializer(serializers.Serializer):
 
     cursor = serializers.IntegerField(required=False, min_value=0, default=0)
     page_size = serializers.IntegerField(required=False, min_value=1, max_value=100, default=20)
+
+
+# ============================================================================
+# ATTENDEE ROSTER — WS SERIALIZERS
+# ============================================================================
+
+class AttendeeRosterFilterSerializer(serializers.Serializer):
+    """
+    Validates attendee.filter.set and the filters sub-field in
+    attendee.list.request WS messages.
+
+    All fields are optional — omitting means no filter on that dimension.
+    """
+    day = serializers.IntegerField(required=False, allow_null=True)
+    is_checked_in = serializers.BooleanField(required=False, allow_null=True)
+    search = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class AttendeeRosterRequestSerializer(serializers.Serializer):
+    """Validates the attendee.list.request WS message."""
+    page = serializers.IntegerField(required=False, min_value=1, default=1)
+    page_size = serializers.IntegerField(required=False, min_value=1, max_value=100, default=20)
+    filters = AttendeeRosterFilterSerializer(required=False, default=dict)
+
+
+class AttendeeRosterItemSerializer(serializers.Serializer):
+    """
+    Lightweight attendee row for the live roster table.
+
+    Returned in attendee.list.response and attendee.updated WS messages.
+    Annotated fields (last_check_in_at, event_day_last_seen) are expected
+    to be set via queryset annotation before serialization.
+    """
+    attendee_id = serializers.UUIDField()
+    attendee_display_id = serializers.CharField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    full_name = serializers.SerializerMethodField()
+    email = serializers.EmailField(allow_null=True)
+    area_from_name = serializers.SerializerMethodField()
+    status = serializers.CharField()
+    is_checked_in = serializers.BooleanField()
+    is_cancelled = serializers.BooleanField()
+    last_check_in_at = serializers.DateTimeField(allow_null=True)
+    event_day_last_seen = serializers.IntegerField(allow_null=True)
+    ticket_type_code = serializers.SerializerMethodField()
+    has_outstanding_payments = serializers.BooleanField()
+
+    def get_full_name(self, obj) -> str:
+        return f"{obj.first_name} {obj.last_name}".strip()
+
+    def get_area_from_name(self, obj) -> str | None:
+        return obj.area_from.area_name if obj.area_from else None
+
+    def get_ticket_type_code(self, obj) -> str | None:
+        # Relies on select_related('booking__ticket_set__ticket_type') or similar
+        try:
+            ticket = obj.booking.tickets.filter(attendee=obj).select_related('ticket_type').first()
+            return ticket.ticket_type.code if ticket and ticket.ticket_type else None
+        except Exception:
+            return None

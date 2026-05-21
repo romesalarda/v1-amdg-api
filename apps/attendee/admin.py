@@ -87,7 +87,7 @@ class AttendeeAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Identifiers', {
-            'fields': ('attendee_id', 'attendee_display_id', 'booking')
+            'fields': ('attendee_id', 'attendee_display_id', 'booking', 'status')
         }),
         ('Personal Information', {
             'fields': ('user', 'first_name', 'last_name', 'date_of_birth', 'gender', 'age', 'is_minor')

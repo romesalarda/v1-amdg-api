@@ -1820,6 +1820,40 @@ class CheckInViewSet(viewsets.GenericViewSet):
                     checked_out_by=request.user,
                 )
 
+        # ── Compute event day ─────────────────────────────────────────────
+        # Day 1 = event start calendar date (in event timezone)
+        # Negative  = check-in before event window
+        # >N        = check-in after event window
+        event_day = None
+        if attendee.event_id and attendee.event:
+            try:
+                import pytz
+                from datetime import timezone as dt_timezone
+                event = attendee.event
+                event_tz = pytz.timezone(str(event.timezone)) if hasattr(event, 'timezone') and event.timezone else pytz.UTC
+                now_local = timezone.now().astimezone(event_tz)
+                start_local = event.start_datetime.astimezone(event_tz)
+                delta = (now_local.date() - start_local.date()).days
+                event_day = delta + 1  # Day 1 = event start date
+            except Exception:
+                event_day = None
+
+        if scan_result == CheckInScanResult.SUCCESS:
+            attendee.status = AttendeeStatus.CHECKED_IN if action == CheckInAction.CHECK_IN else AttendeeStatus.CHECKED_OUT
+            attendee.save(update_fields=['status', 'updated_at'])
+
+        elif action == CheckInAction.CHECK_IN and scan_result != CheckInScanResult.SUCCESS:
+            # For failed check-in attempts, we may still want to update the status to reflect the attempt
+            if scan_result in [CheckInScanResult.CANCELLED_ATTENDEE, CheckInScanResult.CANCELLED_TICKET]:
+                attendee.status = AttendeeStatus.CANCELLED
+                attendee.save(update_fields=['status', 'updated_at'])
+
+        elif action == CheckInAction.CHECK_OUT and scan_result != CheckInScanResult.SUCCESS:
+            # For failed check-out attempts, we may still want to update the status to reflect the attempt
+            if scan_result == CheckInScanResult.ALREADY_CHECKED_OUT:
+                attendee.status = AttendeeStatus.CHECKED_OUT
+                attendee.save(update_fields=['status', 'updated_at'])
+
         # ── Create audit record ───────────────────────────────────────────
         check_in = AttendeeCheckIn.objects.create(
             attendee=attendee,
@@ -1834,6 +1868,7 @@ class CheckInViewSet(viewsets.GenericViewSet):
             has_outstanding_payments=has_outstanding,
             notes=data.get('notes', ''),
             device_info=data.get('device_info'),
+            event_day=event_day,
         )
 
         # ── Broadcast over WS channel layer ──────────────────────────────
@@ -1842,10 +1877,16 @@ class CheckInViewSet(viewsets.GenericViewSet):
             broadcast_data['type'] = 'checkin.occurred'
             channel_layer = get_channel_layer()
             if channel_layer:
-                group_name = f"event_{attendee.event.event_id}_checkin"
+                event_uuid = attendee.event.event_id
+                # Broadcast to check-in log consumers
                 async_to_sync(channel_layer.group_send)(
-                    group_name,
+                    f"event_{event_uuid}_checkin",
                     {'type': 'checkin_event', 'data': broadcast_data},
+                )
+                # Broadcast to attendee roster consumers so they can push live updates
+                async_to_sync(channel_layer.group_send)(
+                    f"event_{event_uuid}_attendees",
+                    {'type': 'roster_checkin_event', 'data': broadcast_data},
                 )
 
         response_serializer = CheckInResponseSerializer(check_in)
