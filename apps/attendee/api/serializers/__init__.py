@@ -71,6 +71,7 @@ from .checkin import (
     CheckInHistoryRequestSerializer,
     BulkDeleteCheckInsSerializer,
     BulkAttendeeStatusUpdateSerializer,
+    AttendeeStatusUpdateSerializer,
     AttendeeRosterFilterSerializer,
     AttendeeRosterRequestSerializer,
     AttendeeRosterItemSerializer,
@@ -131,4 +132,5 @@ __all__ = [
     # Bulk action serializers
     'BulkDeleteCheckInsSerializer',
     'BulkAttendeeStatusUpdateSerializer',
+    'AttendeeStatusUpdateSerializer',
 ]

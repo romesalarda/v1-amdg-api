@@ -241,6 +241,22 @@ class BulkAttendeeStatusUpdateSerializer(serializers.Serializer):
     )
 
 
+class AttendeeStatusUpdateSerializer(serializers.Serializer):
+    """
+    Validates the POST /api/checkins/attendee-status/ request body.
+
+    Targets one or more specific attendees by UUID; the event is inferred from
+    the attendees themselves so callers do not need to supply it separately.
+    """
+
+    attendee_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        help_text='One or more attendee UUIDs to check in or out.',
+    )
+    action = serializers.ChoiceField(choices=CheckInAction.choices)
+
+
 class AttendeeRosterFilterSerializer(serializers.Serializer):
     """
     Validates attendee.filter.set and the filters sub-field in

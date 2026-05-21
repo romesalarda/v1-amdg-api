@@ -2047,3 +2047,122 @@ class CheckInViewSet(viewsets.GenericViewSet):
             )
 
         return Response({'updated': len(attendees)}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='attendee-status',
+            permission_classes=[IsEventStaffOrReadOnly])
+    def attendee_status_update(self, request, *args, **kwargs):
+        """
+        Check in or check out one or more specific attendees by their UUIDs.
+
+        The event is inferred from the attendees, so callers do not need to
+        supply an event UUID. Attendees spanning multiple events are handled
+        correctly — audit records and WS broadcasts are scoped per-event.
+
+        Request body:
+          attendee_ids (list[UUID])           — required, 1 or more
+          action       (CHECK_IN | CHECK_OUT) — required
+        """
+        from apps.attendee.api.serializers import AttendeeStatusUpdateSerializer
+        from apps.attendee.models import AttendeeStatus, AttendeeActionChoices
+        import pytz
+
+        serializer = AttendeeStatusUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        target_action = data['action']
+
+        attendees = list(
+            Attendee.objects
+            .filter(attendee_id__in=data['attendee_ids'], deleted_at__isnull=True)
+            .exclude(status=AttendeeStatus.CANCELLED)
+            .select_related('event', 'area_from')
+        )
+
+        if not attendees:
+            return Response({'updated': 0}, status=status.HTTP_200_OK)
+
+        new_status = (
+            AttendeeStatus.CHECKED_IN
+            if target_action == CheckInAction.CHECK_IN
+            else AttendeeStatus.CHECKED_OUT
+        )
+        action_choice = (
+            AttendeeActionChoices.CHECKED_IN
+            if target_action == CheckInAction.CHECK_IN
+            else AttendeeActionChoices.CHECKED_OUT
+        )
+
+        # Group attendees by event (for correct event_day and per-event WS broadcast)
+        events_seen: dict = {}
+        for att in attendees:
+            ev = att.event
+            ev_key = str(ev.event_id)
+            if ev_key not in events_seen:
+                event_day = None
+                try:
+                    event_tz = (
+                        pytz.timezone(str(ev.timezone))
+                        if hasattr(ev, 'timezone') and ev.timezone
+                        else pytz.UTC
+                    )
+                    now_local = timezone.now().astimezone(event_tz)
+                    start_local = ev.start_datetime.astimezone(event_tz)
+                    delta = (now_local.date() - start_local.date()).days
+                    event_day = delta + 1
+                except Exception:
+                    event_day = None
+                events_seen[ev_key] = {'event': ev, 'event_day': event_day, 'attendees': []}
+            events_seen[ev_key]['attendees'].append(att)
+
+        # Bulk create audit records (per-event for correct event_day)
+        AttendeeCheckIn.objects.bulk_create([
+            AttendeeCheckIn(
+                attendee=att,
+                action=target_action,
+                method=CheckInMethod.ADMIN,
+                scan_result=CheckInScanResult.SUCCESS,
+                performed_by=request.user,
+                attendee_status_snapshot=new_status,
+                has_outstanding_payments=att.has_outstanding_payments,
+                event_day=ev_data['event_day'],
+            )
+            for ev_data in events_seen.values()
+            for att in ev_data['attendees']
+        ])
+
+        # Bulk update attendee statuses
+        for att in attendees:
+            att.status = new_status
+        Attendee.objects.bulk_update(attendees, ['status', 'updated_at'])
+
+        # Bulk create action log entries
+        AttendeeAction.objects.bulk_create([
+            AttendeeAction(
+                action=action_choice,
+                attendee=att,
+                performed_by=request.user,
+            )
+            for att in attendees
+        ])
+
+        # Broadcast per-event WS notifications
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            for ev_data in events_seen.values():
+                ev = ev_data['event']
+                bulk_payload = {
+                    'action': target_action,
+                    'count': len(ev_data['attendees']),
+                }
+                async_to_sync(channel_layer.group_send)(
+                    f"event_{ev.event_id}_checkin",
+                    {'type': 'checkin_bulk_event', 'data': bulk_payload},
+                )
+                async_to_sync(channel_layer.group_send)(
+                    f"event_{ev.event_id}_attendees",
+                    {'type': 'roster_bulk_event', 'data': bulk_payload},
+                )
+
+        return Response({'updated': len(attendees)}, status=status.HTTP_200_OK)
+

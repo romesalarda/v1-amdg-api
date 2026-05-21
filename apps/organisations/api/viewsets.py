@@ -204,7 +204,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         permissions = {
             "organisation": obj.title,
             "organisation_url_safe_title": obj.url_safe_title,
-            "can_view": request.user.has_perm('view_organisation', obj),
+            "can_view": IsOrganisationControllerOrEventAdmin().has_permission(request, self),
         }
         return Response(permissions)
 
