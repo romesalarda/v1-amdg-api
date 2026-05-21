@@ -34,8 +34,8 @@ from apps.attendee.api.serializers import (
     AttendeeRosterRequestSerializer,
     AttendeeRosterItemSerializer,
 )
+from apps.attendee.api.filtersets import AttendeeFilterSet
 from apps.attendee.models import Attendee, AttendeeCheckIn, CheckInAction, CheckInScanResult
-from django.db.models import Subquery, OuterRef
 
 from apps.events.models import Event
 
@@ -184,6 +184,21 @@ class AttendeeRosterConsumer(BaseRealtimeConsumer):
                 exc_info=True,
             )
 
+    async def roster_bulk_event(self, event: Dict[str, Any]):
+        """
+        Handle roster_bulk_event messages from the channel layer.
+
+        Pushed by CheckInViewSet.bulk_status_update after a mass check-in/out.
+        Tells clients that a bulk status change occurred so they can refresh.
+        """
+        payload = event.get('data', {})
+        await self.send(text_data=json.dumps({
+            'type': 'bulk.status.updated',
+            'action': payload.get('action'),
+            'count': payload.get('count'),
+            'timestamp': timezone.now().isoformat(),
+        }))
+
     # ── Database helpers ───────────────────────────────────────────────────
 
     @database_sync_to_async
@@ -213,13 +228,13 @@ class AttendeeRosterConsumer(BaseRealtimeConsumer):
         Fetch a page of attendees for the event, ordered by most-recently
         checked-in first (unchecked attendees at the end).
 
-        Filters:
-          - day (int)           : Filter by event_day of the last successful check-in
-          - is_checked_in (bool): Show only checked-in or only not-checked-in
-          - search (str)        : Name / display_id search
+        ``filters`` supports all fields validated by ``AttendeeRosterFilterSerializer``.
+        The ``day`` field is handled locally via an annotation; all other fields are
+        delegated to ``AttendeeFilterSet`` so that the WS roster and the HTTP
+        participants dashboard share the same filter logic.
         """
-        from apps.attendee.models import Attendee, AttendeeCheckIn, CheckInAction, CheckInScanResult
-        from django.db.models import Max, Subquery, OuterRef
+        from apps.attendee.models import AttendeeCheckIn, CheckInAction, CheckInScanResult
+        from django.db.models import Subquery, OuterRef, Case, When, Value
 
         # Latest successful CHECK_IN per attendee (optionally scoped to a day)
         checkin_qs = AttendeeCheckIn.objects.filter(
@@ -243,31 +258,19 @@ class AttendeeRosterConsumer(BaseRealtimeConsumer):
             )
         )
 
-        # is_checked_in filter
-        is_checked_in = filters.get('is_checked_in')
-        if is_checked_in is True:
-            attendee_qs = attendee_qs.filter(last_check_in_at__isnull=False)
-        elif is_checked_in is False:
-            attendee_qs = attendee_qs.filter(last_check_in_at__isnull=True)
-
-        # Search filter
-        search = filters.get('search', '').strip() if filters.get('search') else ''
-        if search:
-            attendee_qs = attendee_qs.filter(
-                Q(first_name__icontains=search) |
-                Q(last_name__icontains=search) |
-                Q(attendee_display_id__icontains=search) |
-                Q(email__icontains=search)
-            )
+        # Apply all remaining filters via AttendeeFilterSet (reuses HTTP filter logic).
+        # Strip day and blank/None values — django-filters handles only known field names.
+        filterset_data = {
+            k: v
+            for k, v in filters.items()
+            if k != 'day' and v is not None and v != ''
+        }
+        if filterset_data:
+            filterset = AttendeeFilterSet(data=filterset_data, queryset=attendee_qs)
+            if filterset.is_valid():
+                attendee_qs = filterset.qs
 
         # Order: checked-in most-recently first, unchecked at the end
-        attendee_qs = attendee_qs.order_by(
-            # NULL last_check_in_at sorts last
-            'last_check_in_at',  # ascending puts NULLs first in PostgreSQL
-        )
-        # We want checked-in first (most recent), so reverse and push nulls to end
-        # Use a Case expression to put nulls last explicitly
-        from django.db.models import Case, When, Value, BooleanField
         attendee_qs = attendee_qs.order_by(
             Case(When(last_check_in_at__isnull=True, then=Value(1)), default=Value(0)),
             '-last_check_in_at',

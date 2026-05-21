@@ -210,16 +210,84 @@ class CheckInHistoryRequestSerializer(serializers.Serializer):
 # ATTENDEE ROSTER — WS SERIALIZERS
 # ============================================================================
 
+class BulkDeleteCheckInsSerializer(serializers.Serializer):
+    """Validates the DELETE /api/attendee/checkins/bulk-delete-logs/ request body."""
+
+    event = serializers.UUIDField()
+    date = serializers.DateField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            'Delete logs for this specific calendar date only. '
+            'If omitted, all logs for the event are deleted.'
+        ),
+    )
+
+
+class BulkAttendeeStatusUpdateSerializer(serializers.Serializer):
+    """Validates the POST /api/attendee/checkins/bulk-status/ request body."""
+
+    event = serializers.UUIDField()
+    action = serializers.ChoiceField(choices=CheckInAction.choices)
+    attendee_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        allow_empty=True,
+        default=list,
+        help_text=(
+            'Specific attendees to update. '
+            'Omit or send an empty list to act on all non-cancelled attendees in the event.'
+        ),
+    )
+
+
 class AttendeeRosterFilterSerializer(serializers.Serializer):
     """
     Validates attendee.filter.set and the filters sub-field in
     attendee.list.request WS messages.
 
+    Mirrors the fields of AttendeeFilterSet that are relevant for the live
+    attendee roster so clients can send the same filter schema used in the
+    HTTP participants dashboard.
+
     All fields are optional — omitting means no filter on that dimension.
     """
+    # Roster-specific day filter (scope to a specific event day)
     day = serializers.IntegerField(required=False, allow_null=True)
-    is_checked_in = serializers.BooleanField(required=False, allow_null=True)
+
+    # Text search
     search = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    first_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    last_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Demographics
+    gender = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    age_min = serializers.IntegerField(required=False, allow_null=True)
+    age_max = serializers.IntegerField(required=False, allow_null=True)
+    is_minor = serializers.BooleanField(required=False, allow_null=True)
+
+    # Location
+    area_from = serializers.IntegerField(required=False, allow_null=True)
+    area_from_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Status
+    is_checked_in = serializers.BooleanField(required=False, allow_null=True)
+    is_cancelled = serializers.BooleanField(required=False, allow_null=True)
+    is_registered = serializers.BooleanField(required=False, allow_null=True)
+    is_event_staff = serializers.BooleanField(required=False, allow_null=True)
+
+    # Organisation
+    organisation = serializers.IntegerField(required=False, allow_null=True)
+    organisation_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Personal needs
+    has_dietary_requirements = serializers.BooleanField(required=False, allow_null=True)
+    has_medical_conditions = serializers.BooleanField(required=False, allow_null=True)
+    has_accessibility_requirements = serializers.BooleanField(required=False, allow_null=True)
+    has_emergency_contacts = serializers.BooleanField(required=False, allow_null=True)
+
+    # Relationship
+    relationship_to_user = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class AttendeeRosterRequestSerializer(serializers.Serializer):

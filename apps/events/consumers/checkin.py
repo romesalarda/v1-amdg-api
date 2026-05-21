@@ -219,6 +219,23 @@ class CheckInConsumer(BaseRealtimeConsumer):
                 exc_info=True,
             )
 
+    async def checkin_bulk_event(self, event: Dict[str, Any]):
+        """
+        Handle checkin_bulk_event messages from the channel layer.
+
+        Pushed by CheckInViewSet.bulk_status_update after a mass check-in/out.
+        Notifies clients that a bulk operation completed so they can refresh.
+        """
+        from django.utils import timezone
+
+        payload = event.get('data', {})
+        await self.send(text_data=json.dumps({
+            'type': 'bulk.checkin.completed',
+            'action': payload.get('action'),
+            'count': payload.get('count'),
+            'timestamp': timezone.now().isoformat(),
+        }))
+
     # ── Helpers ───────────────────────────────────────────────────────────
 
     def _evaluate_priority_filter(self, payload: dict) -> bool:

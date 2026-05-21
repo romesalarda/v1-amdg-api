@@ -1891,3 +1891,159 @@ class CheckInViewSet(viewsets.GenericViewSet):
 
         response_serializer = CheckInResponseSerializer(check_in)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['delete'], url_path='bulk-delete-logs',
+            permission_classes=[IsEventStaffOrReadOnly])
+    def bulk_delete_logs(self, request, *args, **kwargs):
+        """
+        Delete AttendeeCheckIn audit records for a specific event, optionally
+        scoped to a single calendar date.
+
+        Request body:
+          event (UUID)  — required
+          date  (date)  — optional; if supplied only logs on that date are deleted
+        """
+        from apps.attendee.api.serializers import BulkDeleteCheckInsSerializer
+
+        serializer = BulkDeleteCheckInsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        qs = AttendeeCheckIn.objects.filter(
+            attendee__event__event_id=data['event']
+        )
+        if data.get('date'):
+            qs = qs.filter(performed_at__date=data['date'])
+
+        count, _ = qs.delete()
+        return Response({'deleted': count}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='bulk-status',
+            permission_classes=[IsEventStaffOrReadOnly])
+    def bulk_status_update(self, request, *args, **kwargs):
+        """
+        Mass check-in or check-out all (or specific) attendees in an event.
+
+        Creates an AttendeeCheckIn audit record for every affected attendee,
+        updates EventAttendance state, and broadcasts a bulk notification over
+        both the check-in and roster WS channel groups.
+
+        Request body:
+          event        (UUID)        — required
+          action       (CHECK_IN | CHECK_OUT) — required
+          attendee_ids (list[UUID])  — optional; empty = all non-cancelled attendees
+        """
+        from apps.attendee.api.serializers import BulkAttendeeStatusUpdateSerializer
+        from apps.attendee.models import AttendeeStatus, AttendeeActionChoices
+        from apps.events.models import Event
+        import pytz
+
+        serializer = BulkAttendeeStatusUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            event = Event.objects.get(event_id=data['event'])
+        except Event.DoesNotExist:
+            return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        bulk_action = data['action']
+        attendee_qs = (
+            Attendee.objects
+            .filter(event=event, deleted_at__isnull=True)
+            .exclude(status=AttendeeStatus.CANCELLED)
+            .select_related('area_from')
+        )
+        if data.get('attendee_ids'):
+            attendee_qs = attendee_qs.filter(attendee_id__in=data['attendee_ids'])
+
+        attendees = list(attendee_qs)
+        if not attendees:
+            return Response({'updated': 0}, status=status.HTTP_200_OK)
+
+        new_status = (
+            AttendeeStatus.CHECKED_IN
+            if bulk_action == CheckInAction.CHECK_IN
+            else AttendeeStatus.CHECKED_OUT
+        )
+        action_choice = (
+            AttendeeActionChoices.CHECKED_IN
+            if bulk_action == CheckInAction.CHECK_IN
+            else AttendeeActionChoices.CHECKED_OUT
+        )
+
+        # Compute event day
+        event_day = None
+        try:
+            event_tz = (
+                pytz.timezone(str(event.timezone))
+                if hasattr(event, 'timezone') and event.timezone
+                else pytz.UTC
+            )
+            now_local = timezone.now().astimezone(event_tz)
+            start_local = event.start_datetime.astimezone(event_tz)
+            delta = (now_local.date() - start_local.date()).days
+            event_day = delta + 1
+        except Exception:
+            event_day = None
+
+        # Bulk create audit records
+        AttendeeCheckIn.objects.bulk_create([
+            AttendeeCheckIn(
+                attendee=att,
+                action=bulk_action,
+                method=CheckInMethod.ADMIN,
+                scan_result=CheckInScanResult.SUCCESS,
+                performed_by=request.user,
+                attendee_status_snapshot=new_status,
+                has_outstanding_payments=att.has_outstanding_payments,
+                event_day=event_day,
+            )
+            for att in attendees
+        ])
+
+        # Bulk update attendee statuses
+        for att in attendees:
+            att.status = new_status
+        Attendee.objects.bulk_update(attendees, ['status', 'updated_at'])
+
+        # Upsert EventAttendance records
+        # for att in attendees:
+        #     if bulk_action == CheckInAction.CHECK_IN:
+        #         EventAttendance.objects.update_or_create(
+        #             event=event,
+        #             attendee=att,
+        #             defaults={'check_in_by': request.user},
+        #         )
+        #     else:
+        #         EventAttendance.objects.filter(event=event, attendee=att).update(
+        #             checked_out_by=request.user,
+        #         )
+
+        # Bulk create action log entries
+        AttendeeAction.objects.bulk_create([
+            AttendeeAction(
+                action=action_choice,
+                attendee=att,
+                performed_by=request.user,
+            )
+            for att in attendees
+        ])
+
+        # Broadcast bulk notification over WS
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            bulk_payload = {
+                'action': bulk_action,
+                'count': len(attendees),
+            }
+            async_to_sync(channel_layer.group_send)(
+                f"event_{event.event_id}_checkin",
+                {'type': 'checkin_bulk_event', 'data': bulk_payload},
+            )
+            async_to_sync(channel_layer.group_send)(
+                f"event_{event.event_id}_attendees",
+                {'type': 'roster_bulk_event', 'data': bulk_payload},
+            )
+
+        return Response({'updated': len(attendees)}, status=status.HTTP_200_OK)
