@@ -20,7 +20,7 @@ from drf_spectacular.utils import (
     inline_serializer,
 )
 from drf_spectacular.types import OpenApiTypes
-
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -35,6 +35,10 @@ from apps.attendee.models import (
     EventAttendance, AttendeeOrganisation,
     AttendeeCheckIn, CheckInAction, CheckInMethod, CheckInScanResult,
 )
+
+from apps.bookings.models import Ticket
+from apps.events.models.venue import EventVenue, EventVenueRoom
+
 
 from .serializers import (
     AttendeeListSerializer, AttendeeDetailSerializer,
@@ -1751,9 +1755,6 @@ class CheckInViewSet(viewsets.GenericViewSet):
         return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
-        from apps.attendee.models.personal.attendance import EventAttendance
-        from apps.bookings.models import Ticket
-        from apps.events.models.venue import EventVenue, EventVenueRoom
 
         input_serializer = CheckInCreateSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
@@ -1892,16 +1893,66 @@ class CheckInViewSet(viewsets.GenericViewSet):
         response_serializer = CheckInResponseSerializer(check_in)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=['get'], url_path='log-dates',
+            permission_classes=[IsEventStaffOrReadOnly])
+    def log_dates(self, request, *args, **kwargs):
+        """
+        Return a paginated list of distinct calendar dates on which check-in
+        logs exist for a given event, ordered most-recent first.
+
+        Query params:
+          event (UUID)  — required
+        """
+        event_id = request.query_params.get('event')
+        if not event_id:
+            return Response(
+                {'detail': 'event query parameter is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            UUID(str(event_id))
+        except (ValueError, AttributeError):
+            return Response(
+                {'detail': 'Invalid event UUID.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+        dates_qs = (
+            AttendeeCheckIn.objects
+            .filter(attendee__event__event_id=event_id)
+            .annotate(log_date=TruncDate('performed_at'))
+            .values_list('log_date', flat=True)
+            .distinct()
+            .order_by('-log_date')
+        )
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(dates_qs, request)
+        if page is not None:
+            # Convert date objects to ISO strings
+            results = [d.isoformat() if d else None for d in page]
+            return paginator.get_paginated_response(results)
+
+        results = [d.isoformat() if d else None for d in dates_qs]
+        return Response(results)
+
     @action(detail=False, methods=['delete'], url_path='bulk-delete-logs',
             permission_classes=[IsEventStaffOrReadOnly])
     def bulk_delete_logs(self, request, *args, **kwargs):
         """
-        Delete AttendeeCheckIn audit records for a specific event, optionally
-        scoped to a single calendar date.
+        Delete AttendeeCheckIn audit records for a specific event.
+
+        Deletion scope (mutually exclusive priority):
+          1. date       — single calendar date
+          2. date_from / date_to — inclusive date range (either or both can be set)
+          3. neither    — delete ALL logs for the event
 
         Request body:
-          event (UUID)  — required
-          date  (date)  — optional; if supplied only logs on that date are deleted
+          event     (UUID)  — required
+          date      (date)  — optional; single date, takes precedence
+          date_from (date)  — optional; start of range (inclusive)
+          date_to   (date)  — optional; end of range (inclusive)
         """
         from apps.attendee.api.serializers import BulkDeleteCheckInsSerializer
 
@@ -1914,6 +1965,11 @@ class CheckInViewSet(viewsets.GenericViewSet):
         )
         if data.get('date'):
             qs = qs.filter(performed_at__date=data['date'])
+        else:
+            if data.get('date_from'):
+                qs = qs.filter(performed_at__date__gte=data['date_from'])
+            if data.get('date_to'):
+                qs = qs.filter(performed_at__date__lte=data['date_to'])
 
         count, _ = qs.delete()
         return Response({'deleted': count}, status=status.HTTP_200_OK)

@@ -1,6 +1,6 @@
 # AMDG API Platform
 
-Production-ready Django REST API with Docker, AWS integration, and comprehensive CI/CD pipeline.
+Backend service for AMDG
 
 ## 🚀 Tech Stack
 
@@ -372,3 +372,4 @@ uvicorn core.asgi:application --reload
 celery -A core worker --loglevel=info  
 celery -A core beat --loglevel=info
 python manage.py spectacular --file openapi-schema.yml
+docker compose --file docker-compose.local.yml up -d

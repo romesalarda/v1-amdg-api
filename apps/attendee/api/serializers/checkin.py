@@ -219,9 +219,30 @@ class BulkDeleteCheckInsSerializer(serializers.Serializer):
         allow_null=True,
         help_text=(
             'Delete logs for this specific calendar date only. '
-            'If omitted, all logs for the event are deleted.'
+            'Takes precedence over date_from / date_to if provided.'
         ),
     )
+    date_from = serializers.DateField(
+        required=False,
+        allow_null=True,
+        help_text='Start of date range (inclusive). Used together with date_to.',
+    )
+    date_to = serializers.DateField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            'End of date range (inclusive). '
+            'Omit both date_from and date_to to delete all logs for the event.'
+        ),
+    )
+
+    def validate(self, data):
+        if data.get('date_from') and data.get('date_to'):
+            if data['date_from'] > data['date_to']:
+                raise serializers.ValidationError(
+                    {'date_from': 'date_from must not be after date_to.'}
+                )
+        return data
 
 
 class BulkAttendeeStatusUpdateSerializer(serializers.Serializer):
