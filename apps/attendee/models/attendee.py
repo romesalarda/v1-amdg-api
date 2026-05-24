@@ -40,6 +40,8 @@ class AttendeeStatus(models.TextChoices):
     WHITELISTED = 'whitelisted', 'Whitelisted' # means attendee is whitelisted and can check in, but may not have completed registration or payment yet (e.g., VIPs, staff, etc.)
 
 class Attendee(SoftDeleteModel):
+
+    STATSUS_CHOICES = AttendeeStatus.choices
     
     attendee_id = models.UUIDField(default=uuid.uuid4, editable=False) # url-safe unique identifier
     attendee_display_id = models.CharField(max_length=100, unique=True, blank=True)  # human-readable unique identifier
@@ -448,6 +450,9 @@ class Attendee(SoftDeleteModel):
             attendee=self,
             performed_by=performed_by
         )
+
+        self.status = AttendeeStatus.REGISTERED
+        self.save(update_fields=['status'])
         
     def mark_cancelled(self, notes=None, performed_by=None):
         '''

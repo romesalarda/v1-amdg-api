@@ -48,8 +48,8 @@ class TicketCreatorService:
             TicketCreationError: If tickets cannot be created
             ValidationError: If payment or booking state is invalid
         """
-        from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
-        from apps.bookings.models import Booking, Ticket, TicketStatusChoices
+        from apps.payments.models import PaymentStatusChoices
+        from apps.bookings.models import Booking, Ticket
         
         # Validate payment status
         if payment.status != PaymentStatusChoices.COMPLETED:
@@ -242,6 +242,8 @@ class TicketCreatorService:
         
         ticket.full_clean()
         ticket.save()
+
+        attendee.mark_registered()  # Update attendee status to registered
         
         logger.debug(
             f"Created ticket {ticket.ticket_code} for attendee {attendee.full_name}, "
