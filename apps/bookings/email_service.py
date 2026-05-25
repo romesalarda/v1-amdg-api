@@ -29,6 +29,24 @@ logger = logging.getLogger(__name__)
 # Module-level QR options (reused for every ticket in a request)
 # ---------------------------------------------------------------------------
 
+
+def _make_absolute_url(url: str) -> str:
+    """
+    Ensure *url* is an absolute URL suitable for use inside an email.
+
+    Django's ImageField.url returns a relative path (``/media/...``) when local
+    storage is active.  Email clients cannot resolve relative URLs, so we
+    prepend settings.BACKEND_URL.  When S3 storage is active, url is already
+    absolute and is returned unchanged.
+    """
+    if not url:
+        return url
+    if url.startswith(("http://", "https://", "data:")):
+        return url
+    backend_url = getattr(settings, "BACKEND_URL", "http://localhost:8000").rstrip("/")
+    return f"{backend_url}/{url.lstrip('/')}"
+
+
 _QR_OPTIONS = QRCodeOptions(size="M", image_format="PNG", error_correction="M")
 
 # Internal PaymentMethod.provided_details keys that should never be shown to users.
@@ -112,7 +130,7 @@ class BookingEmailService:
         try:
             main_image = event.main_landing_image
             if main_image and main_image.image:
-                landing_image_url = main_image.image.url
+                landing_image_url = _make_absolute_url(main_image.image.url)
         except Exception:
             logger.warning(
                 "Could not resolve landing image URL for event %s", event.event_id

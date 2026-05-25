@@ -259,7 +259,9 @@ class TicketCreatorService:
         
         Rules:
         - STRIPE: Create after payment completes (webhook confirms)
-        - BANK_TRANSFER: Do NOT auto-create, requires manual admin verification
+        - BANK_TRANSFER: Create only once the payment has been manually verified by an
+          admin and transitioned to COMPLETED.  Initial checkout sets status to PENDING,
+          so the COMPLETED check below prevents premature ticket creation.
         - CASH: Create immediately on completion
         - FREE: Create immediately on completion
         
@@ -269,7 +271,7 @@ class TicketCreatorService:
         Returns:
             bool: True if tickets should be created automatically
         """
-        from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
+        from apps.payments.models import PaymentStatusChoices
         
         # Must be completed
         if payment.status != PaymentStatusChoices.COMPLETED:
@@ -279,9 +281,7 @@ class TicketCreatorService:
         if not payment.method:
             return False
         
-        # Do NOT auto-create for bank transfers (requires manual verification)
-        if payment.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
-            return False
-        
-        # Auto-create for all other completed payments
+        # All completed payments (including verified bank transfers) should
+        # trigger ticket creation. BANK_TRANSFER payments only reach COMPLETED
+        # after an admin explicitly verifies them, so this is safe.
         return True

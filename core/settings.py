@@ -575,6 +575,11 @@ else:
 # Frontend URL — used when building links included in emails (e.g. password reset)
 FRONTEND_URL = get_secret("FRONTEND_URL", "http://localhost:3000")
 
+# Backend base URL — used to resolve relative media URLs in emails and other contexts
+# where an absolute URL is required (e.g. embedding images in transactional emails).
+# In production this should be the public-facing API domain, e.g. https://api.example.com
+BACKEND_URL = get_secret("BACKEND_URL", "http://localhost:8000")
+
 # Password reset token validity in seconds (default: 1 hour)
 PASSWORD_RESET_TIMEOUT = int(get_secret("PASSWORD_RESET_TIMEOUT", "3600"))
 

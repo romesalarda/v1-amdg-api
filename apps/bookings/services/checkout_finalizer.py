@@ -237,11 +237,18 @@ class BookingCheckoutFinalizer:
                 tickets_created,
             )
 
-            # Dispatch the bank-transfer pending email only when no tickets
-            # have been created yet (i.e. the bank-transfer checkout path).
+            # Dispatch the bank-transfer pending email only when:
+            #   1. No tickets have been created yet (create_tickets=False), AND
+            #   2. The payment method is genuinely BANK_TRANSFER.
+            #
+            # Stripe checkouts without an existing PaymentIntent also call
+            # finalize_for_bank_transfer (to pre-create the Booking/Attendees before
+            # the PaymentIntent is confirmed), so checking create_tickets alone is not
+            # sufficient — it would fire for those Stripe pre-finalisations too.
             # The confirmation-with-tickets email is dispatched separately by
-            # BookingPaymentProcessor once the admin verifies the payment.
-            if not create_tickets:
+            # BookingPaymentProcessor once the payment is marked COMPLETED.
+            _method_type = payment.method.method_type if payment.method else None
+            if not create_tickets and _method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
                 _booking_pk = booking.pk
                 _payment_pk = payment.pk
                 transaction.on_commit(
