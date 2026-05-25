@@ -25,6 +25,19 @@ from django.conf import settings
 from django.utils import timezone
 from django.db.models import Q, Prefetch
 from django_filters.rest_framework import DjangoFilterBackend
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.db import transaction
+from apps.users.tasks import (
+    send_password_reset_email,
+    send_welcome_email,
+    send_email_verification_email,
+    send_password_changed_email,
+    send_password_reset_confirmation_email,
+)
+from apps.users.tokens import email_verification_token
+
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -392,16 +405,32 @@ class UserViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """
-        Create user and associated profile.
-        
+        Create user and associated profile, then queue welcome and
+        email verification emails via transaction.on_commit so they
+        only fire after the user record has committed to the database.
+
         Args:
             serializer: Validated UserRegistrationSerializer
         """
         user = serializer.save()
-        
+
         # Ensure profile exists (signal should handle this)
         if not hasattr(user, 'profile'):
             Profile.objects.create(user=user)
+
+        # Build verification URL now while we still have the user object.
+        _user_pk = user.pk
+        _uid = urlsafe_base64_encode(force_bytes(user.pk))
+        _token = email_verification_token.make_token(user)
+        _verification_url = (
+            f"{settings.FRONTEND_URL}/verify-email"
+            f"?uid={_uid}&token={_token}"
+        )
+
+        transaction.on_commit(lambda: send_welcome_email.delay(_user_pk))
+        transaction.on_commit(
+            lambda: send_email_verification_email.delay(_user_pk, _verification_url)
+        )
     
     def perform_update(self, serializer):
         """
@@ -552,7 +581,10 @@ class UserViewSet(viewsets.ModelViewSet):
         # Set new password
         user.set_password(serializer.validated_data['new_password'])
         user.save()
-        
+
+        _user_pk = user.pk
+        transaction.on_commit(lambda: send_password_changed_email.delay(_user_pk))
+
         return Response(
             {'detail': 'Password updated successfully.'},
             status=status.HTTP_200_OK
@@ -576,37 +608,101 @@ class UserViewSet(viewsets.ModelViewSet):
             url_path='verify-email')
     def verify_email(self, request):
         """
-        Verify user's email address with token.
-        
-        TODO: Implement token generation and validation logic.
-        
+        Verify a user's email address using the uid + token pair from the
+        verification email link.
+
+        The token is produced by EmailVerificationTokenGenerator and is
+        single-use: it invalidates automatically once ``email_verified``
+        flips to True, preventing replay attacks.
+
         Returns:
-            Response with verification status
+            200 on success, 400 on invalid / expired token.
         """
+        from django.utils.http import urlsafe_base64_decode
+        from django.utils.encoding import force_str
+
         serializer = EmailVerificationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        # TODO: Implement proper token validation
-        # For now, this is a placeholder
-        
+
+        uid = serializer.validated_data['uid']
+        token = serializer.validated_data['token']
+
+        INVALID_RESPONSE = Response(
+            {'detail': 'Invalid or expired verification link.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
         try:
-            user = User.objects.get(email=serializer.validated_data['email'])
-            
-            # Mark email as verified
-            user.email_verified = True
-            user.email_verified_at = timezone.now()
-            user.save()
-            
+            user_pk = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=user_pk)
+        except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+            return INVALID_RESPONSE
+
+        if user.email_verified:
             return Response(
-                {'detail': 'Email verified successfully.'},
-                status=status.HTTP_200_OK
+                {'detail': 'Email address is already verified.'},
+                status=status.HTTP_200_OK,
             )
-        except User.DoesNotExist:
-            return Response(
-                {'detail': 'User not found.'},
-                status=status.HTTP_404_NOT_FOUND
+
+        if not email_verification_token.check_token(user, token):
+            return INVALID_RESPONSE
+
+        user.email_verified = True
+        user.email_verified_at = timezone.now()
+        user.save(update_fields=['email_verified', 'email_verified_at'])
+
+        return Response(
+            {'detail': 'Email verified successfully.'},
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        summary="Resend Email Verification",
+        description=(
+            "Re-generate and resend the email verification link for the currently "
+            "authenticated user.  Always returns 200 to avoid leaking whether the "
+            "account is already verified.  If the account is already verified the "
+            "request is silently ignored."
+        ),
+        tags=['Users'],
+        responses={
+            200: OpenApiResponse(description="Verification email queued if not already verified"),
+            401: OpenApiResponse(description="Unauthorized"),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path='resend-verification',
+    )
+    def resend_verification(self, request):
+        """
+        Resend the email verification link to the current user.
+
+        Silently ignores already-verified accounts so the response never leaks
+        verification state to potential attackers.
+        """
+        user = request.user
+
+        if not user.email_verified:
+            _user_pk = user.pk
+            _uid = urlsafe_base64_encode(force_bytes(user.pk))
+            _token = email_verification_token.make_token(user)
+            _verification_url = (
+                f"{settings.FRONTEND_URL}/verify-email"
+                f"?uid={_uid}&token={_token}"
             )
-    
+            transaction.on_commit(
+                lambda: send_email_verification_email.delay(_user_pk, _verification_url)
+            )
+            logger.info("resend_verification: queued for user_pk=%s", user.pk)
+
+        return Response(
+            {'detail': 'If your email is not yet verified, a new verification link has been sent.'},
+            status=status.HTTP_200_OK,
+        )
+
     @extend_schema(
         summary="Request Password Reset",
         description=(
@@ -630,10 +726,6 @@ class UserViewSet(viewsets.ModelViewSet):
         Celery.  The response is always 200 to avoid leaking whether an account
         exists for a given email address.
         """
-        from django.utils.http import urlsafe_base64_encode
-        from django.utils.encoding import force_bytes
-        from django.contrib.auth.tokens import PasswordResetTokenGenerator
-        from apps.users.tasks import send_password_reset_email
 
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -707,6 +799,11 @@ class UserViewSet(viewsets.ModelViewSet):
 
         user.set_password(new_password)
         user.save()
+
+        _user_pk = user.pk
+        transaction.on_commit(
+            lambda: send_password_reset_confirmation_email.delay(_user_pk)
+        )
 
         return Response(
             {'detail': 'Password has been reset successfully.'},

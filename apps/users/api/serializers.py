@@ -632,36 +632,31 @@ class ChangePasswordSerializer(serializers.Serializer):
 class EmailVerificationSerializer(serializers.Serializer):
     """
     Serializer for email verification process.
-    
-    Handles email verification token validation and user account activation.
-    
+
+    Accepts the ``uid`` (base-64 encoded user pk) and ``token`` produced by
+    ``EmailVerificationTokenGenerator``, matching the shape of the password-
+    reset confirm flow so the frontend can use a consistent pattern.
+
     Fields:
-        - token: Verification token sent via email
-        - email: User's email address
-        
+        - uid:   Base-64 encoded user primary key.
+        - token: Single-use verification token.
+
     Example:
         ```python
-        data = {'token': 'abc123...', 'email': 'user@example.com'}
+        data = {'uid': 'Mw', 'token': 'abc-xyz123'}
         serializer = EmailVerificationSerializer(data=data)
         if serializer.is_valid():
-            # Mark user as verified
-            user.email_verified = True
-            user.email_verified_at = timezone.now()
-            user.save()
+            # Decode uid, validate token, mark user verified
         ```
     """
+    uid = serializers.CharField(
+        required=True,
+        help_text="Base-64 encoded user primary key"
+    )
     token = serializers.CharField(
         required=True,
-        help_text="Email verification token"
+        help_text="Single-use email verification token"
     )
-    email = serializers.EmailField(
-        required=True,
-        help_text="Email address to verify"
-    )
-    
-    def validate_email(self, value: str) -> str:
-        """Normalize email address."""
-        return value.lower().strip()
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):

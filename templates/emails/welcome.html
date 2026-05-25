@@ -1,0 +1,161 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Welcome to AMDG, {{ user_display_name }}!{% endblock %}
+
+{% block preheader %}Welcome to AMDG! You're now part of a global community united by faith, purpose, and action.{% endblock %}
+
+{% block email_heading %}
+<!-- Badge -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="background-color:#0062ff;border-radius:6px;padding:6px 14px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   color:#f3f3ff;text-transform:uppercase;letter-spacing:0.1em;">
+        Welcome aboard
+      </span>
+    </td>
+  </tr>
+</table>
+
+<h1 style="margin:0 0 8px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+            font-size:32px;font-weight:800;color:#d6e4f9;line-height:1.15;letter-spacing:-0.01em;">
+  Welcome, {{ user_display_name }}!
+</h1>
+<p style="margin:0 0 28px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#8c90a2;line-height:1.6;">
+  You're now part of AMDG — a community united by faith, purpose, and action.
+  We're glad you're here.
+</p>
+{% endblock %}
+
+{% block content %}
+<!-- ── Getting started block ── -->
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#c2c6d9;line-height:1.6;">
+  Your account (<strong style="color:#d6e4f9;">{{ user_email }}</strong>) is ready.
+  Head to your dashboard to complete your profile and start exploring events.
+</p>
+
+<!-- Quick-links grid -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 36px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.07);overflow:hidden;">
+  <tr>
+    <td colspan="2" style="padding:14px 20px 10px;
+                            border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">Get started</span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:16px 20px;vertical-align:top;
+                            border-right:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.08em;
+                   display:block;margin-bottom:4px;">My dashboard</span>
+      <a href="{{ dashboard_url }}"
+         style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                font-weight:600;color:#b4c5ff;text-decoration:none;line-height:1.4;">
+        View your account &rarr;
+      </a>
+    </td>
+    <td width="50%" style="padding:16px 20px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.08em;
+                   display:block;margin-bottom:4px;">Events</span>
+      <a href="{{ events_url }}"
+         style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                font-weight:600;color:#b4c5ff;text-decoration:none;line-height:1.4;">
+        Browse all events &rarr;
+      </a>
+    </td>
+  </tr>
+</table>
+
+{% if upcoming_events %}
+<!-- ── Upcoming events heading ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 16px;">
+  <tr>
+    <td>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;font-weight:700;
+                   color:#b4c5ff;text-transform:uppercase;letter-spacing:0.12em;">
+        Open for registration
+      </span>
+    </td>
+  </tr>
+</table>
+
+<!-- ── Event cards ── -->
+{% for event in upcoming_events %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 16px;background-color:#0f1c2c;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    {% if event.landing_image_url %}
+    <td width="200" style="padding:0;vertical-align:top;">
+      <img src="{{ event.landing_image_url }}"
+           alt="{{ event.title }}"
+           width="200"
+           style="width:200px;height:200px;object-fit:cover;display:block;border-radius:8px 0 0 8px;">
+    </td>
+    {% endif %}
+    <td style="padding:16px 18px;vertical-align:top;">
+      <!-- Open badge -->
+      <span style="display:inline-block;background-color:#063a1f;border:1px solid rgba(52,211,153,0.35);
+                   border-radius:4px;padding:2px 8px;margin-bottom:8px;
+                   font-family:'Inter',Arial,Helvetica,sans-serif;font-size:9px;font-weight:700;
+                   color:#6ee7b7;text-transform:uppercase;letter-spacing:0.1em;">
+        Open
+      </span>
+      <p style="margin:0 0 4px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+                 font-size:16px;font-weight:800;color:#d6e4f9;line-height:1.2;letter-spacing:-0.01em;">
+        {{ event.title }}
+      </p>
+      <p style="margin:0 0 10px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                 color:#8c90a2;line-height:1.4;">
+        {{ event.start_datetime|date:"D d M Y" }}
+        {% if event.venue_string %}&nbsp;&bull;&nbsp;{{ event.venue_string }}{% endif %}
+      </p>
+      {% if event.short_description %}
+      <p style="margin:0 0 12px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                 color:#c2c6d9;line-height:1.5;">
+        {{ event.short_description|truncatechars:100 }}
+      </p>
+      {% endif %}
+      <a href="{{ event.event_url }}"
+         target="_blank"
+         style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                font-weight:700;color:#b4c5ff;text-decoration:none;">
+        View event &rarr;
+      </a>
+    </td>
+  </tr>
+</table>
+{% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block cta %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 32px;">
+  <tr>
+    <td style="border-radius:8px;background-color:#0062ff;">
+      <a href="{{ dashboard_url }}"
+         target="_blank"
+         style="display:inline-block;padding:14px 32px;font-family:'Inter',Arial,Helvetica,sans-serif;
+                font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;
+                border-radius:8px;line-height:1;mso-padding-alt:14px 32px;">
+        Go to my dashboard
+      </a>
+    </td>
+  </tr>
+</table>
+{% endblock %}
+
+{% block footer_extra %}
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  You're receiving this email because you created an AMDG account.
+  If you did not sign up, please contact your community administrator.
+</p>
+{% endblock %}

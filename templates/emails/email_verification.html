@@ -1,0 +1,78 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Verify your email — AMDG{% endblock %}
+
+{% block preheader %}Verify your AMDG email address to activate your account. This link is valid for {{ expiry_hours }} hour{{ expiry_hours|pluralize }}.{% endblock %}
+
+{% block email_heading %}
+<!-- Badge -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="background-color:#0f1c2c;border:1px solid rgba(180,197,255,0.25);border-radius:6px;padding:6px 14px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   color:#b4c5ff;text-transform:uppercase;letter-spacing:0.1em;">
+        &#9993;&nbsp; Email verification
+      </span>
+    </td>
+  </tr>
+</table>
+
+<h1 style="margin:0 0 8px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+            font-size:28px;font-weight:800;color:#d6e4f9;line-height:1.2;letter-spacing:-0.01em;">
+  Confirm your email
+</h1>
+<p style="margin:0 0 28px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#8c90a2;line-height:1.6;">
+  Hi {{ user_display_name }}, one quick step to activate your AMDG account.
+</p>
+{% endblock %}
+
+{% block content %}
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#c2c6d9;line-height:1.6;">
+  Click the button below to verify that
+  <strong style="color:#d6e4f9;">{{ user_email }}</strong> belongs to you.
+  This step confirms your identity and gives you full access to the AMDG platform.
+</p>
+<p style="margin:0 0 24px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+           color:#8c90a2;line-height:1.5;">
+  This link will expire in
+  <strong style="color:#c2c6d9;">{{ expiry_hours }} hour{{ expiry_hours|pluralize }}</strong>.
+</p>
+{% endblock %}
+
+{% block cta %}
+<!-- Verify button -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;">
+  <tr>
+    <td style="border-radius:8px;background-color:#0062ff;">
+      <a href="{{ verification_url }}"
+         target="_blank"
+         style="display:inline-block;padding:14px 32px;font-family:'Inter',Arial,Helvetica,sans-serif;
+                font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;
+                border-radius:8px;line-height:1;mso-padding-alt:14px 32px;">
+        Verify my email
+      </a>
+    </td>
+  </tr>
+</table>
+
+<!-- Fallback plain URL -->
+<p style="margin:0 0 8px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  If the button above does not work, copy and paste the link below into your browser:
+</p>
+<p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#b4c5ff;line-height:1.5;word-break:break-all;">
+  <a href="{{ verification_url }}"
+     style="color:#b4c5ff;text-decoration:underline;">{{ verification_url }}</a>
+</p>
+{% endblock %}
+
+{% block footer_extra %}
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  If you did not create an AMDG account, you can safely ignore this email.
+  No account will be activated without verification.
+</p>
+{% endblock %}
