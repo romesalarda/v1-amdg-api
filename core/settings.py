@@ -184,6 +184,7 @@ THIRD_PARTY_APPS = [
     'timezone_field',
     'colorfield',
     'imagekit',
+    'qr_code',
 ]
 
 LOCAL_APPS = [

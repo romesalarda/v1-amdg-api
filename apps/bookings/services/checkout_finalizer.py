@@ -20,6 +20,7 @@ from apps.bookings.models import (
     EventAlternativeSigninIdentifier,
 )
 from apps.bookings.models.products import PackageProduct
+from apps.bookings.tasks import send_booking_pending_bank_transfer_email
 from apps.common.models import Resource
 from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
 from apps.payments.models import Payment, PaymentMethodTypeChoices, PaymentStatusChoices
@@ -235,6 +236,24 @@ class BookingCheckoutFinalizer:
                 len(orders),
                 tickets_created,
             )
+
+            # Dispatch the bank-transfer pending email only when no tickets
+            # have been created yet (i.e. the bank-transfer checkout path).
+            # The confirmation-with-tickets email is dispatched separately by
+            # BookingPaymentProcessor once the admin verifies the payment.
+            if not create_tickets:
+                _booking_pk = booking.pk
+                _payment_pk = payment.pk
+                transaction.on_commit(
+                    lambda: send_booking_pending_bank_transfer_email.delay(
+                        _booking_pk, _payment_pk
+                    )
+                )
+                logger.info(
+                    "Queued pending bank-transfer email for booking %s (payment %s)",
+                    booking.booking_reference,
+                    payment.payment_reference,
+                )
 
             return {
                 "booking": booking,

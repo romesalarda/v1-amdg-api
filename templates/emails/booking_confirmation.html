@@ -1,0 +1,243 @@
+{% extends "emails/base.html" %}
+{% load i18n %}
+
+{% block title %}You're In! — {{ event_title }} — AMDG{% endblock %}
+
+{% block preheader %}You're in! Your booking for {{ event_title }} is confirmed. {{ ticket_count }} ticket{{ ticket_count|pluralize }} secured.{% endblock %}
+
+{# ─── HERO: event banner image ────────────────────────────────────────── #}
+{% block hero %}
+{% if landing_image_url %}
+<tr>
+  <td style="padding:0;font-size:0;line-height:0;">
+    <div style="position:relative;">
+      <img src="{{ landing_image_url }}"
+           alt="{{ event_title }}"
+           width="600"
+           style="width:100%;max-width:600px;height:220px;object-fit:cover;
+                  display:block;border:0;filter:brightness(0.45) grayscale(0.15);"
+      >
+      <!-- Overlay text lives in email_heading block below — kept separate for MSO compat -->
+    </div>
+  </td>
+</tr>
+{% endif %}
+{% endblock %}
+
+{# ─── HEADING ─────────────────────────────────────────────────────────── #}
+{% block email_heading %}
+<!-- "Order Confirmed" badge -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="background-color:#0062ff;border-radius:6px;padding:6px 14px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   color:#f3f3ff;text-transform:uppercase;letter-spacing:0.1em;">
+        &#10003;&nbsp; Order Confirmed
+      </span>
+    </td>
+  </tr>
+</table>
+
+<h1 style="margin:0 0 8px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+            font-size:32px;font-weight:800;color:#d6e4f9;line-height:1.15;letter-spacing:-0.01em;">
+  You're In!
+</h1>
+<p style="margin:0 0 28px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#8c90a2;line-height:1.6;">
+  Hi {{ user_display_name }}, get ready for <strong style="color:#c2c6d9;">{{ event_title }}</strong>.
+  Your {{ ticket_count }} ticket{{ ticket_count|pluralize }} {{ ticket_count|pluralize:"has,have" }} been secured
+  and {{ ticket_count|pluralize:"is,are" }} shown below.
+</p>
+{% endblock %}
+
+{# ─── CONTENT ─────────────────────────────────────────────────────────── #}
+{% block content %}
+
+<!-- ── Event details grid ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 32px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td colspan="2" style="padding:14px 20px 10px;
+                            border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">Event details</span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:12px 20px 4px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Date
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ event_start|date:"D d M Y" }}
+        {% if event_end|date:"Ymd" != event_start|date:"Ymd" %}
+          &ndash; {{ event_end|date:"D d M Y" }}
+        {% endif %}
+      </span>
+    </td>
+    <td width="50%" style="padding:12px 20px 4px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Venue
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ venue_string }}
+      </span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:4px 20px 14px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Start time
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ event_start|time:"H:i" }} {{ event_timezone_name }}
+      </span>
+    </td>
+    <td width="50%" style="padding:4px 20px 14px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Booking ref
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:700;color:#b4c5ff;line-height:1.4;font-variant-numeric:tabular-nums;">
+        {{ booking_reference }}
+      </span>
+    </td>
+  </tr>
+</table>
+
+<!-- ── Ticket cards (one per attendee) ── -->
+{% for item in ticket_data %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 16px;background-color:#ffffff;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.06);overflow:hidden;">
+  <tr>
+    <!-- Left panel: attendee info -->
+    <td style="padding:20px 16px 20px 20px;vertical-align:middle;width:320px;">
+
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:9px;font-weight:700;
+                   color:#8c90a2;text-transform:uppercase;letter-spacing:0.12em;display:block;
+                   margin-bottom:6px;">
+        {{ organisation_name }}
+      </span>
+
+      <p style="margin:0 0 12px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+                 font-size:17px;font-weight:800;color:#061423;line-height:1.2;
+                 letter-spacing:-0.01em;">
+        {{ item.attendee_name }}
+      </p>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px;">
+        <tr>
+          <td style="padding:0 0 6px 0;">
+            <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;
+                         font-weight:600;color:#8c90a2;text-transform:uppercase;
+                         letter-spacing:0.08em;display:block;margin-bottom:2px;">Ticket type</span>
+            <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                         font-weight:600;color:#132030;line-height:1.3;">
+              {{ item.ticket_type_title }}
+            </span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;
+                         font-weight:600;color:#8c90a2;text-transform:uppercase;
+                         letter-spacing:0.08em;display:block;margin-bottom:2px;">Event</span>
+            <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                         font-weight:600;color:#132030;line-height:1.3;">
+              {{ event_title }}
+            </span>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Ticket code -->
+      <div style="background-color:#f4f6f9;border-radius:4px;padding:8px 10px;
+                  border:1px solid #e2e6ea;">
+        <span style="font-family:'Courier New',Courier,monospace;font-size:10px;
+                     font-weight:700;color:#243141;letter-spacing:0.04em;
+                     word-break:break-all;">
+          {{ item.ticket_code }}
+        </span>
+      </div>
+
+    </td>
+
+    <!-- Dashed divider column (simulated) -->
+    <td width="1" style="padding:0;background-image:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAKCAYAAAB10jRUAAAABmJLR0QA/wD/AP+gvaeTAAAADUlEQVQI12NgYGD4DwABBAEAwHFiZwAAAABJRU5ErkJggg==');background-repeat:repeat-y;background-position:center;width:2px;">
+      &nbsp;
+    </td>
+
+    <!-- Right panel: QR code -->
+    <td style="padding:20px 20px 20px 16px;vertical-align:middle;text-align:center;width:140px;">
+      {% if item.qr_data_uri %}
+        <img src="{{ item.qr_data_uri }}"
+             alt="QR code for {{ item.ticket_code }}"
+             width="120"
+             height="120"
+             style="display:block;margin:0 auto 8px;border:1px solid #e2e6ea;border-radius:4px;">
+      {% else %}
+        <!-- QR fallback: plain text box if image generation failed -->
+        <div style="width:120px;height:120px;border:2px dashed #c2c6d9;border-radius:4px;
+                    display:flex;align-items:center;justify-content:center;margin:0 auto 8px;
+                    padding:8px;">
+          <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:9px;
+                       color:#8c90a2;text-align:center;word-break:break-all;">
+            Scan at entrance
+          </span>
+        </div>
+      {% endif %}
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:9px;
+                   color:#8c90a2;display:block;line-height:1.4;text-align:center;">
+        Scan at entrance for entry
+      </span>
+    </td>
+  </tr>
+</table>
+{% empty %}
+<p style="margin:0 0 24px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+           color:#8c90a2;line-height:1.5;font-style:italic;">
+  Your tickets are being processed. You will receive another email once they are ready.
+</p>
+{% endfor %}
+
+{% endblock %}
+
+{# ─── CTA ─────────────────────────────────────────────────────────────── #}
+{% block cta %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 8px;">
+  <tr>
+    <td style="border-radius:6px;background-color:#0062ff;">
+      <a href="{{ view_tickets_url }}"
+         target="_blank"
+         style="display:inline-block;padding:14px 32px;
+                font-family:'Inter',Arial,Helvetica,sans-serif;
+                font-size:14px;font-weight:700;color:#ffffff;
+                text-decoration:none;border-radius:6px;line-height:1;
+                mso-padding-alt:14px 32px;">
+        View My Tickets
+      </a>
+    </td>
+  </tr>
+</table>
+{% endblock %}
+
+{# ─── FOOTER EXTRA ────────────────────────────────────────────────────── #}
+{% block footer_extra %}
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  Need to make changes?
+  <a href="{{ view_tickets_url }}" style="color:#b4c5ff;text-decoration:underline;">
+    Manage your booking
+  </a>
+  from your profile.
+</p>
+{% endblock %}

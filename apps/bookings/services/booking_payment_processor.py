@@ -7,6 +7,12 @@ knowledge does not leak into apps.payments.
 """
 import logging
 
+from django.db import transaction
+
+from apps.bookings.tasks import (
+    send_booking_confirmation_email,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +45,19 @@ class BookingPaymentProcessor:
         """
         cls._create_tickets(payment, booking)
         cls._handle_related_orders(payment, booking)
+
+        # Dispatch the booking confirmation email (with ticket QR cards) after
+        # the enclosing atomic block commits so the task always sees committed data.
+        _booking_pk = booking.pk
+        _payment_pk = payment.pk
+        transaction.on_commit(
+            lambda: send_booking_confirmation_email.delay(_booking_pk, _payment_pk)
+        )
+        logger.info(
+            "Queued booking confirmation email for booking %s (payment %s)",
+            booking.booking_reference,
+            payment.payment_reference,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
