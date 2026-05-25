@@ -20,6 +20,7 @@ from apps.bookings.models import (
     EventAlternativeSigninIdentifier,
 )
 from apps.bookings.models.products import PackageProduct
+from apps.bookings.tasks import send_booking_pending_bank_transfer_email
 from apps.common.models import Resource
 from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
 from apps.payments.models import Payment, PaymentMethodTypeChoices, PaymentStatusChoices
@@ -235,6 +236,31 @@ class BookingCheckoutFinalizer:
                 len(orders),
                 tickets_created,
             )
+
+            # Dispatch the bank-transfer pending email only when:
+            #   1. No tickets have been created yet (create_tickets=False), AND
+            #   2. The payment method is genuinely BANK_TRANSFER.
+            #
+            # Stripe checkouts without an existing PaymentIntent also call
+            # finalize_for_bank_transfer (to pre-create the Booking/Attendees before
+            # the PaymentIntent is confirmed), so checking create_tickets alone is not
+            # sufficient — it would fire for those Stripe pre-finalisations too.
+            # The confirmation-with-tickets email is dispatched separately by
+            # BookingPaymentProcessor once the payment is marked COMPLETED.
+            _method_type = payment.method.method_type if payment.method else None
+            if not create_tickets and _method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+                _booking_pk = booking.pk
+                _payment_pk = payment.pk
+                transaction.on_commit(
+                    lambda: send_booking_pending_bank_transfer_email.delay(
+                        _booking_pk, _payment_pk
+                    )
+                )
+                logger.info(
+                    "Queued pending bank-transfer email for booking %s (payment %s)",
+                    booking.booking_reference,
+                    payment.payment_reference,
+                )
 
             return {
                 "booking": booking,

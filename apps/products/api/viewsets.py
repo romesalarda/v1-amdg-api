@@ -4037,6 +4037,18 @@ class OrderViewSet(viewsets.ModelViewSet):
                 response_data['status'] = 'pending_verification'
                 
                 logger.info(f"Generated bank transfer reference {payment.bank_transfer_reference} for payment {payment.payment_reference}")
+
+                from apps.products.tasks import send_order_pending_bank_transfer_email
+                _order_pk = locked_order.pk
+                _payment_pk = payment.pk
+                transaction.on_commit(
+                    lambda: send_order_pending_bank_transfer_email.delay(_order_pk, _payment_pk)
+                )
+                logger.info(
+                    "Queued pending bank transfer email for order %s (payment %s)",
+                    locked_order.order_reference_id,
+                    payment.payment_reference,
+                )
             
             elif method_type == PaymentMethodTypeChoices.CASH:
                 # Cash payment - pending approval at venue

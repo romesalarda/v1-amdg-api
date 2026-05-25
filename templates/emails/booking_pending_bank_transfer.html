@@ -1,0 +1,296 @@
+{% extends "emails/base.html" %}
+{% load i18n %}
+
+{% block title %}Booking Received — {{ event_title }} — AMDG{% endblock %}
+
+{% block preheader %}Your booking for {{ event_title }} has been received. Complete your bank transfer to secure your place.{% endblock %}
+
+{# ─── HERO: event banner image ────────────────────────────────────────── #}
+{% block hero %}
+{% if landing_image_url %}
+<tr>
+  <td style="padding:0;font-size:0;line-height:0;">
+    <img src="{{ landing_image_url }}"
+         alt="{{ event_title }}"
+         width="600"
+         style="width:100%;max-width:600px;height:220px;object-fit:cover;
+                display:block;border:0;filter:brightness(0.35) grayscale(0.2);">
+  </td>
+</tr>
+{% endif %}
+{% endblock %}
+
+{# ─── HEADING ─────────────────────────────────────────────────────────── #}
+{% block email_heading %}
+<!-- "Awaiting Payment" badge -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="background-color:#92400e;border-radius:6px;padding:6px 14px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   color:#fef3c7;text-transform:uppercase;letter-spacing:0.1em;">
+        &#9679;&nbsp; Awaiting Payment
+      </span>
+    </td>
+  </tr>
+</table>
+
+<h1 style="margin:0 0 8px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+            font-size:32px;font-weight:800;color:#d6e4f9;line-height:1.15;letter-spacing:-0.01em;">
+  Booking Received
+</h1>
+<p style="margin:0 0 28px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#8c90a2;line-height:1.6;">
+  Hi {{ user_display_name }}, your place at <strong style="color:#c2c6d9;">{{ event_title }}</strong> is being held.
+  Please complete your bank transfer using the details below to finalise your booking.
+  Tickets will be emailed once payment is verified by our team.
+</p>
+{% endblock %}
+
+{# ─── CONTENT ─────────────────────────────────────────────────────────── #}
+{% block content %}
+
+<!-- ── Event details grid ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 24px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td colspan="2" style="padding:14px 20px 10px;
+                            border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">Event details</span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:12px 20px 4px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Date
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ event_start|date:"D d M Y" }}
+        {% if event_end|date:"Ymd" != event_start|date:"Ymd" %}
+          &ndash; {{ event_end|date:"D d M Y" }}
+        {% endif %}
+      </span>
+    </td>
+    <td width="50%" style="padding:12px 20px 4px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Venue
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ venue_string }}
+      </span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:4px 20px 14px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Start time
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ event_start|time:"H:i" }} {{ event_timezone_name }}
+      </span>
+    </td>
+    <td width="50%" style="padding:4px 20px 14px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Booking ref
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:700;color:#b4c5ff;line-height:1.4;font-variant-numeric:tabular-nums;">
+        {{ booking_reference }}
+      </span>
+    </td>
+  </tr>
+</table>
+
+<!-- ── Bank transfer box ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 24px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td style="padding:14px 20px 10px;border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">
+        Bank transfer details
+        {% if payment_method_title %}
+          &mdash; <span style="text-transform:none;color:#8c90a2;font-weight:400;">{{ payment_method_title }}</span>
+        {% endif %}
+      </span>
+    </td>
+  </tr>
+
+  <!-- Payment reference row (highlighted) -->
+  <tr>
+    <td style="padding:12px 20px 12px;border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:4px;">
+        Your payment reference
+      </span>
+      <div style="background-color:#283646;border-radius:4px;padding:10px 12px;
+                  border-left:3px solid #b4c5ff;display:inline-block;">
+        <span style="font-family:'Courier New',Courier,monospace;font-size:16px;
+                     font-weight:700;color:#b4c5ff;letter-spacing:0.04em;">
+          {% if bank_transfer_reference %}{{ bank_transfer_reference }}{% else %}{{ booking_reference }}{% endif %}
+        </span>
+      </div>
+      <p style="margin:6px 0 0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                 color:#8c90a2;line-height:1.4;">
+        Include this reference with your transfer so we can match your payment.
+      </p>
+    </td>
+  </tr>
+
+  <!-- Dynamic bank account detail rows -->
+  {% for key, value in bank_details.items %}
+  <tr>
+    <td style="padding:{% if forloop.last %}8px 20px 14px{% else %}8px 20px{% endif %};
+               {% if not forloop.last %}border-bottom:1px solid rgba(255,255,255,0.04);{% endif %}">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:2px;">
+        {{ key|title|cut:"_" }}
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ value }}
+      </span>
+    </td>
+  </tr>
+  {% empty %}
+  <tr>
+    <td style="padding:12px 20px 14px;">
+      <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                 color:#8c90a2;line-height:1.5;font-style:italic;">
+        Our team will contact you with bank transfer details shortly.
+      </p>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<!-- ── Step-by-step instructions ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 28px;">
+  <tr>
+    <td style="padding:0 0 8px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">
+        Next steps
+      </span>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:0;">
+      <!-- Step 1 -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="margin:0 0 10px;">
+        <tr>
+          <td width="32" valign="top" style="padding:0;">
+            <div style="width:24px;height:24px;border-radius:50%;background-color:#0062ff;
+                        text-align:center;line-height:24px;">
+              <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                           font-weight:700;color:#ffffff;">1</span>
+            </div>
+          </td>
+          <td valign="top" style="padding:3px 0 0 0;">
+            <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                       font-weight:600;color:#c2c6d9;line-height:1.4;">
+              Make your bank transfer
+            </p>
+            <p style="margin:2px 0 0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                       color:#8c90a2;line-height:1.4;">
+              Use the account details above and include your payment reference.
+            </p>
+          </td>
+        </tr>
+      </table>
+      <!-- Step 2 -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="margin:0 0 10px;">
+        <tr>
+          <td width="32" valign="top" style="padding:0;">
+            <div style="width:24px;height:24px;border-radius:50%;background-color:#283646;
+                        text-align:center;line-height:24px;border:1px solid rgba(255,255,255,0.12);">
+              <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                           font-weight:700;color:#8c90a2;">2</span>
+            </div>
+          </td>
+          <td valign="top" style="padding:3px 0 0 0;">
+            <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                       font-weight:600;color:#c2c6d9;line-height:1.4;">
+              Await verification
+            </p>
+            <p style="margin:2px 0 0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                       color:#8c90a2;line-height:1.4;">
+              Our team will confirm receipt within 1–3 business days.
+            </p>
+          </td>
+        </tr>
+      </table>
+      <!-- Step 3 -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td width="32" valign="top" style="padding:0;">
+            <div style="width:24px;height:24px;border-radius:50%;background-color:#283646;
+                        text-align:center;line-height:24px;border:1px solid rgba(255,255,255,0.12);">
+              <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                           font-weight:700;color:#8c90a2;">3</span>
+            </div>
+          </td>
+          <td valign="top" style="padding:3px 0 0 0;">
+            <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                       font-weight:600;color:#c2c6d9;line-height:1.4;">
+              Receive your tickets by email
+            </p>
+            <p style="margin:2px 0 0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                       color:#8c90a2;line-height:1.4;">
+              Once confirmed, your tickets with QR codes will be sent to this email address.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+{% endblock %}
+
+{# ─── CTA ─────────────────────────────────────────────────────────────── #}
+{% block cta %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 8px;">
+  <tr>
+    <td style="border-radius:6px;background-color:#283646;border:1px solid rgba(255,255,255,0.12);">
+      <a href="{{ view_booking_url }}"
+         target="_blank"
+         style="display:inline-block;padding:14px 32px;
+                font-family:'Inter',Arial,Helvetica,sans-serif;
+                font-size:14px;font-weight:700;color:#d6e4f9;
+                text-decoration:none;border-radius:6px;line-height:1;
+                mso-padding-alt:14px 32px;">
+        View Your Booking
+      </a>
+    </td>
+  </tr>
+</table>
+{% endblock %}
+
+{# ─── FOOTER EXTRA ────────────────────────────────────────────────────── #}
+{% block footer_extra %}
+<p style="margin:0 0 10px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  Tickets will be emailed once payment is verified by our team.
+</p>
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  Have a question?
+  <a href="{{ view_booking_url }}" style="color:#b4c5ff;text-decoration:underline;">
+    View your booking
+  </a>
+  for updates.
+</p>
+{% endblock %}
