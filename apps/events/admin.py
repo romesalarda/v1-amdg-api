@@ -476,7 +476,7 @@ class EventVenueAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Association', {
-            'fields': ('event_venue_id', 'event', 'source_venue_id'),
+            'fields': ('event_venue_id', 'event', 'source_venue_id', 'is_primary'),
         }),
         ('Location', {
             'fields': ('name', 'address', 'postcode', 'city', 'poi_type', 'latitude', 'longitude'),

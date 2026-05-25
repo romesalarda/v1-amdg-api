@@ -1020,23 +1020,23 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
                 assigned_by=self.context['request'].user,
             )
 
-            try:
-                role = EventRole.objects.get(category=EventRoleCategoryChoices.ADMINISTRATIVE)
-                EventRoleAssignment.objects.create(
-                    event=instance,
-                    user=self.context['request'].user,
-                    role=role,
-                    assigned_at=timezone.now(),
-                    assigned_by=self.context['request'].user,
-                )
+            # try:
+            #     role = EventRole.objects.get(category=EventRoleCategoryChoices.ADMINISTRATIVE)
+            #     EventRoleAssignment.objects.create(
+            #         event=instance,
+            #         user=self.context['request'].user,
+            #         role=role,
+            #         assigned_at=timezone.now(),
+            #         assigned_by=self.context['request'].user,
+            #     )
 
-            except EventRole.DoesNotExist:
-                role = EventRole.objects.create(
-                    name=EventRoleCategoryChoices.ADMINISTRATIVE,
-                    code='ADMIN',
-                    category=EventRoleCategoryChoices.ADMINISTRATIVE,
-                    description='Administrative role with full access'
-                )
+            # except EventRole.DoesNotExist:
+            #     role = EventRole.objects.create(
+            #         name=EventRoleCategoryChoices.ADMINISTRATIVE,
+            #         code='ADMIN',
+            #         category=EventRoleCategoryChoices.ADMINISTRATIVE,
+            #         description='Administrative role with full access'
+            #     )
 
             return instance
         except Exception as e:
@@ -2319,6 +2319,7 @@ class EventVenueSerializer(serializers.ModelSerializer):
             'rooms',
             'contacts',
             'metadata',
+            'is_primary',   
             '_links',
         )
         read_only_fields = ('event_venue_id', 'added_at', 'updated_at')

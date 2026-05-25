@@ -26,6 +26,7 @@ class EventVenue(models.Model):
     """
     event_venue_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='event_venues')
+    is_primary = models.BooleanField(default=False, help_text="Designates the primary venue for the event when multiple venues are present.")
 
     # Soft reference to the global Venue from which this snapshot was cloned.
     # NULL when the venue was created directly for this event (no global source).

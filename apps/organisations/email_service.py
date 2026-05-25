@@ -55,14 +55,17 @@ class SponsorshipEmailService:
                     event.event_id,
                 )
 
-        venue_parts: list[str] = []
-        location = getattr(event, "location", None)
-        if location:
-            venue_parts.append(location.area_name)
-            chapter = getattr(location, "chapter", None)
-            if chapter and getattr(chapter, "chapter_name", None):
-                venue_parts.append(chapter.chapter_name)
-        venue_string = ", ".join(venue_parts) if venue_parts else "Venue TBC"
+        # venue_parts: list[str] = []
+        # location = getattr(event, "location", None)
+        # if location:
+        #     venue_parts.append(location.area_name)
+        #     chapter = getattr(location, "chapter", None)
+        #     if chapter and getattr(chapter, "chapter_name", None):
+        #         venue_parts.append(chapter.chapter_name)
+        # venue_string = ", ".join(venue_parts) if venue_parts else "Venue TBC"
+
+        venue_string = event.primary_venue.name if event.primary_venue and event.primary_venue.name else "Venue TBC"
+
 
         landing_image_url: str | None = None
         try:

@@ -402,8 +402,8 @@ class EventFilterSet(filters.FilterSet):
         ?fuzzy_search=broghton conf&fuzzy_threshold=0.2
     """
 
-    title = filters.CharFilter(field_name='title', lookup_expr='icontains')
-    display_code = filters.CharFilter(field_name='display_code', lookup_expr='icontains')
+    title = filters.CharFilter(field_name='title', lookup_expr='iexact')
+    display_code = filters.CharFilter(field_name='display_code', lookup_expr='iexact')
     display_identifier = filters.CharFilter(field_name='display_identifier', lookup_expr='icontains')
     status = filters.MultipleChoiceFilter(choices=Event._meta.get_field('status').choices)
 

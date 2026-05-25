@@ -10,10 +10,10 @@ from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from timezone_field import TimeZoneField
 from django.utils import timezone
-
+from django.db.models import Sum
 import uuid
 
-from apps.common.models import SoftDeleteModel, AvailabilityWindow, Resource
+from apps.common.models import SoftDeleteModel, AvailabilityWindow, AvailabilityTypeChoices
 from apps.common.mixins import LandingImageMixin, HasAvailabilityMixin
 from apps.locations.models import AreaLocation
 
@@ -432,8 +432,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         This prevents race conditions when multiple users are booking at capacity.
         """
         from apps.bookings.models import BookingIntent, BookingIntentStatusChoices
-        from django.db.models import Sum
-        from django.utils import timezone
+
         
         pending_intents = BookingIntent.objects.filter(
             event=self,
@@ -467,7 +466,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         '''
         Returns boolean indicating whether the current date falls within any registration availability windows for the event.
         '''
-        from apps.common.models import AvailabilityTypeChoices
 
         windows = self.availability_windows.filter(
             availability_type=AvailabilityTypeChoices.REGISTRATION
@@ -484,7 +482,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         '''
         Returns the start date of the first registration availability window for the event, or None if no such window exists.
         '''
-        from apps.common.models import AvailabilityTypeChoices
 
         window = self.availability_windows.filter(
             availability_type=AvailabilityTypeChoices.REGISTRATION
@@ -496,7 +493,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         '''
         Returns the end date of the last registration availability window for the event, or None if no such window exists.
         '''
-        from apps.common.models import AvailabilityTypeChoices
 
         window = self.availability_windows.filter(
             availability_type=AvailabilityTypeChoices.REGISTRATION
@@ -508,7 +504,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         '''
         Returns boolean indicating whether the event has any registration availability windows defined.
         '''
-        from apps.common.models import AvailabilityTypeChoices
 
         return self.availability_windows.filter(
             availability_type=AvailabilityTypeChoices.REGISTRATION
@@ -516,9 +511,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     
     @property
     def extended_availability_windows(self):
-
-        from apps.bookings.models import BookingPackage
-        from apps.products.models import Product
 
         base = self.availability_windows
         # get related products and packages availability windows as well
@@ -533,6 +525,13 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         )
 
         return base.union(product_windows, package_windows).order_by('available_from')
+    
+    @property
+    def primary_venue(self):
+        '''
+        Returns the primary EventVenue for this event, or None if no venues are defined.
+        '''
+        return self.event_venues.filter(is_primary=True).first()
 
 class EventSettings(models.Model):
     '''
