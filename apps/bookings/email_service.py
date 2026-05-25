@@ -131,6 +131,11 @@ class BookingEmailService:
             main_image = event.main_landing_image
             if main_image and main_image.image:
                 landing_image_url = _make_absolute_url(main_image.image.url)
+            else:
+                logger.info(
+                    "Event %s has no main landing image — skipping image in email",
+                    event.event_id,
+                )
         except Exception:
             logger.warning(
                 "Could not resolve landing image URL for event %s", event.event_id

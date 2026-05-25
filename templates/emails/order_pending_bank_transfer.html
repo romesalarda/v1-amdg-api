@@ -1,0 +1,394 @@
+{% extends "emails/base.html" %}
+{% load i18n %}
+
+{% block title %}Order Received — {{ event_title }} — AMDG{% endblock %}
+
+{% block preheader %}Your order for {{ event_title }} has been received. Complete your bank transfer to confirm your items.{% endblock %}
+
+{# ─── HERO: event banner image ────────────────────────────────────────── #}
+{% block hero %}
+{% if landing_image_url %}
+<tr>
+  <td style="padding:0;font-size:0;line-height:0;">
+    <img src="{{ landing_image_url }}"
+         alt="{{ event_title }}"
+         width="600"
+         style="width:100%;max-width:600px;height:220px;object-fit:cover;
+                display:block;border:0;filter:brightness(0.35) grayscale(0.2);">
+  </td>
+</tr>
+{% endif %}
+{% endblock %}
+
+{# ─── HEADING ─────────────────────────────────────────────────────────── #}
+{% block email_heading %}
+<!-- "Awaiting Payment" badge -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="background-color:#92400e;border-radius:6px;padding:6px 14px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   color:#fef3c7;text-transform:uppercase;letter-spacing:0.1em;">
+        &#9679;&nbsp; Awaiting Payment
+      </span>
+    </td>
+  </tr>
+</table>
+
+<h1 style="margin:0 0 8px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+            font-size:32px;font-weight:800;color:#d6e4f9;line-height:1.15;letter-spacing:-0.01em;">
+  Order Received
+</h1>
+<p style="margin:0 0 28px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#8c90a2;line-height:1.6;">
+  Hi {{ user_display_name }}, your order for
+  <strong style="color:#c2c6d9;">{{ event_title }}</strong> has been received.
+  Please complete your bank transfer using the details below to finalise your order.
+  Your items will be prepared once payment is verified by our team.
+</p>
+{% endblock %}
+
+{# ─── CONTENT ─────────────────────────────────────────────────────────── #}
+{% block content %}
+
+<!-- ── Event & order details grid ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 24px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td colspan="2" style="padding:14px 20px 10px;
+                            border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">Event details</span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:12px 20px 4px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Date
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ event_start|date:"D d M Y" }}
+        {% if event_end|date:"Ymd" != event_start|date:"Ymd" %}
+          &ndash; {{ event_end|date:"D d M Y" }}
+        {% endif %}
+      </span>
+    </td>
+    <td width="50%" style="padding:12px 20px 4px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Venue
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ venue_string }}
+      </span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:4px 20px 14px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Start time
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ event_start|time:"H:i" }} {{ event_timezone_name }}
+      </span>
+    </td>
+    <td width="50%" style="padding:4px 20px 14px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Order ref
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:700;color:#b4c5ff;line-height:1.4;font-variant-numeric:tabular-nums;">
+        {{ order_reference }}
+      </span>
+    </td>
+  </tr>
+</table>
+
+<!-- ── Bank transfer box ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 24px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td style="padding:14px 20px 10px;border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">
+        Bank transfer details
+        {% if payment_method_title %}
+          &mdash; <span style="text-transform:none;color:#8c90a2;font-weight:400;">{{ payment_method_title }}</span>
+        {% endif %}
+      </span>
+    </td>
+  </tr>
+
+  <!-- Payment reference row (highlighted) -->
+  <tr>
+    <td style="padding:12px 20px 12px;border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:4px;">
+        Your payment reference
+      </span>
+      <div style="background-color:#283646;border-radius:4px;padding:10px 12px;
+                  border-left:3px solid #b4c5ff;display:inline-block;">
+        <span style="font-family:'Courier New',Courier,monospace;font-size:16px;
+                     font-weight:700;color:#b4c5ff;letter-spacing:0.04em;">
+          {{ bank_transfer_reference }}
+        </span>
+      </div>
+      <p style="margin:6px 0 0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                 color:#8c90a2;line-height:1.4;">
+        Include this reference with your transfer so we can match your payment.
+      </p>
+    </td>
+  </tr>
+
+  <!-- Dynamic bank account detail rows -->
+  {% for key, value in bank_details.items %}
+  <tr>
+    <td style="padding:{% if forloop.last %}8px 20px 14px{% else %}8px 20px{% endif %};
+               {% if not forloop.last %}border-bottom:1px solid rgba(255,255,255,0.04);{% endif %}">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:2px;">
+        {{ key|title|cut:"_" }}
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {{ value }}
+      </span>
+    </td>
+  </tr>
+  {% empty %}
+  <tr>
+    <td style="padding:12px 20px 14px;">
+      <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                 color:#8c90a2;line-height:1.5;font-style:italic;">
+        Our team will contact you with bank account details shortly.
+      </p>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<!-- ── Order summary ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 8px;">
+  <tr>
+    <td>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">Order summary</span>
+    </td>
+  </tr>
+</table>
+
+{% for item in order_items %}
+<!-- Item row -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 8px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.07);overflow:hidden;">
+  <tr>
+
+    <!-- Product image -->
+    <td width="72" style="padding:12px 0 12px 14px;vertical-align:middle;">
+      {% if item.image_url %}
+        <img src="{{ item.image_url }}"
+             alt="{{ item.product_title }}"
+             width="48"
+             height="48"
+             style="display:block;width:48px;height:48px;object-fit:cover;
+                    border-radius:5px;border:1px solid rgba(255,255,255,0.10);">
+      {% else %}
+        <div style="width:48px;height:48px;background-color:#283646;border-radius:5px;
+                    border:1px solid rgba(255,255,255,0.08);text-align:center;line-height:48px;">
+          <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:18px;
+                       color:#424656;">&#9633;</span>
+        </div>
+      {% endif %}
+    </td>
+
+    <!-- Product info -->
+    <td style="padding:12px 10px;vertical-align:middle;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:600;color:#d6e4f9;display:block;margin-bottom:3px;line-height:1.3;">
+        {{ item.product_title }}
+      </span>
+      {% if item.variant_label %}
+        <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                     color:#8c90a2;display:block;">
+          {% if item.color_hex %}
+            <span style="display:inline-block;width:9px;height:9px;
+                         background-color:{{ item.color_hex }};border-radius:2px;
+                         border:1px solid rgba(255,255,255,0.20);
+                         vertical-align:middle;margin-right:4px;"></span>
+          {% endif %}
+          {{ item.variant_label }}
+        </span>
+      {% endif %}
+    </td>
+
+    <!-- Qty + total -->
+    <td style="padding:12px 14px 12px 8px;vertical-align:middle;text-align:right;
+               white-space:nowrap;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                   color:#424656;display:block;margin-bottom:2px;">
+        ×{{ item.quantity }}
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:700;color:#b4c5ff;">
+        {{ item.total_price }}
+      </span>
+    </td>
+
+  </tr>
+</table>
+{% endfor %}
+
+<!-- ── Order total ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 24px;background-color:#0f1c2c;border-radius:8px;
+              border:1px solid rgba(180,197,255,0.20);">
+  <tr>
+    <td style="padding:12px 20px;vertical-align:middle;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                   font-weight:700;color:#d6e4f9;text-transform:uppercase;letter-spacing:0.06em;">
+        Total due
+      </span>
+    </td>
+    <td style="padding:12px 20px;vertical-align:middle;text-align:right;white-space:nowrap;">
+      <span style="font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+                   font-size:20px;font-weight:800;color:#b4c5ff;">
+        {{ total_amount }}
+      </span>
+    </td>
+  </tr>
+</table>
+
+<!-- ── Step-by-step instructions ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 28px;">
+  <tr>
+    <td style="padding:0 0 12px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">
+        Next steps
+      </span>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:0;">
+
+      <!-- Step 1 -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="margin:0 0 10px;">
+        <tr>
+          <td width="32" valign="top" style="padding:0;">
+            <div style="width:24px;height:24px;border-radius:50%;background-color:#0062ff;
+                        text-align:center;line-height:24px;">
+              <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                           font-weight:700;color:#ffffff;">1</span>
+            </div>
+          </td>
+          <td valign="top" style="padding:3px 0 0 0;">
+            <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                       font-weight:600;color:#c2c6d9;line-height:1.4;">
+              Make your bank transfer
+            </p>
+            <p style="margin:2px 0 0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                       color:#8c90a2;line-height:1.4;">
+              Use the account details above and include your payment reference.
+            </p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Step 2 -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="margin:0 0 10px;">
+        <tr>
+          <td width="32" valign="top" style="padding:0;">
+            <div style="width:24px;height:24px;border-radius:50%;background-color:#283646;
+                        text-align:center;line-height:24px;border:1px solid rgba(255,255,255,0.12);">
+              <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                           font-weight:700;color:#8c90a2;">2</span>
+            </div>
+          </td>
+          <td valign="top" style="padding:3px 0 0 0;">
+            <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                       font-weight:600;color:#c2c6d9;line-height:1.4;">
+              Await verification
+            </p>
+            <p style="margin:2px 0 0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                       color:#8c90a2;line-height:1.4;">
+              Our team will confirm receipt within 1–3 business days.
+            </p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Step 3 -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td width="32" valign="top" style="padding:0;">
+            <div style="width:24px;height:24px;border-radius:50%;background-color:#283646;
+                        text-align:center;line-height:24px;border:1px solid rgba(255,255,255,0.12);">
+              <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                           font-weight:700;color:#8c90a2;">3</span>
+            </div>
+          </td>
+          <td valign="top" style="padding:3px 0 0 0;">
+            <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                       font-weight:600;color:#c2c6d9;line-height:1.4;">
+              Your order is processed
+            </p>
+            <p style="margin:2px 0 0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                       color:#8c90a2;line-height:1.4;">
+              Once confirmed, your order will be prepared and you'll receive a confirmation.
+            </p>
+          </td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+</table>
+
+{% endblock %}
+
+{# ─── CTA ─────────────────────────────────────────────────────────────── #}
+{% block cta %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 8px;">
+  <tr>
+    <td style="border-radius:6px;background-color:#283646;border:1px solid rgba(255,255,255,0.12);">
+      <a href="{{ view_order_url }}"
+         target="_blank"
+         style="display:inline-block;padding:14px 32px;
+                font-family:'Inter',Arial,Helvetica,sans-serif;
+                font-size:14px;font-weight:700;color:#d6e4f9;
+                text-decoration:none;border-radius:6px;line-height:1;
+                mso-padding-alt:14px 32px;">
+        View Event
+      </a>
+    </td>
+  </tr>
+</table>
+{% endblock %}
+
+{# ─── FOOTER EXTRA ────────────────────────────────────────────────────── #}
+{% block footer_extra %}
+<p style="margin:0 0 10px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  Your order will be processed once payment is verified by our team.
+</p>
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  Have a question?
+  <a href="{{ view_order_url }}" style="color:#b4c5ff;text-decoration:underline;">
+    View the event page
+  </a>
+  for contact details.
+</p>
+{% endblock %}

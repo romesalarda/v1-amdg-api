@@ -7,6 +7,10 @@ products app so payment-specific knowledge does not leak into apps.payments.
 """
 import logging
 
+from django.db import transaction
+
+from apps.products.tasks import send_order_confirmation_email
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,3 +105,16 @@ class OrderPaymentProcessor:
                 f"Created approval notification for order {locked_order.order_reference_id} "
                 f"(event requires manual approval)"
             )
+
+        # Queue order confirmation email for both auto-processed and manual-approval paths.
+        # Payment is confirmed in both cases; the customer is notified immediately.
+        _order_pk = locked_order.pk
+        _payment_pk = payment.pk
+        transaction.on_commit(
+            lambda: send_order_confirmation_email.delay(_order_pk, _payment_pk)
+        )
+        logger.info(
+            "Queued order confirmation email for order %s (payment %s)",
+            locked_order.order_reference_id,
+            payment.payment_reference,
+        )
