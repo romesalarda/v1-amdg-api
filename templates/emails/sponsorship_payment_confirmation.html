@@ -1,0 +1,203 @@
+{% extends "emails/base.html" %}
+{% load i18n %}
+
+{% block title %}Sponsorship Confirmed — {{ event_title }} — AMDG{% endblock %}
+
+{% block preheader %}Your sponsorship payment for {{ event_title }} has been confirmed. Reference: {{ payment_reference }}.{% endblock %}
+
+{# ─── HERO: event banner image ────────────────────────────────────────── #}
+{% block hero %}
+{% if landing_image_url %}
+<tr>
+  <td style="padding:0;font-size:0;line-height:0;">
+    <img src="{{ landing_image_url }}"
+         alt="{{ event_title }}"
+         width="600"
+         style="width:100%;max-width:600px;height:220px;object-fit:cover;
+                display:block;border:0;filter:brightness(0.45) grayscale(0.15);">
+  </td>
+</tr>
+{% endif %}
+{% endblock %}
+
+{# ─── HEADING ─────────────────────────────────────────────────────────── #}
+{% block email_heading %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="background-color:#0062ff;border-radius:6px;padding:6px 14px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   color:#f3f3ff;text-transform:uppercase;letter-spacing:0.1em;">
+        &#10003;&nbsp; Sponsorship Confirmed
+      </span>
+    </td>
+  </tr>
+</table>
+
+<h1 style="margin:0 0 8px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+            font-size:32px;font-weight:800;color:#d6e4f9;line-height:1.15;letter-spacing:-0.01em;">
+  Thank You for Your Sponsorship!
+</h1>
+<p style="margin:0 0 28px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#8c90a2;line-height:1.6;">
+  Hi {{ user_display_name }}, your sponsorship payment for
+  <strong style="color:#c2c6d9;">{{ event_title }}</strong> has been received and confirmed.
+</p>
+{% endblock %}
+
+{# ─── CONTENT ─────────────────────────────────────────────────────────── #}
+{% block content %}
+
+<!-- ── Event details ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 24px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td style="padding:20px 24px 8px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   text-transform:uppercase;letter-spacing:0.1em;color:#b4c5ff;">
+        Event Details
+      </span>
+    </td>
+  </tr>
+
+  <!-- Event title row -->
+  <tr>
+    <td style="padding:8px 24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td width="40%" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                                  color:#8c90a2;padding:4px 0;">Event</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;font-weight:600;padding:4px 0;">{{ event_title }}</td>
+        </tr>
+        {% if event_start %}
+        <tr>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#8c90a2;padding:4px 0;">Date</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;padding:4px 0;">{{ event_start|date:"j F Y" }}</td>
+        </tr>
+        {% endif %}
+        {% if venue_string %}
+        <tr>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#8c90a2;padding:4px 0;">Location</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;padding:4px 0;">{{ venue_string }}</td>
+        </tr>
+        {% endif %}
+        {% if organisation_name %}
+        <tr>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#8c90a2;padding:4px 0;">Organiser</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;padding:4px 0;">{{ organisation_name }}</td>
+        </tr>
+        {% endif %}
+      </table>
+    </td>
+  </tr>
+  <tr><td style="padding:8px 24px 20px;"></td></tr>
+</table>
+
+<!-- ── Sponsorship details ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 24px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td style="padding:20px 24px 8px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   text-transform:uppercase;letter-spacing:0.1em;color:#b4c5ff;">
+        Sponsorship Details
+      </span>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:8px 24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td width="40%" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                                  color:#8c90a2;padding:4px 0;">Sponsor</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;font-weight:600;padding:4px 0;">{{ sponsor_name }}</td>
+        </tr>
+        <tr>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#8c90a2;padding:4px 0;">Organisation</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;padding:4px 0;">{{ sponsor_organisation }}</td>
+        </tr>
+        {% if package_name %}
+        <tr>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#8c90a2;padding:4px 0;">Package</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;padding:4px 0;">{{ package_name }}</td>
+        </tr>
+        {% endif %}
+      </table>
+    </td>
+  </tr>
+  <tr><td style="padding:8px 24px 20px;"></td></tr>
+</table>
+
+<!-- ── Payment summary ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 8px;background-color:#283646;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td style="padding:20px 24px 8px;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   text-transform:uppercase;letter-spacing:0.1em;color:#b4c5ff;">
+        Payment Summary
+      </span>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:8px 24px 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td width="40%" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                                  color:#8c90a2;padding:4px 0;">Reference</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;font-weight:600;font-variant-numeric:tabular-nums;
+                     letter-spacing:0.04em;padding:4px 0;">{{ payment_reference }}</td>
+        </tr>
+        <tr>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#8c90a2;padding:4px 0;">Amount Paid</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+                     color:#d6e4f9;font-weight:700;padding:4px 0;">{{ payment_amount }}</td>
+        </tr>
+        <tr>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#8c90a2;padding:4px 0;">Method</td>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#d6e4f9;padding:4px 0;">{{ payment_method_title }}</td>
+        </tr>
+        <tr>
+          <td style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                     color:#8c90a2;padding:4px 0;">Status</td>
+          <td style="padding:4px 0;">
+            <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                         font-weight:700;color:#4ade80;background-color:rgba(74,222,128,0.12);
+                         border-radius:4px;padding:2px 8px;text-transform:uppercase;
+                         letter-spacing:0.06em;">
+              Confirmed
+            </span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+{% endblock %}
+
+{# ─── FOOTER EXTRA ────────────────────────────────────────────────────── #}
+{% block footer_extra %}
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;
+           font-size:13px;color:#8c90a2;line-height:1.6;text-align:center;">
+  Questions about your sponsorship? Contact your event administrator.
+</p>
+{% endblock %}

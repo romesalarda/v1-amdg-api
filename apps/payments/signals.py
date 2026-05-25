@@ -140,6 +140,7 @@ def _process_completed_payment(payment_pk: int) -> None:
     from apps.bookings.models import Booking
     from apps.products.models import Order
     from apps.payments.models import Donation
+    from apps.organisations.models import EventSponsor
     from apps.bookings.services import BookingPaymentProcessor
     from apps.products.services import OrderPaymentProcessor
 
@@ -153,6 +154,8 @@ def _process_completed_payment(payment_pk: int) -> None:
                 OrderPaymentProcessor.process(payment, target)
             elif isinstance(target, Donation):
                 _handle_donation_payment(payment, target)
+            elif isinstance(target, EventSponsor):
+                _handle_sponsorship_payment(payment, target)
             elif target is None:
                 logger.info(
                     f"Payment {payment.payment_reference} completed with no target "
@@ -206,6 +209,32 @@ def _handle_donation_payment(payment: Payment, donation) -> None:
             f"Auto-verified donation {donation.tracking_reference} "
             f"after payment {payment.payment_reference} completed."
         )
+
+
+# ---------------------------------------------------------------------------
+# Sponsorship handler (organisations app target)
+# ---------------------------------------------------------------------------
+
+def _handle_sponsorship_payment(payment: Payment, sponsor) -> None:
+    """
+    Handle payment completion for EventSponsor targets.
+
+    Dispatches a confirmation email to the user who initiated the checkout.
+    The email task is scheduled via transaction.on_commit so it fires only
+    after the enclosing atomic block commits.
+    """
+    from apps.organisations.tasks import send_sponsorship_payment_confirmation_email
+
+    sponsor_pk = sponsor.pk
+    payment_pk = payment.pk
+    transaction.on_commit(
+        lambda: send_sponsorship_payment_confirmation_email.delay(sponsor_pk, payment_pk)
+    )
+    logger.info(
+        "Queued sponsorship confirmation email for sponsor pk=%s payment %s",
+        sponsor_pk,
+        payment.payment_reference,
+    )
 
 
 # ---------------------------------------------------------------------------
