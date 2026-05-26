@@ -19,6 +19,8 @@ import logging
 from django.conf import settings
 
 from apps.common.email import send_templated_email
+from apps.payments.models import Payment
+from apps.products.models import Order
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,7 @@ class OrderEmailService:
 
     CONFIRMATION_TEMPLATE = "emails/order_confirmation.html"
     PENDING_TRANSFER_TEMPLATE = "emails/order_pending_bank_transfer.html"
+    EVIDENCE_RECEIVED_TEMPLATE = "emails/order_evidence_received.html"
 
     # ------------------------------------------------------------------
     # Image resolver
@@ -224,7 +227,7 @@ class OrderEmailService:
         return result
 
     @classmethod
-    def build_confirmation_context(cls, order, payment) -> dict:
+    def build_confirmation_context(cls, order: Order, payment: Payment) -> dict:
         """
         Build the full template context for ``order_confirmation.html``.
 
@@ -254,7 +257,7 @@ class OrderEmailService:
         return context
 
     @classmethod
-    def build_pending_bank_transfer_context(cls, order, payment) -> dict:
+    def build_pending_bank_transfer_context(cls, order: Order, payment: Payment) -> dict:
         """
         Build the full template context for ``order_pending_bank_transfer.html``.
 
@@ -303,6 +306,32 @@ class OrderEmailService:
                 "payment_method_title": (
                     payment.method.title if payment.method else "Bank Transfer"
                 ),
+                "view_order_url": view_order_url,
+            }
+        )
+        return context
+
+    @classmethod
+    def build_evidence_received_context(cls, order: Order, payment: Payment) -> dict:
+        """
+        Build the template context for ``order_evidence_received.html``.
+
+        Used when the user uploaded bank transfer evidence at checkout time.
+        No bank details are included — the user has already transferred.
+        """
+        context = cls._build_event_block(order)
+
+        event = order.event
+        view_order_url = f"{settings.FRONTEND_URL}/events/{event.url_safe_title}"
+
+        user_display_name = "Guest"
+        if order.customer and hasattr(order.customer, "get_display_name"):
+            user_display_name = order.customer.get_display_name() or "Guest"
+
+        context.update(
+            {
+                "order_reference": order.order_reference_id,
+                "user_display_name": user_display_name,
                 "view_order_url": view_order_url,
             }
         )
@@ -386,8 +415,6 @@ class OrderEmailService:
         Returns:
             True if the email was dispatched without error, False otherwise.
         """
-        from apps.products.models import Order
-        from apps.payments.models import Payment
 
         try:
             order = Order.objects.select_related(
@@ -417,6 +444,18 @@ class OrderEmailService:
                 order.order_reference_id,
             )
             return False
+
+        event_title = order.event.title if order.event else "your event"
+        has_evidence = payment.bank_transfer_evidence.exists()
+
+        if has_evidence:
+            context = cls.build_evidence_received_context(order, payment)
+            return send_templated_email(
+                subject=f"Order Received — {event_title} (evidence received, verifying)",
+                template_name=cls.EVIDENCE_RECEIVED_TEMPLATE,
+                context=context,
+                recipient_list=[order.customer.email],
+            )
 
         context = cls.build_pending_bank_transfer_context(order, payment)
         event_title = context.get("event_title", "your event")

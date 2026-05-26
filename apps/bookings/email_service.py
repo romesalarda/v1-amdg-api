@@ -23,6 +23,9 @@ from apps.common.email import send_templated_email
 from qr_code.qrcode.maker import make_qr_code_image
 from qr_code.qrcode.utils import QRCodeOptions
 
+from .models import Booking
+from apps.payments.models import Payment
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -60,6 +63,7 @@ class BookingEmailService:
 
     CONFIRMATION_TEMPLATE = "emails/booking_confirmation.html"
     PENDING_TRANSFER_TEMPLATE = "emails/booking_pending_bank_transfer.html"
+    EVIDENCE_RECEIVED_TEMPLATE = "emails/booking_evidence_received.html"
 
     # ------------------------------------------------------------------
     # QR code helper
@@ -92,7 +96,7 @@ class BookingEmailService:
     # ------------------------------------------------------------------
 
     @classmethod
-    def _build_event_block(cls, booking) -> dict:
+    def _build_event_block(cls, booking: Booking) -> dict:
         """
         Construct the shared event / venue section of the template context.
 
@@ -158,7 +162,7 @@ class BookingEmailService:
         }
 
     @classmethod
-    def build_confirmation_context(cls, booking, payment) -> dict:
+    def build_confirmation_context(cls, booking: Booking, payment: Payment) -> dict:
         """
         Build the full template context for *booking_confirmation.html*.
 
@@ -218,7 +222,7 @@ class BookingEmailService:
         return context
 
     @classmethod
-    def build_pending_bank_transfer_context(cls, booking, payment) -> dict:
+    def build_pending_bank_transfer_context(cls, booking: Booking, payment: Payment) -> dict:
         """
         Build the full template context for *booking_pending_bank_transfer.html*.
 
@@ -270,6 +274,34 @@ class BookingEmailService:
         )
         return context
 
+    @classmethod
+    def build_evidence_received_context(cls, booking: Booking, payment: Payment) -> dict:
+        """
+        Build the template context for *booking_evidence_received.html*.
+
+        Used when the user uploaded bank transfer evidence at checkout time.
+        No bank details are included — the user has already transferred.
+        """
+        context = cls._build_event_block(booking)
+
+        view_booking_url = (
+            f"{settings.FRONTEND_URL}/events/{booking.event.url_safe_title}"
+            f"/b/{booking.booking_reference}"
+        )
+
+        user_display_name = "Guest"
+        if booking.made_by and hasattr(booking.made_by, "get_display_name"):
+            user_display_name = booking.made_by.get_display_name() or "Guest"
+
+        context.update(
+            {
+                "booking_reference": booking.booking_reference,
+                "user_display_name": user_display_name,
+                "view_booking_url": view_booking_url,
+            }
+        )
+        return context
+
     # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
@@ -289,9 +321,7 @@ class BookingEmailService:
         Returns:
             True if the email was dispatched without error, False otherwise.
         """
-        from apps.bookings.models import Booking
-        from apps.payments.models import Payment
-
+        
         try:
             booking = (
                 Booking.objects.select_related(
@@ -383,6 +413,18 @@ class BookingEmailService:
                 booking.booking_reference,
             )
             return False
+
+        event_title = booking.event.title if booking.event else "your event"
+        has_evidence = payment.bank_transfer_evidence.exists()
+
+        if has_evidence:
+            context = cls.build_evidence_received_context(booking, payment)
+            return send_templated_email(
+                subject=f"Booking received — {event_title} (evidence received, verifying)",
+                template_name=cls.EVIDENCE_RECEIVED_TEMPLATE,
+                context=context,
+                recipient_list=[booking.made_by.email],
+            )
 
         context = cls.build_pending_bank_transfer_context(booking, payment)
         event_title = context.get("event_title", "your event")
