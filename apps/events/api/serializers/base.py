@@ -545,12 +545,12 @@ class EventDetailSerializer(serializers.ModelSerializer):
             return None
 
         from apps.attendee.models import AttendeeStatus
-
         return obj.attendees.filter(
             booking__made_by=request.user,
             status__in=[AttendeeStatus.REGISTERED, AttendeeStatus.CHECKED_IN], # TODO: remove this
             deleted_at__isnull=True,
         ).count()
+    
 
     @extend_schema_field(OpenApiTypes.INT)
     def get_user_remaining_registration_slots(self, obj):

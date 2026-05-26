@@ -37,7 +37,6 @@ from drf_spectacular.utils import (
 )
 from drf_spectacular.types import OpenApiTypes
 from djmoney.contrib.django_rest_framework import MoneyField
-from typing import Any
 import logging
 
 from apps.payments.models import (
@@ -73,14 +72,22 @@ from .filtersets import (
     DebitExpenseFilterSet, BudgetProposalFilterSet,
 )
 from .permissions import (
-    IsAdministrativeStaff, IsAdministrativeStaffOnly, IsPaymentOwnerOrAdministrative,
+    IsAdministrativeStaffOnly, IsPaymentOwnerOrAdministrative,
     IsRefundRequestOwnerOrAdministrative, IsReadOnly,
     IsCreditAccessible, IsBankTransferEvidenceAccessible,
     IsDebitAccessible, IsBudgetProposalAccessible,
 )
 from apps.payments.services.attendee_refunds import AttendeeRefundService
 from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+# todo: check if these imports are relative or cause conflicts
+from apps.bookings.services import TicketCreatorService
+from apps.payments.models import PaymentMethodTypeChoices
+from apps.bookings.models import Booking
+from apps.organisations.models import EventSponsor
+from apps.products.models import Order, OrderStatusChoices
+from apps.payments.models import Donation
 
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +245,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         ]
         reservation_q = Q()
         for pt in _RESERVATION_PAYMENT_TYPES:
-            reservation_q |= Q(metadata__contains={'payment_type': pt})
+            reservation_q |= Q(metadata__contains={'payment_type': pt}) & Q(status=PaymentStatusChoices.DRAFTING)
         # Users see their own payments or payments for events they admin
         return queryset.filter(
             Q(user=user) | Q(event_id__in=admin_event_ids)
@@ -434,13 +441,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         
         Supports targets: Booking, Order, Donation
         """
-        from apps.bookings.services import TicketCreatorService
-        from apps.payments.models import PaymentMethodTypeChoices
-        from apps.bookings.models import Booking
-        from apps.organisations.models import EventSponsor
-        from apps.products.models import Order, OrderStatusChoices
-        from apps.payments.models import Donation
-        import logging
+
         logger = logging.getLogger(__name__)
         
         payment = self.get_object()
@@ -449,12 +450,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
         verified = request.data.get('verified', False)
         notes = request.data.get('notes', '')
         
-        if not verified:
-            return Response(
-                {'error': 'verified must be set to true to verify payment'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+        target = payment.target
+        target_type = type(target).__name__  
+        if target_type is None:
+            target_type = "External Payment"
+
         # Validate payment status
         if payment.status != PaymentStatusChoices.PENDING:
             return Response(
@@ -463,6 +463,25 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
+            
+        if not verified:
+            payment.transition_to(PaymentStatusChoices.FAILED)
+            PaymentHistoryAction.objects.create(
+                payment=payment,
+                action='BANK_TRANSFER_FAILED',
+                description=f'Bank transfer failed for {target_type} by administrator',
+                metadata={
+                    'failed_by_id': request.user.id,
+                    'failed_by_username': request.user.username,
+                    'bank_reference': payment.bank_transfer_reference,
+                    'target_type': target_type,
+                    'notes': notes,
+                },
+                notes=notes,
+                performed_by=request.user
+            )
+            serializer = self.get_serializer(payment)
+            return Response(serializer.data, status=status.HTTP_200_OK)
         
         # Validate payment method is bank transfer
         if not payment.method or payment.method.method_type != PaymentMethodTypeChoices.BANK_TRANSFER:
@@ -484,8 +503,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        target = payment.target
-        target_type = type(target).__name__
+
 
         if target_type is None:
             target_type = "External Payment"

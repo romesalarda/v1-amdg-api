@@ -265,7 +265,8 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         return queryset.filter(
             Q(user=user) |
             Q(guardians__user=user) |
-            Q(event__staff_members__user=user)
+            Q(event__staff_members__user=user) |
+            Q(booking__made_by=user)
         ).distinct()
     
     def perform_create(self, serializer):
@@ -282,7 +283,9 @@ class AttendeeViewSet(viewsets.ModelViewSet):
                 # Regular users creating SELF attendees get auto-assigned
                 serializer.save(user=self.request.user)
                 return
-        
+        # elif not user_in_data:
+        #     # For non-SELF relationships, user must be specified (e.g. parent creating child attendee)
+        #     serializer.save(user=self.request.user)
         # Otherwise save normally (admin can specify user, or non-SELF relationships)
         serializer.save()
 
