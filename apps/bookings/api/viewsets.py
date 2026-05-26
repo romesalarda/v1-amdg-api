@@ -36,15 +36,8 @@ from django.db import transaction
 from apps.products.models import Order
 from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices, PaymentMethod
 from djmoney.money import Money
-from core.utils.display import generate_human_readable_id
 from decimal import Decimal
 from apps.attendee.models import Attendee, AttendeeRelationship
-from apps.attendee.models.personal.dietary import AttendeeDietaryRequirement
-from apps.attendee.models.personal.medical import AttendeeMedicalCondition
-from apps.attendee.models.personal.accessibility import AttendeeAccessibilityRequirement
-from apps.attendee.models.personal.emergency import EmergencyContact
-from apps.attendee.models.personal.consent import AttendeeConsent, Consent
-from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
 from apps.common.models import Resource, ResourceTypeChoices
 from apps.bookings.models.ticket import Ticket
 from drf_spectacular.utils import (
@@ -69,7 +62,7 @@ from .serializers import (
     TicketTypeListSerializer, TicketTypeDetailSerializer, TicketTypeCreateUpdateSerializer,
     TicketListSerializer, TicketDetailSerializer,
     BookingPackageListSerializer, BookingPackageDetailSerializer, BookingPackageCreateUpdateSerializer,
-    BookingPackageRuleSerializer, BookingPackageRuleCreateUpdateSerializer,
+    BookingPackageRuleSerializer,
     PackageProductSerializer, PackageProductCreateUpdateSerializer,
     EventAlternativeSigninListSerializer, EventAlternativeSigninDetailSerializer, EventAlternativeSigninCreateUpdateSerializer,
     AttendeeAlternativeSigninListSerializer, AttendeeAlternativeSigninDetailSerializer, AttendeeAlternativeSigninCreateUpdateSerializer,

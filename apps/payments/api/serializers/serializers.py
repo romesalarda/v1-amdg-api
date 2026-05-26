@@ -679,11 +679,17 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
 
 
 class PaymentUpdateSerializer(serializers.ModelSerializer):
-    """Update serializer for Payment with status transition validation."""
+    """Update serializer for Payment with status transition validation.
+
+    Only administrative staff may reach this serializer (enforced at the viewset
+    via get_permissions). Fields that must never be externally mutated — Stripe
+    identifiers, payment method, and raw metadata — are excluded from the
+    writable surface to prevent forgery and audit-trail tampering.
+    """
     
     class Meta:
         model = Payment
-        fields = ('status', 'method', 'description', 'metadata', 'stripe_payment_intent', 'stripe_charge_id')
+        fields = ('status', 'description')
     
     def validate_status(self, value):
         """Validate status transition is allowed."""

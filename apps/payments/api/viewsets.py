@@ -206,6 +206,12 @@ class PaymentViewSet(viewsets.ModelViewSet):
         elif self.action in ['update', 'partial_update']:
             return PaymentUpdateSerializer
         return PaymentDetailSerializer
+
+    def get_permissions(self):
+        """Restrict write actions to administrative staff only."""
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [permissions.IsAuthenticated(), IsAdministrativeStaffOnly()]
+        return [permissions.IsAuthenticated(), IsPaymentOwnerOrAdministrative()]
     
     def get_queryset(self):
         """Filter queryset based on user permissions."""
@@ -213,8 +219,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         
         # Admins see all
-        if user.is_superuser or user.is_staff:
-            return queryset
+        # if user.is_superuser or user.is_staff:
+        #     return queryset
         
         # Check if user has administrative role for any event
         from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
@@ -222,24 +228,26 @@ class PaymentViewSet(viewsets.ModelViewSet):
             user=user,
             role__category=EventRoleCategoryChoices.ADMINISTRATIVE
         ).values_list('event_id', flat=True)
-        
+
+        # Exclude all inflight/abandoned reservation DRAFTING payments from non-admin views.
+        # These are internal checkout artefacts (bank transfer references not yet confirmed)
+        # and must not be visible or mutable via the public API.
+        _RESERVATION_PAYMENT_TYPES = [
+            'booking_checkout_reservation',
+            'order_checkout_reservation',
+        ]
+        reservation_q = Q()
+        for pt in _RESERVATION_PAYMENT_TYPES:
+            reservation_q |= Q(metadata__contains={'payment_type': pt})
         # Users see their own payments or payments for events they admin
         return queryset.filter(
             Q(user=user) | Q(event_id__in=admin_event_ids)
-        ).exclude(metadata__contains={"payment_type":"booking_checkout_reservation"}).distinct()
+        ).exclude(reservation_q).distinct()
     
     def perform_create(self, serializer):
-        """Create payment and ensure user has permission."""
-        user = self.request.user
-        payment_user = serializer.validated_data.get('user')
-        
-        # Non-admins can only create payments for themselves
-        # if not (user.is_superuser or user.is_staff) and payment_user != user:
-        #     from rest_framework.exceptions import PermissionDenied
-        #     raise PermissionDenied("You can only create payments for yourself.")
-
-        self.check_permissions(self.request)
-        
+        """Create payment — only administrative staff may call this endpoint."""
+        # Payment creation is restricted to admins via get_permissions().
+        # Internal checkout flows bypass the API layer entirely.
         serializer.save()
     
     @extend_schema(

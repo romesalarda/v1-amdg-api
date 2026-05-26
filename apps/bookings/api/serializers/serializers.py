@@ -973,13 +973,20 @@ class BookingDetailSerializer(BookingListSerializer):
         }
     })
     def get_payments(self, obj) -> list:
-        """Return list of associated payments with links."""
+        """Return list of associated payments with links.
+
+        DRAFTING payments are internal checkout artefacts (inflight or abandoned
+        bank-transfer reservations). They must not be surfaced to the booking
+        owner as they may expose bank account details and unconfirmed references.
+        """
         from apps.payments.api.serializers import PaymentMethodDetailSerializer
+        from apps.payments.models import PaymentStatusChoices
         request = self.context.get('request')
         payments = []
         
-        # Get payments through the PaymentMixin
-        for payment in obj.payments.all():
+        # Exclude DRAFTING payments — these are inflight/abandoned reservation objects
+        # created internally during checkout and are not confirmed payments.
+        for payment in obj.payments.exclude(status=PaymentStatusChoices.DRAFTING):
 
 
             method = payment.method if payment.method else None

@@ -251,7 +251,8 @@ class RefundServiceTestCase(TestCase):
         
         refund = RefundService.create(
             payment_intent_id='pi_test123',
-            reason=RefundService.REASON_REQUESTED_BY_CUSTOMER
+            reason=RefundService.REASON_REQUESTED_BY_CUSTOMER,
+            stripe_account_id='acct_test123'
         )
         
         self.assertEqual(refund.id, 're_test123')
@@ -274,7 +275,8 @@ class RefundServiceTestCase(TestCase):
             payment_intent_id='pi_test123',
             amount=Money(20, 'GBP'),
             reason=RefundService.REASON_REQUESTED_BY_CUSTOMER,
-            refund_reference='REF-TEST-001'
+            refund_reference='REF-TEST-001',
+            stripe_account_id='acct_test123'
         )
         
         self.assertEqual(refund.id, 're_test123')

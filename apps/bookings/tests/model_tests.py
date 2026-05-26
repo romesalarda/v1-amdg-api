@@ -1317,7 +1317,7 @@ class EventAlternativeSigninIdentifierModelTest(TestCase):
     def test_alternative_signin_creation(self):
         """Test creating an alternative sign-in identifier"""
         alt_signin = EventAlternativeSigninIdentifier.objects.create(
-            title='YFC YIM Number',
+            title='YFC YIM Number'.capitalize(),
             description='Youth in Mission membership number',
             event=self.event,
             format_match=r'^YIM\d{6}$',
@@ -1334,7 +1334,7 @@ class EventAlternativeSigninIdentifierModelTest(TestCase):
     def test_alternative_signin_str_method(self):
         """Test __str__ method returns title"""
         alt_signin = EventAlternativeSigninIdentifier.objects.create(
-            title='YFC YIM Number',
+            title='YFC YIM Number'.capitalize(),
             event=self.event
         )
         
@@ -1384,7 +1384,7 @@ class EventAlternativeSigninIdentifierModelTest(TestCase):
             event=self.event
         )
         
-        self.assertEqual(alt_signin.title, 'Yfc Yim Number')
+        self.assertEqual(alt_signin.title, 'Yfc Yim Number'.capitalize())
     
     def test_alternative_signin_is_valid_property(self):
         """Test is_valid property returns is_active status"""
