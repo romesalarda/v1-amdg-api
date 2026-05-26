@@ -1,0 +1,270 @@
+{% extends "emails/base.html" %}
+{% load i18n %}
+
+{% block title %}Refund Processed — {{ event_title }} — AMDG{% endblock %}
+
+{% block preheader %}Your refund of {{ refund_amount }} for {{ event_title }} has been processed.{% endblock %}
+
+{# ─── HERO: event banner image ────────────────────────────────────────── #}
+{% block hero %}
+{% if landing_image_url %}
+<tr>
+  <td style="padding:0;font-size:0;line-height:0;">
+    <img src="{{ landing_image_url }}"
+         alt="{{ event_title }}"
+         width="600"
+         style="width:100%;max-width:600px;height:220px;object-fit:cover;
+                display:block;border:0;filter:brightness(0.45) grayscale(0.15);">
+  </td>
+</tr>
+{% endif %}
+{% endblock %}
+
+{# ─── HEADING ─────────────────────────────────────────────────────────── #}
+{% block email_heading %}
+<!-- "Refund Processed" badge -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="background-color:#283646;border-radius:6px;padding:6px 14px;
+               border:1px solid rgba(180,197,255,0.25);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+                   color:#b4c5ff;text-transform:uppercase;letter-spacing:0.1em;">
+        &#8617;&nbsp; Refund Processed
+      </span>
+    </td>
+  </tr>
+</table>
+
+<h1 style="margin:0 0 8px;font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+            font-size:32px;font-weight:800;color:#d6e4f9;line-height:1.15;letter-spacing:-0.01em;">
+  Your Refund Is On Its Way
+</h1>
+<p style="margin:0 0 28px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+           color:#8c90a2;line-height:1.6;">
+  Hi {{ user_display_name }},
+  {% if is_full_refund %}
+    your full refund of <strong style="color:#b4c5ff;">{{ refund_amount }}</strong>
+    for <strong style="color:#c2c6d9;">{{ event_title }}</strong> has been processed.
+  {% else %}
+    a partial refund of <strong style="color:#b4c5ff;">{{ refund_amount }}</strong>
+    for <strong style="color:#c2c6d9;">{{ event_title }}</strong> has been processed.
+  {% endif %}
+  The order details are shown below.
+</p>
+{% endblock %}
+
+{# ─── CONTENT ─────────────────────────────────────────────────────────── #}
+{% block content %}
+
+<!-- ── Refund summary block ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 32px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+  <tr>
+    <td colspan="2" style="padding:14px 20px 10px;
+                            border-bottom:1px solid rgba(255,255,255,0.07);">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">Refund details</span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:12px 20px 4px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Refund amount
+      </span>
+      <span style="font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;font-size:20px;
+                   font-weight:800;color:#b4c5ff;line-height:1.3;">
+        {{ refund_amount }}
+      </span>
+    </td>
+    <td width="50%" style="padding:12px 20px 4px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Refund type
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;line-height:1.4;">
+        {% if is_full_refund %}Full Refund{% else %}Partial Refund{% endif %}
+      </span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" style="padding:4px 20px 14px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Refund reference
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:700;color:#b4c5ff;line-height:1.4;font-variant-numeric:tabular-nums;">
+        {{ refund_reference }}
+      </span>
+    </td>
+    {% if order_reference %}
+    <td width="50%" style="padding:4px 20px 14px;vertical-align:top;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:3px;">
+        Order ref
+      </span>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:700;color:#c2c6d9;line-height:1.4;font-variant-numeric:tabular-nums;">
+        {{ order_reference }}
+      </span>
+    </td>
+    {% endif %}
+  </tr>
+</table>
+
+<!-- ── Order items ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 10px;">
+  <tr>
+    <td>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">Your items</span>
+    </td>
+  </tr>
+</table>
+
+{% for item in order_items %}
+<!-- Item card -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 10px;border-radius:8px;overflow:hidden;
+              {% if item.is_refunded %}
+                background-color:#0f1c2c;border:1px solid rgba(180,197,255,0.25);
+              {% else %}
+                background-color:#1e2b3b;border:1px solid rgba(255,255,255,0.07);
+              {% endif %}">
+  <tr>
+
+    <!-- Product image -->
+    <td width="84" style="padding:14px 0 14px 16px;vertical-align:middle;">
+      {% if item.image_url %}
+        <img src="{{ item.image_url }}"
+             alt="{{ item.product_title }}"
+             width="56"
+             height="56"
+             style="display:block;width:56px;height:56px;object-fit:cover;
+                    border-radius:6px;border:1px solid rgba(255,255,255,0.10);
+                    {% if not item.is_refunded %}filter:grayscale(0.4) opacity(0.7);{% endif %}">
+      {% else %}
+        <div style="width:56px;height:56px;background-color:#283646;border-radius:6px;
+                    border:1px solid rgba(255,255,255,0.08);text-align:center;line-height:56px;">
+          <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:22px;
+                       color:#424656;">&#9633;</span>
+        </div>
+      {% endif %}
+    </td>
+
+    <!-- Product info -->
+    <td style="padding:14px 12px;vertical-align:middle;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:{% if item.is_refunded %}#d6e4f9{% else %}#8c90a2{% endif %};
+                   display:block;margin-bottom:4px;line-height:1.3;">
+        {{ item.product_title }}
+        {% if item.is_refunded %}
+          <span style="display:inline-block;margin-left:6px;background-color:#283646;
+                       border-radius:3px;padding:2px 7px;vertical-align:middle;">
+            <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:9px;
+                         font-weight:700;color:#b4c5ff;text-transform:uppercase;letter-spacing:0.08em;">
+              refunded
+            </span>
+          </span>
+        {% endif %}
+      </span>
+
+      {% if item.variant_label %}
+        <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                     color:#8c90a2;display:block;margin-bottom:6px;">
+          {% if item.color_hex %}
+            <span style="display:inline-block;width:10px;height:10px;
+                         background-color:{{ item.color_hex }};border-radius:2px;
+                         border:1px solid rgba(255,255,255,0.20);
+                         vertical-align:middle;margin-right:5px;"></span>
+          {% endif %}
+          {{ item.variant_label }}
+        </span>
+      {% endif %}
+
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;color:#424656;">
+        Qty: {{ item.quantity }} &times; {{ item.unit_price }}
+        {% if item.is_refunded and item.quantity_refunded < item.quantity %}
+          &nbsp;<span style="color:#b4c5ff;">({{ item.quantity_refunded }} refunded)</span>
+        {% endif %}
+      </span>
+    </td>
+
+    <!-- Line total -->
+    <td style="padding:14px 16px 14px 8px;vertical-align:middle;text-align:right;white-space:nowrap;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+                   font-weight:700;color:{% if item.is_refunded %}#b4c5ff{% else %}#424656{% endif %};">
+        {{ item.total_price }}
+      </span>
+    </td>
+
+  </tr>
+</table>
+{% empty %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 10px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.07);">
+  <tr>
+    <td style="padding:16px 20px;">
+      <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                 color:#8c90a2;font-style:italic;">
+        No items found for this order.
+      </p>
+    </td>
+  </tr>
+</table>
+{% endfor %}
+
+<!-- ── Refund total ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 32px;background-color:#0f1c2c;border-radius:8px;
+              border:1px solid rgba(180,197,255,0.25);">
+  <tr>
+    <td style="padding:14px 20px;vertical-align:middle;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:700;color:#d6e4f9;text-transform:uppercase;letter-spacing:0.06em;">
+        Refund total
+      </span>
+    </td>
+    <td style="padding:14px 20px;vertical-align:middle;text-align:right;white-space:nowrap;">
+      <span style="font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+                   font-size:22px;font-weight:800;color:#b4c5ff;">
+        {{ refund_amount }}
+      </span>
+    </td>
+  </tr>
+</table>
+
+{% endblock %}
+
+{# ─── CTA ─────────────────────────────────────────────────────────────── #}
+{% block cta %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 8px;">
+  <tr>
+    <td style="border-radius:6px;background-color:#0062ff;">
+      <a href="{{ view_order_url }}"
+         target="_blank"
+         style="display:inline-block;padding:14px 32px;
+                font-family:'Inter',Arial,Helvetica,sans-serif;
+                font-size:14px;font-weight:700;color:#ffffff;
+                text-decoration:none;border-radius:6px;line-height:1;
+                mso-padding-alt:14px 32px;">
+        View Event
+      </a>
+    </td>
+  </tr>
+</table>
+{% endblock %}
+
+{# ─── FOOTER EXTRA ────────────────────────────────────────────────────── #}
+{% block footer_extra %}
+<p style="margin:0 0 16px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+           color:#8c90a2;line-height:1.5;">
+  Your refund reference is <strong style="color:#c2c6d9;">{{ refund_reference }}</strong>.
+  Please keep this for your records. Refunds typically appear in 3–10 business days depending on your bank.
+</p>
+{% endblock %}

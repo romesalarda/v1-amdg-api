@@ -6,3 +6,4 @@ Provides retry mechanisms for:
 - Stale pending payments
 - Payment status synchronization with Stripe
 """
+from apps.payments.tasks.email import send_refund_email  # noqa: F401

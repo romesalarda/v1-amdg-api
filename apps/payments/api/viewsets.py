@@ -78,6 +78,7 @@ from .permissions import (
     IsDebitAccessible, IsBudgetProposalAccessible,
 )
 from apps.payments.services.attendee_refunds import AttendeeRefundService
+from apps.payments.tasks import send_refund_email
 from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
 # todo: check if these imports are relative or cause conflicts
 from apps.bookings.services import TicketCreatorService
@@ -1551,6 +1552,14 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                     notes="Refund request marked as processed and entities invalidated for selected attendees.",
                     performed_by=request.user
                 )
+
+            _refund_pk = refund_request.pk
+            transaction.on_commit(lambda: send_refund_email.delay(_refund_pk))
+            logger.info(
+                "Queued refund email for refund_request pk=%s (payment %s)",
+                _refund_pk,
+                refund_request.payment.payment_reference,
+            )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
         return Response(serializer.data)

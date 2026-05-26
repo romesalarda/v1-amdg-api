@@ -422,9 +422,18 @@ class ChargeRefundedHandler(WebhookEventHandler):
                         # Mark as processed
                         refund_request.mark_processed()
                         refund_request.save()
+
+                        # Finalize linked tickets / orders (mirrors the manual process endpoint).
+                        from apps.payments.services.attendee_refunds import AttendeeRefundService
+                        AttendeeRefundService.apply_process_finalize(refund_request)
+
+                        # Queue refund confirmation email (fires after this transaction commits).
+                        from apps.payments.tasks import send_refund_email
+                        _refund_pk = refund_request.pk
+                        transaction.on_commit(lambda: send_refund_email.delay(_refund_pk))
                         
                         self.log_event(
-                            f"RefundRequest {refund_request.refund_reference} marked as PROCESSED",
+                            f"RefundRequest {refund_request.tracking_reference} marked as PROCESSED",
                             level='info'
                         )
                 
