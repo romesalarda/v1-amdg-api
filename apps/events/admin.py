@@ -27,7 +27,46 @@ class EventTypeAdmin(admin.ModelAdmin):
         }),
     )
 
-admin.site.register(EventNotification)
+@admin.register(EventNotification)
+class EventNotificationAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'event', 'notification_type', 'priority',
+        'is_read', 'created_by', 'created_at', 'read_at',
+    )
+    list_filter = ('notification_type', 'priority', 'is_read', 'created_at')
+    search_fields = ('event__title', 'event__display_code')
+    readonly_fields = ('created_at', 'read_at', 'created_by')
+    list_select_related = ('event', 'created_by', 'related_payment', 'related_order', 'related_booking')
+    date_hierarchy = 'created_at'
+    actions = ['mark_as_read', 'mark_as_unread']
+
+    fieldsets = (
+        ('Notification', {
+            'fields': ('event', 'notification_type', 'priority', 'metadata'),
+        }),
+        ('Related Objects', {
+            'fields': ('related_payment', 'related_order', 'related_booking'),
+        }),
+        ('State', {
+            'fields': ('is_read', 'read_at'),
+        }),
+        ('Audit', {
+            'fields': ('created_by', 'created_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    @admin.action(description='Mark selected notifications as read')
+    def mark_as_read(self, request, queryset):
+        from django.utils import timezone
+        count = queryset.filter(is_read=False).update(is_read=True, read_at=timezone.now())
+        self.message_user(request, f'{count} notification(s) marked as read.')
+
+    @admin.action(description='Mark selected notifications as unread')
+    def mark_as_unread(self, request, queryset):
+        count = queryset.filter(is_read=True).update(is_read=False, read_at=None)
+        self.message_user(request, f'{count} notification(s) marked as unread.')
+
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):

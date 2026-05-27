@@ -758,3 +758,65 @@ class EventStaffInviteFilterSet(filters.FilterSet):
     class Meta:
         model = EventStaffInvite
         fields = ['event', 'target_user', 'accepted']
+
+
+class EventNotificationFilterSet(filters.FilterSet):
+    """
+    Filterset for EventNotification.
+
+    Supports filtering by:
+    - Event (by url_safe_title or ID)
+    - Notification type
+    - Priority
+    - Read status
+    - Related object IDs
+    - Date range
+
+    Example queries:
+        ?event=my-event-2026
+        ?is_read=false
+        ?notification_type=ORDER_FULFILLMENT
+        ?priority=HIGH&priority=URGENT
+        ?created_after=2026-01-01
+    """
+
+    event = filters.CharFilter(field_name='event__url_safe_title', help_text="Filter by event URL-safe title")
+    event_id = filters.NumberFilter(field_name='event__id', help_text="Filter by event ID")
+    notification_type = filters.MultipleChoiceFilter(
+        field_name='notification_type',
+        choices=[
+            ('ORDER_FULFILLMENT', 'Order Fulfillment Required'),
+            ('BOOKING_CONFIRMATION', 'Booking Confirmed'),
+            ('REFUND_REQUEST', 'Refund Requested'),
+            ('PAYMENT_FAILED', 'Payment Failed'),
+            ('CAPACITY_WARNING', 'Capacity Warning'),
+            ('AUTHORIZATION_REQUEST', 'Authorization Request'),
+            ('GENERAL', 'General Notification'),
+        ],
+        help_text="Filter by notification type (multiple values allowed)"
+    )
+    priority = filters.MultipleChoiceFilter(
+        field_name='priority',
+        choices=[
+            ('LOW', 'Low'),
+            ('NORMAL', 'Normal'),
+            ('HIGH', 'High'),
+            ('URGENT', 'Urgent'),
+        ],
+        help_text="Filter by priority (multiple values allowed)"
+    )
+    is_read = filters.BooleanFilter(field_name='is_read', help_text="Filter by read status")
+    related_payment = filters.NumberFilter(field_name='related_payment__id', help_text="Filter by related payment ID")
+    related_order = filters.NumberFilter(field_name='related_order__id', help_text="Filter by related order ID")
+    related_booking = filters.NumberFilter(field_name='related_booking__id', help_text="Filter by related booking ID")
+    created_after = filters.DateTimeFilter(field_name='created_at', lookup_expr='gte', help_text="Filter notifications created after this datetime")
+    created_before = filters.DateTimeFilter(field_name='created_at', lookup_expr='lte', help_text="Filter notifications created before this datetime")
+
+    class Meta:
+        from apps.events.models import EventNotification
+        model = EventNotification
+        fields = [
+            'event', 'event_id', 'notification_type', 'priority',
+            'is_read', 'related_payment', 'related_order', 'related_booking',
+            'created_after', 'created_before',
+        ]

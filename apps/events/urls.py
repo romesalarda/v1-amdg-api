@@ -22,6 +22,7 @@ from apps.events.api.viewsets import (
     EventVenueRoomViewSet,
     EventVenueContactViewSet,
     EventVenueMetadataViewSet,
+    EventNotificationViewSet,
 )
 from apps.events.api.statistics_viewsets import EventStatisticsViewSet
 
@@ -49,6 +50,7 @@ router.register(r'venue-rooms', EventVenueRoomViewSet, basename='eventvenueroom'
 router.register(r'venue-contacts', EventVenueContactViewSet, basename='eventvenuecontact')
 router.register(r'venue-metadata', EventVenueMetadataViewSet, basename='eventvenuemetadata')
 router.register(r'statistics', EventStatisticsViewSet, basename='eventstatistics')
+router.register(r'notifications', EventNotificationViewSet, basename='eventnotification')
 
 urlpatterns = [
     path('event/', include(router.urls)),

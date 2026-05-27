@@ -46,6 +46,8 @@ class StripeConnectedAccountViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return StripeConnectedAccount.objects.none()
         user = self.request.user
         queryset = StripeConnectedAccount.objects.all().order_by('-is_primary', '-created_at')
 

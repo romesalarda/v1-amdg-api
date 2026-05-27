@@ -453,6 +453,23 @@ SIMPLE_JWT = {
 # =============================================================================
 # DRF SPECTACULAR (OpenAPI Schema)
 # =============================================================================
+def exclude_duplicate_inventory_paths(endpoints, **kwargs):
+    """
+    Preprocessing hook to exclude router-generated inventory paths from the schema.
+    The canonical inventory paths are registered manually at /products/inventory/ and
+    /products/inventory/attendees/. The router also generates them at
+    /products/list/inventory/ and /products/list/inventory/attendees/, causing operationId
+    collisions. We exclude the router-generated duplicates here.
+    """
+    excluded = {
+        '/api/products/list/inventory/',
+        '/api/products/list/inventory/attendees/',
+    }
+    return [(path, path_regex, method, callback)
+            for path, path_regex, method, callback in endpoints
+            if path not in excluded]
+
+
 def preprocess_timezone_field(result, generator, request, public):
     """Postprocessing hook to normalize timezone enum names."""
     # Find and rename all timezone enums to a single name
@@ -486,6 +503,7 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
     'SCHEMA_PATH_PREFIX': r'/api',
+    'PREPROCESSING_HOOKS': ['core.settings.exclude_duplicate_inventory_paths'],
     'POSTPROCESSING_HOOKS': ['core.settings.preprocess_timezone_field'],
     'ENUM_NAME_OVERRIDES': {
         'EventStatusChoices': 'apps.events.models.events.EventStatusChoices',

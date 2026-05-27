@@ -1691,6 +1691,9 @@ from apps.utils.querying import get_event_list_or_url_safe_title
     retrieve=extend_schema(
         summary="Get Check-In Record",
         tags=['Check-In'],
+        parameters=[
+            OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH, description='Check-in record UUID'),
+        ],
     ),
 )
 class CheckInViewSet(viewsets.GenericViewSet):

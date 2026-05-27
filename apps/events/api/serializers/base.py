@@ -16,6 +16,7 @@ from apps.events.models import (
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice,
     EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
+    EventNotification, NotificationTypeChoices, NotificationPriorityChoices,
 )
 from apps.common.models import AvailabilityWindow, Resource
 from apps.common.api.serializers import (
@@ -2630,4 +2631,68 @@ class EventStaffInviteListSerializer(serializers.ModelSerializer):
                 f"/api/event/list/{event_id}/staff-invites/{obj.id}/accept"
             )
         
+        return links
+
+
+class EventNotificationSerializer(serializers.ModelSerializer):
+    """Read-only serializer for EventNotification. Mutations are internal-only."""
+
+    notification_type_display = serializers.CharField(
+        source='get_notification_type_display', read_only=True
+    )
+    priority_display = serializers.CharField(
+        source='get_priority_display', read_only=True
+    )
+    event_title = serializers.CharField(source='event.title', read_only=True)
+    event_display_code = serializers.CharField(source='event.display_code', read_only=True)
+    created_by_email = serializers.EmailField(source='created_by.email', read_only=True, allow_null=True)
+
+    _links = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EventNotification
+        fields = (
+            'id',
+            'event',
+            'event_title',
+            'event_display_code',
+            'notification_type',
+            'notification_type_display',
+            'priority',
+            'priority_display',
+            'related_payment',
+            'related_order',
+            'related_booking',
+            'is_read',
+            'metadata',
+            'created_by',
+            'created_by_email',
+            'created_at',
+            'read_at',
+            '_links',
+        )
+        read_only_fields = fields
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'self': {'type': 'string', 'format': 'uri', 'description': 'Link to this notification'},
+            'event': {'type': 'string', 'format': 'uri', 'description': 'Link to the event'},
+            'mark_read': {'type': 'string', 'format': 'uri', 'description': 'Action URL to mark notification as read'},
+        },
+        'required': ['self'],
+    })
+    def get__links(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return {}
+        base = f"/api/event/notifications/{obj.id}"
+        links = {
+            'self': request.build_absolute_uri(f"{base}/"),
+            'mark_read': request.build_absolute_uri(f"{base}/mark-read/"),
+        }
+        if obj.event_id:
+            links['event'] = request.build_absolute_uri(
+                f"/api/event/list/{obj.event.url_safe_title}/"
+            )
         return links

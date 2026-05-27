@@ -19,9 +19,10 @@ from apps.attendee.models import (
     AttendeeRelationship, AttendeeActionChoices,
     AttendeeMessagePriority, HumanRelationshipChoices,
 )
+
 from apps.common.models import VerificationStatus
-from apps.events.models import EventQuestion, EventQuestionAnswer, EventQuestionOption, EventQuestionTypeChoices
-from apps.products.models import Order, OrderItem, OrderStatusChoices, ProductVariant
+from apps.events.models import EventQuestionTypeChoices
+from apps.products.models import OrderStatusChoices, ProductVariant
 from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
 from django.db.models import Value, TextField
 
@@ -231,8 +232,9 @@ class AttendeeFilterSet(django_filters.FilterSet):
                     Q(phone_number__icontains=value) |
                     Q(attendee_display_id__icontains=value)
                 )
-        # TODO: issue #54 need to fix
+        # TODO: WARNING: need to ensure similarirty function is enabled on new postgres creation
         print(f"Base search for '{value}' found {base.count()} attendees.")
+
         if TrigramSimilarity:
             qs = queryset.all().annotate(
                 similarity=
@@ -242,7 +244,6 @@ class AttendeeFilterSet(django_filters.FilterSet):
                     # TrigramSimilarity('phone_number', Value(value, output_field=TextField())) + 
                     # TrigramSimilarity('attendee_display_id', Value(value, output_field=TextField()))
             ).filter(similarity__gt=0.3).order_by('-similarity')
-            print(f"Trigram search for '{value}' found {qs.count()} attendees.")
             if not qs.exists():
                 print("Trigram search found no attendees, falling back to base search.")
                 return base
