@@ -35,7 +35,8 @@ from drf_spectacular.types import OpenApiTypes
 
 from apps.locations.models import (
     CountryLocation, ClusterLocation, ChapterLocation, AreaLocation, RelativeArea,
-    POI, Venue, RoomVenue, VenueContact, VenueMetadata
+    POI, Venue, RoomVenue, VenueContact, VenueMetadata,
+    FloorPlan, FloorPlanAnnotation, FloorPlanAnnotationMetadata,
 )
 from .serializers import (
     CountryLocationListSerializer, CountryLocationDetailSerializer, CountryLocationCreateUpdateSerializer,
@@ -47,7 +48,10 @@ from .serializers import (
     VenueListSerializer, VenueDetailSerializer, VenueCreateUpdateSerializer,
     RoomVenueSerializer, RoomVenueCreateUpdateSerializer,
     VenueContactSerializer, VenueContactCreateUpdateSerializer,
-    VenueMetadataSerializer, VenueMetadataCreateUpdateSerializer
+    VenueMetadataSerializer, VenueMetadataCreateUpdateSerializer,
+    FloorPlanListSerializer, FloorPlanDetailSerializer, FloorPlanCreateUpdateSerializer,
+    FloorPlanAnnotationSerializer,
+    FloorPlanAnnotationMetadataSerializer,
 )
 from .filtersets import (
     CountryLocationFilterSet, ClusterLocationFilterSet, ChapterLocationFilterSet,
@@ -1174,3 +1178,129 @@ class VenueMetadataViewSet(viewsets.ModelViewSet):
         if self.action in ['create', 'update', 'partial_update']:
             return VenueMetadataCreateUpdateSerializer
         return VenueMetadataSerializer
+
+
+# ============================================================================
+# FLOOR PLAN VIEWSETS
+# ============================================================================
+
+@extend_schema_view(
+    list=extend_schema(summary="List floor plans for a venue", tags=["Floor Plans"]),
+    retrieve=extend_schema(summary="Retrieve a floor plan", tags=["Floor Plans"]),
+    create=extend_schema(summary="Upload a new floor plan", tags=["Floor Plans"]),
+    update=extend_schema(summary="Update a floor plan", tags=["Floor Plans"]),
+    partial_update=extend_schema(summary="Partially update a floor plan", tags=["Floor Plans"]),
+    destroy=extend_schema(summary="Delete a floor plan", tags=["Floor Plans"]),
+)
+class FloorPlanViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for FloorPlan CRUD operations.
+
+    Nested under a Venue: /api/locations/venues/{venue_pk}/floor-plans/
+    Image dimensions (original_width, original_height) are extracted automatically
+    from the uploaded file using Pillow — client-supplied values are ignored.
+    """
+
+    permission_classes = [IsAdministrativeStaffOrReadOnly]
+    pagination_class = StandardPagination
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['level', 'name', 'added_at']
+    ordering = ['level', 'name']
+
+    def get_queryset(self):
+        """Filter floor plans to the parent venue."""
+        venue_pk = self.kwargs.get('venue_pk')
+        return FloorPlan.objects.filter(venue_id=venue_pk).select_related(
+            'venue__poi', 'added_by'
+        ).prefetch_related('annotations__metadata', 'annotations__room_venue')
+
+    def get_serializer_class(self):
+        """Return appropriate serializer based on action."""
+        if self.action in ['create', 'update', 'partial_update']:
+            return FloorPlanCreateUpdateSerializer
+        if self.action == 'retrieve':
+            return FloorPlanDetailSerializer
+        return FloorPlanListSerializer
+
+    def perform_create(self, serializer):
+        """Set venue from URL kwargs and added_by from request user."""
+        venue_pk = self.kwargs.get('venue_pk')
+        venue = Venue.objects.get(pk=venue_pk)
+        # added_by is set inside the serializer's create() to avoid double-assignment
+        serializer.save(venue=venue)
+
+
+@extend_schema_view(
+    list=extend_schema(summary="List annotations for a floor plan", tags=["Floor Plans"]),
+    retrieve=extend_schema(summary="Retrieve an annotation", tags=["Floor Plans"]),
+    create=extend_schema(summary="Create an annotation", tags=["Floor Plans"]),
+    update=extend_schema(summary="Update an annotation", tags=["Floor Plans"]),
+    partial_update=extend_schema(summary="Partially update an annotation", tags=["Floor Plans"]),
+    destroy=extend_schema(summary="Delete an annotation", tags=["Floor Plans"]),
+)
+class FloorPlanAnnotationViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for FloorPlanAnnotation CRUD operations.
+
+    Nested under a FloorPlan: /api/locations/venues/{venue_pk}/floor-plans/{floor_plan_pk}/annotations/
+    Vertices are validated as normalised {x, y} coordinate lists (see serializer).
+    """
+
+    serializer_class = FloorPlanAnnotationSerializer
+    permission_classes = [IsAdministrativeStaffOrReadOnly]
+    pagination_class = StandardPagination
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['label', 'added_at']
+    ordering = ['label']
+
+    def get_queryset(self):
+        """Filter annotations to the parent floor plan and venue."""
+        floor_plan_pk = self.kwargs.get('floor_plan_pk')
+        venue_pk = self.kwargs.get('venue_pk')
+        return FloorPlanAnnotation.objects.filter(
+            floor_plan_id=floor_plan_pk,
+            floor_plan__venue_id=venue_pk,
+        ).select_related('room_venue', 'added_by').prefetch_related('metadata')
+
+    def perform_create(self, serializer):
+        """Set floor_plan from URL kwargs and added_by from request user."""
+        floor_plan_pk = self.kwargs.get('floor_plan_pk')
+        floor_plan = FloorPlan.objects.get(pk=floor_plan_pk, venue_id=self.kwargs.get('venue_pk'))
+        serializer.save(floor_plan=floor_plan, added_by=self.request.user)
+
+
+@extend_schema_view(
+    list=extend_schema(summary="List metadata for an annotation", tags=["Floor Plans"]),
+    retrieve=extend_schema(summary="Retrieve annotation metadata", tags=["Floor Plans"]),
+    create=extend_schema(summary="Add metadata to an annotation", tags=["Floor Plans"]),
+    update=extend_schema(summary="Update annotation metadata", tags=["Floor Plans"]),
+    partial_update=extend_schema(summary="Partially update annotation metadata", tags=["Floor Plans"]),
+    destroy=extend_schema(summary="Delete annotation metadata", tags=["Floor Plans"]),
+)
+class FloorPlanAnnotationMetadataViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for FloorPlanAnnotationMetadata CRUD operations.
+
+    Nested under an Annotation:
+    /api/locations/venues/{venue_pk}/floor-plans/{floor_plan_pk}/annotations/{annotation_pk}/metadata/
+    """
+
+    serializer_class = FloorPlanAnnotationMetadataSerializer
+    permission_classes = [IsAdministrativeStaffOrReadOnly]
+    pagination_class = StandardPagination
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['label', 'added_at']
+    ordering = ['label']
+
+    def get_queryset(self):
+        """Filter metadata to the parent annotation."""
+        annotation_pk = self.kwargs.get('annotation_pk')
+        return FloorPlanAnnotationMetadata.objects.filter(
+            annotation_id=annotation_pk,
+        ).select_related('added_by')
+
+    def perform_create(self, serializer):
+        """Set annotation from URL kwargs and added_by from request user."""
+        annotation_pk = self.kwargs.get('annotation_pk')
+        annotation = FloorPlanAnnotation.objects.get(pk=annotation_pk)
+        serializer.save(annotation=annotation, added_by=self.request.user)

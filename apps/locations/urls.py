@@ -20,6 +20,9 @@ from apps.locations.api.viewsets import (
     RoomVenueViewSet,
     VenueContactViewSet,
     VenueMetadataViewSet,
+    FloorPlanViewSet,
+    FloorPlanAnnotationViewSet,
+    FloorPlanAnnotationMetadataViewSet,
 )
 from apps.locations.api.statistics_viewsets import LocationStatisticsViewSet
 
@@ -47,4 +50,40 @@ urlpatterns = [
         name='location-distribution-map',
     ),
     path('locations/', include(router.urls)),
+
+    # ── Nested: Floor Plans under Venue ──────────────────────────────────
+    path(
+        'locations/venues/<int:venue_pk>/floor-plans/',
+        FloorPlanViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='venue-floor-plans-list',
+    ),
+    path(
+        'locations/venues/<int:venue_pk>/floor-plans/<int:pk>/',
+        FloorPlanViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}),
+        name='venue-floor-plans-detail',
+    ),
+
+    # ── Nested: Annotations under Floor Plan ─────────────────────────────
+    path(
+        'locations/venues/<int:venue_pk>/floor-plans/<int:floor_plan_pk>/annotations/',
+        FloorPlanAnnotationViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='floor-plan-annotations-list',
+    ),
+    path(
+        'locations/venues/<int:venue_pk>/floor-plans/<int:floor_plan_pk>/annotations/<int:pk>/',
+        FloorPlanAnnotationViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}),
+        name='floor-plan-annotations-detail',
+    ),
+
+    # ── Nested: Metadata under Annotation ────────────────────────────────
+    path(
+        'locations/venues/<int:venue_pk>/floor-plans/<int:floor_plan_pk>/annotations/<int:annotation_pk>/metadata/',
+        FloorPlanAnnotationMetadataViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='annotation-metadata-list',
+    ),
+    path(
+        'locations/venues/<int:venue_pk>/floor-plans/<int:floor_plan_pk>/annotations/<int:annotation_pk>/metadata/<int:pk>/',
+        FloorPlanAnnotationMetadataViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}),
+        name='annotation-metadata-detail',
+    ),
 ]

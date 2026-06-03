@@ -108,3 +108,87 @@ class VenueMetadata(models.Model):
     
     def __str__(self):
         return f"Metadata: {self.label} for Venue: {self.venue.poi.name}"
+
+
+# ============================================================================
+# FLOOR PLAN MODELS
+# ============================================================================
+
+class FloorPlan(models.Model):
+    """
+    Floor plan image for a venue, representing a single level/floor.
+
+    Images are stored via the configured storage backend (S3 in production,
+    local MEDIA_ROOT in development). Pixel dimensions are extracted server-side
+    on upload using Pillow — never trust client-supplied values.
+    """
+
+    venue = models.ForeignKey(Venue, on_delete=models.CASCADE, related_name='floor_plans')
+    name = models.CharField(max_length=255)
+    level = models.PositiveIntegerField(default=0, help_text='0 = ground floor, increment upward')
+    level_label = models.CharField(max_length=100, blank=True, help_text='Optional human-readable label, e.g. "Mezzanine"')
+    image = models.ImageField(upload_to='floor_plans/')
+    original_width = models.PositiveIntegerField(help_text='Pixel width of the uploaded image, extracted server-side')
+    original_height = models.PositiveIntegerField(help_text='Pixel height of the uploaded image, extracted server-side')
+
+    added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='floor_plans_added')
+    added_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['level', 'name']
+
+    def __str__(self):
+        label = f' ({self.level_label})' if self.level_label else ''
+        return f"Floor Plan: {self.name} — Level {self.level}{label} — {self.venue.poi.name}"
+
+
+class FloorPlanAnnotation(models.Model):
+    """
+    Polygon annotation drawn on a floor plan image.
+
+    Vertices are stored as a JSON array of normalised {x, y} objects where both
+    coordinates are floats in the range [0.0, 1.0] relative to the image dimensions.
+    The frontend is responsible for converting between pixel space and normalised space.
+    """
+
+    floor_plan = models.ForeignKey(FloorPlan, on_delete=models.CASCADE, related_name='annotations')
+    room_venue = models.ForeignKey(
+        RoomVenue, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='floor_plan_annotations',
+        help_text='Optional link to an existing room in this venue',
+    )
+    label = models.CharField(max_length=255)
+    colour = models.CharField(
+        max_length=20, default='#4F46E5',
+        help_text='Hex colour string used for rendering the polygon on the canvas',
+    )
+    vertices = models.JSONField(
+        help_text='List of {x: float, y: float} normalised coordinate objects (min 3 points)',
+    )
+
+    added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='floor_plan_annotations_added')
+    added_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Annotation: {self.label} on {self.floor_plan.name}"
+
+
+class FloorPlanAnnotationMetadata(models.Model):
+    """
+    Arbitrary key-value metadata attached to a floor plan annotation.
+
+    Separate from VenueMetadata — scoped specifically to an annotation polygon
+    rather than the venue as a whole.
+    """
+
+    annotation = models.ForeignKey(FloorPlanAnnotation, on_delete=models.CASCADE, related_name='metadata')
+    label = models.CharField(max_length=255)
+    value = models.TextField(blank=True)
+
+    added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='floor_plan_annotation_metadata_added')
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Metadata: {self.label} on annotation '{self.annotation.label}'"

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     CountryLocation, ClusterLocation, ChapterLocation, AreaLocation, RelativeArea,
-    POI, Venue, RoomVenue, VenueContact, VenueMetadata
+    POI, Venue, RoomVenue, VenueContact, VenueMetadata, FloorPlan, FloorPlanAnnotation, FloorPlanAnnotationMetadata
 )
 
 
@@ -21,6 +21,10 @@ class CountryLocationAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+admin.site.register(FloorPlan)
+admin.site.register(FloorPlanAnnotation)
+admin.site.register(FloorPlanAnnotationMetadata)
 
 
 @admin.register(ClusterLocation)

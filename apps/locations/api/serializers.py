@@ -30,6 +30,7 @@ from typing import Dict, Any, Optional
 from apps.locations.models import (
     CountryLocation, ClusterLocation, ChapterLocation, AreaLocation, RelativeArea,
     POI, Venue, RoomVenue, VenueContact, VenueMetadata,
+    FloorPlan, FloorPlanAnnotation, FloorPlanAnnotationMetadata,
     GeneralSectorType, SpecificSectorType, POITypeChoice, VenueContactRoleChoice
 )
 from apps.organisations.models import Leader
@@ -1174,3 +1175,215 @@ class VenueMetadataCreateUpdateSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             validated_data['added_by'] = request.user
         return super().create(validated_data)
+
+
+# ============================================================================
+# FLOOR PLAN SERIALIZERS
+# ============================================================================
+
+class FloorPlanAnnotationMetadataSerializer(serializers.ModelSerializer):
+    """Full CRUD serializer for FloorPlanAnnotationMetadata."""
+
+    added_by = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = FloorPlanAnnotationMetadata
+        fields = ('id', 'label', 'value', 'added_by', 'added_at')
+        read_only_fields = ('id', 'added_by', 'added_at')
+
+
+class FloorPlanAnnotationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for FloorPlanAnnotation.
+
+    On read, includes nested metadata and the linked room name.
+    On write, accepts a list of metadata objects that are created/replaced atomically.
+    Vertices are validated as a list of normalised {x, y} coordinate objects.
+    """
+
+    metadata = FloorPlanAnnotationMetadataSerializer(many=True, read_only=True)
+    metadata_write = FloorPlanAnnotationMetadataSerializer(many=True, write_only=True, required=False, source='metadata')
+    room_venue_name = serializers.SerializerMethodField(read_only=True)
+    added_by = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = FloorPlanAnnotation
+        fields = (
+            'id', 'floor_plan', 'room_venue', 'room_venue_name',
+            'label', 'colour', 'vertices',
+            'metadata', 'metadata_write',
+            'added_by', 'added_at', 'updated_at',
+        )
+        read_only_fields = ('id', 'floor_plan', 'room_venue_name', 'added_by', 'added_at', 'updated_at')
+
+    @extend_schema_field({'type': 'string', 'nullable': True})
+    def get_room_venue_name(self, obj) -> Optional[str]:
+        """Return the room name if a RoomVenue is linked."""
+        if obj.room_venue:
+            return obj.room_venue.room_name
+        return None
+
+    def validate_vertices(self, value):
+        """
+        Validate that vertices is a list of {x, y} dicts with normalised float values.
+
+        Rules:
+        - Must be a list of dicts
+        - Each dict must have 'x' and 'y' keys
+        - Both values must be floats (or ints) in [0.0, 1.0]
+        - Minimum 3 vertices required to form a closed polygon
+        """
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Vertices must be a list.")
+        if len(value) < 3:
+            raise serializers.ValidationError("A polygon requires at least 3 vertices.")
+        for i, vertex in enumerate(value):
+            if not isinstance(vertex, dict):
+                raise serializers.ValidationError(f"Vertex {i} must be a dict.")
+            if 'x' not in vertex or 'y' not in vertex:
+                raise serializers.ValidationError(f"Vertex {i} must have 'x' and 'y' keys.")
+            for axis in ('x', 'y'):
+                coord = vertex[axis]
+                if not isinstance(coord, (int, float)):
+                    raise serializers.ValidationError(
+                        f"Vertex {i} '{axis}' must be a number, got {type(coord).__name__}."
+                    )
+                if not (0.0 <= float(coord) <= 1.0):
+                    raise serializers.ValidationError(
+                        f"Vertex {i} '{axis}' must be between 0.0 and 1.0, got {coord}."
+                    )
+        return value
+
+    def create(self, validated_data):
+        """Create annotation with nested metadata and set added_by from request."""
+        metadata_data = validated_data.pop('metadata', [])
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            validated_data['added_by'] = request.user
+        annotation = FloorPlanAnnotation.objects.create(**validated_data)
+        for meta in metadata_data:
+            FloorPlanAnnotationMetadata.objects.create(
+                annotation=annotation,
+                added_by=validated_data.get('added_by'),
+                **meta,
+            )
+        return annotation
+
+    def update(self, instance, validated_data):
+        """Update annotation; if metadata_write provided, replace all metadata."""
+        metadata_data = validated_data.pop('metadata', None)
+        instance = super().update(instance, validated_data)
+        if metadata_data is not None:
+            instance.metadata.all().delete()
+            request = self.context.get('request')
+            added_by = request.user if request and request.user.is_authenticated else None
+            for meta in metadata_data:
+                FloorPlanAnnotationMetadata.objects.create(
+                    annotation=instance,
+                    added_by=added_by,
+                    **meta,
+                )
+        return instance
+
+
+class FloorPlanListSerializer(serializers.ModelSerializer):
+    """Summary serializer for FloorPlan used in list views."""
+
+    image_url = serializers.SerializerMethodField(read_only=True)
+    venue_name = serializers.CharField(source='venue.poi.name', read_only=True)
+
+    class Meta:
+        model = FloorPlan
+        fields = (
+            'id', 'name', 'level', 'level_label',
+            'image_url', 'original_width', 'original_height',
+            'venue_name', 'added_at', 'updated_at',
+        )
+
+    @extend_schema_field({'type': 'string', 'format': 'uri', 'nullable': True})
+    def get_image_url(self, obj) -> Optional[str]:
+        """Return the absolute URL of the floor plan image."""
+        request = self.context.get('request')
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        if obj.image:
+            return obj.image.url
+        return None
+
+
+class FloorPlanDetailSerializer(FloorPlanListSerializer):
+    """Detail serializer for FloorPlan with nested annotations."""
+
+    annotations = FloorPlanAnnotationSerializer(many=True, read_only=True)
+
+    class Meta(FloorPlanListSerializer.Meta):
+        fields = FloorPlanListSerializer.Meta.fields + ('annotations',)
+
+
+class FloorPlanCreateUpdateSerializer(serializers.ModelSerializer):
+    """
+    Create/Update serializer for FloorPlan.
+
+    Accepts image uploads via multipart/form-data. The original_width and
+    original_height fields are populated automatically by opening the uploaded
+    image with Pillow — client-supplied dimension values are ignored.
+    """
+
+    image_url = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = FloorPlan
+        fields = (
+            'id', 'venue', 'name', 'level', 'level_label', 'image',
+            'image_url', 'original_width', 'original_height',
+        )
+        read_only_fields = ('id', 'image_url', 'original_width', 'original_height')
+
+    @extend_schema_field({'type': 'string', 'format': 'uri', 'nullable': True})
+    def get_image_url(self, obj) -> Optional[str]:
+        """Return the absolute URL of the floor plan image."""
+        request = self.context.get('request')
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        if obj.image:
+            return obj.image.url
+        return None
+
+    def validate_image(self, value):
+        """Validate that the uploaded file is a valid image."""
+        from PIL import Image as PillowImage
+        try:
+            img = PillowImage.open(value)
+            img.verify()
+        except Exception:
+            raise serializers.ValidationError("The uploaded file is not a valid image.")
+        # Reset file pointer after verify() (which exhausts the file)
+        value.seek(0)
+        return value
+
+    def _extract_dimensions(self, image_file):
+        """Open the image with Pillow and return (width, height) in pixels."""
+        from PIL import Image as PillowImage
+        image_file.seek(0)
+        img = PillowImage.open(image_file)
+        return img.size  # (width, height)
+
+    def create(self, validated_data):
+        """Create FloorPlan, extracting pixel dimensions from the uploaded image."""
+        image = validated_data.get('image')
+        width, height = self._extract_dimensions(image)
+        validated_data['original_width'] = width
+        validated_data['original_height'] = height
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            validated_data['added_by'] = request.user
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        """Update FloorPlan; re-extract dimensions if a new image is provided."""
+        if 'image' in validated_data:
+            image = validated_data['image']
+            width, height = self._extract_dimensions(image)
+            validated_data['original_width'] = width
+            validated_data['original_height'] = height
+        return super().update(instance, validated_data)

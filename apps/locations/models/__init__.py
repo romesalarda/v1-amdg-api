@@ -7,7 +7,11 @@ from .locations import (
     AreaLocation,
     RelativeArea
 )
-from .venues import POITypeChoice, VenueContactRoleChoice, POI, Venue, RoomVenue, VenueContact, VenueMetadata
+from .venues import (
+    POITypeChoice, VenueContactRoleChoice,
+    POI, Venue, RoomVenue, VenueContact, VenueMetadata,
+    FloorPlan, FloorPlanAnnotation, FloorPlanAnnotationMetadata,
+)
 
 __all__ = [
     'POI',
@@ -17,6 +21,9 @@ __all__ = [
     'VenueMetadata',
     'POITypeChoice',
     'VenueContactRoleChoice',
+    'FloorPlan',
+    'FloorPlanAnnotation',
+    'FloorPlanAnnotationMetadata',
     'GeneralSectorType',
     'SpecificSectorType',
     'CountryLocation',
