@@ -2640,6 +2640,9 @@ class EventNotificationSerializer(serializers.ModelSerializer):
     notification_type_display = serializers.CharField(
         source='get_notification_type_display', read_only=True
     )
+    related_payment = serializers.CharField(source='related_payment.payment_id', read_only=True)
+    related_order = serializers.CharField(source='related_order.order_id', read_only=True)
+    related_booking = serializers.CharField(source='related_booking.booking_reference', read_only=True)
     priority_display = serializers.CharField(
         source='get_priority_display', read_only=True
     )

@@ -359,6 +359,9 @@ class Booking(models.Model, PaymentMixin):
                 raise ValidationError({'booking_reference': 'Could not generate unique booking reference.'})
         self.clean()
         super().save(*args, **kwargs)
+
+    def get_verbose_description(self):
+        return f"Booking {self.booking_reference} for event {self.event.title} by {self.made_by} for attendees: {[attendee.full_name for attendee in self.attendees.all()]}"
     
     @property
     def total_amount(self):

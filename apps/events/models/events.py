@@ -16,6 +16,7 @@ import uuid
 from apps.common.models import SoftDeleteModel, AvailabilityWindow, AvailabilityTypeChoices
 from apps.common.mixins import LandingImageMixin, HasAvailabilityMixin
 from apps.locations.models import AreaLocation
+from apps.payments.models import PaymentMethod
 
 User = get_user_model()
 
@@ -87,6 +88,13 @@ class EventType(models.Model):
     def __str__(self):
         return self.title
 
+def build_task(title, description, hint, code):
+    return {
+        "title": title,
+        "description": description,
+        "hint": hint,
+        "code": code
+    }
 class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     '''
     Event model to represent events within the system.
@@ -318,68 +326,148 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             }
         ]
         '''
-        from apps.payments.models import PaymentMethod
-        from apps.locations.models import Venue
 
         tasks = []
 
         if self.status == EventStatusChoices.DRAFTING and not self.is_approved:
-            tasks.append({
-                "title": "Event authorization pending",
-                "description": "This event is pending approval by an administrator. Once approved, you can publish, and participants will be able to register.",
-                "hint": "Event authorization is pending review by an administrator. You will receive a notification once the review is complete.",
-                "code": "AUTHORIZATION_PENDING"
-            })
+            tasks.append(build_task(
+                title="Event authorization pending",
+                description="This event is pending approval by an administrator. Once approved, you can publish, and participants will be able to register.",
+                hint="Event authorization is pending review by an administrator. You will receive a notification once the review is complete.",
+                code="AUTHORIZATION_PENDING"
+            ))
+             
         
-        if self.can_event_be_published is False:
+        if self.can_event_be_published is False: # only show these tasks if the event is not yet publishable - once publishable, these tasks should no longer block publishing and can be shown as recommended tasks instead
             tasks = []
             if not self.has_registration_window:
-                tasks.append({
-                    "title": "Define registration availability window",
-                    "description": "You need to define at least one registration availability window for this event before it can be published.",
-                    "hint": "Go to the Availability section and add a registration availability window to specify when participants can register for this event.",
-                    "code": "REGISTRATION_WINDOW_REQUIRED"
-                })
+                tasks.append(build_task(
+                    title="Define registration availability window",
+                    description="You need to define at least one registration availability window for this event before it can be published.",
+                    hint="Go to the Availability section and add a registration availability window to specify when participants can register for this event.",
+                    code="REGISTRATION_WINDOW_REQUIRED"
+                )   )
             if not self.landing_images.exists():
-                tasks.append({
-                    "title": "Set landing image",
-                    "description": "You should set a landing image for this event to make it visually appealing when published.",
-                    "hint": "Go to the Landing Image section and upload an image that represents your event.",
-                    "code": "LANDING_IMAGE_RECOMMENDED"
-                })
-            return tasks
+                tasks.append(build_task(
+                    title="Set landing image",
+                    description="You should set a landing image for this event to make it visually appealing when published.",
+                    hint="Go to the Landing Image section and upload an image that represents your event.",
+                    code="LANDING_IMAGE_RECOMMENDED"
+                ))
+
+            if not self.long_description:
+                tasks.append(build_task(
+                    title="Add long description",
+                    description="Adding a long description helps provide more details about your event to potential participants.",
+                    hint="Go to the Details section and add a long description to give participants more information about what to expect at the event.",
+                    code="LONG_DESCRIPTION_RECOMMENDED"
+                ))
+
+            if not self.theme:
+                tasks.append(build_task(
+                    title="Add event theme",
+                    description="Adding a theme helps create a cohesive experience for your event and can make it more memorable for participants.",
+                    hint="Go to the Details section and add a theme to give your event a unique identity and enhance the overall participant experience.",
+                    code="THEME_RECOMMENDED"
+                ))
+
+            if self.expected_attendance == 0 or self.expected_attendance is None:
+                tasks.append(build_task(
+                    title="Set expected attendance",
+                    description="Setting an expected attendance helps with planning and resource allocation for your event.",
+                    hint="Go to the Details section and set an expected attendance to help you prepare for the number of participants you anticipate at your event.",
+                    code="EXPECTED_ATTENDANCE_RECOMMENDED"
+                ))
+
+            if self.maximum_attendance == 0 or self.maximum_attendance is None:
+                tasks.append(build_task(
+                    title="Set maximum attendance",
+                    description="Setting a maximum attendance helps manage capacity and ensure a comfortable experience for participants at your event.",
+                    hint="Go to the Details section and set a maximum attendance to help you control the number of participants and create a better experience for everyone at your event.",
+                    code="MAXIMUM_ATTENDANCE_REQUIRED"
+                ))  
+
+            if self.what_to_bring is None or self.what_to_bring.strip() == '':
+                tasks.append(build_task(
+                    title="Add 'What to Bring' information",
+                    description="Providing 'What to Bring' information helps participants prepare for the event and ensures they have everything they need for a great experience.",
+                    hint="Go to the Details section and add 'What to Bring' information to help participants know what items or materials they should bring with them to the event.",
+                    code="WHAT_TO_BRING_RECOMMENDED"
+                ))
+
+
         
         if self.status == EventStatusChoices.OPEN and self.max_capacity_reached:
-            tasks.append({
-                "title": "Event at full capacity",
-                "description": "This event has reached its maximum capacity and cannot accept more registrations.",
-                "hint": "You can increase the maximum attendance in the event settings to allow more participants to register.",
-                "code": "MAX_CAPACITY_REACHED"
-            })
+            tasks.append(build_task(
+                title="Event at full capacity",
+                description="This event has reached its maximum capacity and cannot accept more registrations.",
+                hint="You can increase the maximum attendance in the event settings to allow more participants to register.",
+                code="MAX_CAPACITY_REACHED"
+            ))
         
         if self.status == EventStatusChoices.OPEN and self.registration_open_from_window is False:
-            tasks.append({
-                "title": "Registration not open",
-                "description": "The current date is outside of the defined registration availability windows for this event.",
-                "hint": "Check the Availability section to see the defined registration windows and ensure that the current date falls within one of them.",
-                "code": "REGISTRATION_NOT_OPEN"
-            })
+            tasks.append(build_task(
+                title="Registration not open",
+                description="The current date is outside of the defined registration availability windows for this event.",
+                hint="Check the Availability section to see the defined registration windows and ensure that the current date falls within one of them.",
+                code="REGISTRATION_NOT_OPEN"
+            ))
 
         if self.booking_packages.exists() and not self.booking_packages.filter(is_active=True).exists():
-            tasks.append({
-                "title": "No active booking packages",
-                "description": "This event includes bookable products but does not have any active booking packages available.",
-                "hint": "Go to the Booking Packages section and ensure that at least one booking package is active to allow participants to book.",
-                "code": "NO_ACTIVE_BOOKING_PACKAGES"
-            })
+            tasks.append(build_task(
+                title="No active booking packages",
+                description="This event includes bookable products but does not have any active booking packages available.",
+                hint="Go to the Booking Packages section and ensure that at least one booking package is active to allow participants to book.",
+                code="NO_ACTIVE_BOOKING_PACKAGES"
+            ))
         
         if self.settings.payment_enabled and not PaymentMethod.objects.filter(event=self, is_active=True).exists():
-            tasks.append({
-                "title": "No active payment methods",
-                "description": "Payment processing is enabled for this event, but there are no active payment methods configured.",
-                "hint": "Go to the Payment Methods section and ensure that at least one payment method is active to allow participants to make payments.",
-                "code": "NO_ACTIVE_PAYMENT_METHODS"
-            })
+            tasks.append(build_task(
+                title="No active payment methods",
+                description="Payment processing is enabled for this event, but there are no active payment methods configured.",
+                hint="Go to the Payment Methods section and ensure that at least one payment method is active to allow participants to make payments.",
+                code="NO_ACTIVE_PAYMENT_METHODS"
+            ))
+
+        if self.start_datetime < timezone.now() and self.status in [EventStatusChoices.OPEN, EventStatusChoices.PUBLISHED]:
+            tasks.append(build_task(
+                title="Event start date has passed",
+                description="The start date of this event has passed, but the event is still marked as open or published.",
+                hint="If the event is currently happening, transition the status to 'In Progress'. If the event has finished, transition the status to 'Completed' or 'Archived'.",
+                code="START_DATE_PASSED"
+            ))
+
+        if self.primary_venue is None:
+            tasks.append(build_task(
+                title="No primary venue defined",
+                description="This event does not have a primary venue defined.",
+                hint="Go to the Venues section and set a primary venue for this event to provide location information to participants.",
+                code="NO_PRIMARY_VENUE"
+             )) 
+            
+        if self.external_event and (self.external_link is None or self.external_link.strip() == ''):
+            tasks.append(build_task(
+                title="External event missing link",
+                description="This event is marked as an external event but does not have an external link defined.",
+                hint="Go to the Details section and add an external link to provide participants with the URL for this external event.",
+                code="EXTERNAL_EVENT_LINK_REQUIRED"
+             )) 
+            
+        if not self.consents.exists():
+            tasks.append(build_task(
+                title="No consents defined",
+                description="There are no consents defined for this event. If your event requires participants to agree to certain terms or policies, you should define those consents here.",
+                hint="Go to the Consents section and add any necessary consents that participants must agree to when registering for this event.",
+                code="NO_CONSENTS_CONFIRMED"
+             ))
+            
+        if self.main_landing_image is None:
+            tasks.append(build_task(
+                title="No landing image set",
+                description="A landing image helps make your event visually appealing and can attract more participants.",
+                hint="Go to the Landing Image section and set a main landing image for this event to enhance its visual appeal.",
+                code="LANDING_IMAGE_REQUIRED"
+             ))
         
         return tasks
     

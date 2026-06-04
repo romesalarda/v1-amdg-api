@@ -10,6 +10,7 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
 from typing import Dict, Any
+from datetime import date
 
 from apps.attendee.models import (
     Attendee, AttendeeGuardian, AttendeeAction, AttendeeActionChoices,
@@ -187,7 +188,6 @@ class AttendeeCreateSerializer(serializers.ModelSerializer):
         
         # Validate date of birth
         if attrs.get('date_of_birth'):
-            from datetime import date
             if attrs['date_of_birth'] > date.today():
                 raise serializers.ValidationError({
                     'date_of_birth': "Date of birth cannot be in the future."

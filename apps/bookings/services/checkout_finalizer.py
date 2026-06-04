@@ -22,7 +22,7 @@ from apps.bookings.models import (
 from apps.bookings.models.products import PackageProduct
 from apps.bookings.tasks import send_booking_pending_bank_transfer_email
 from apps.common.models import Resource
-from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice
+from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice, EventNotification, NotificationTypeChoices, NotificationPriorityChoices
 from apps.payments.models import Payment, PaymentMethodTypeChoices, PaymentStatusChoices
 from apps.products.models import Order, OrderStatusChoices
 from apps.products.models.product import ProductVariant
@@ -236,6 +236,21 @@ class BookingCheckoutFinalizer:
                 len(orders),
                 tickets_created,
             )
+
+            EventNotification.objects.get_or_create(
+                    notification_type=NotificationTypeChoices.BOOKING_CONFIRMATION,
+                    related_payment=payment,
+                    defaults=dict(
+                        event=payment.event,
+                        priority=NotificationPriorityChoices.NORMAL,
+                        related_booking=booking,
+                        metadata={
+                            'message': booking.get_verbose_description(),
+                            'auto_processed': True,
+                            'booking_reference': booking.booking_reference,
+                        },
+                    ),
+                )
 
             # Dispatch the bank-transfer pending email only when:
             #   1. No tickets have been created yet (create_tickets=False), AND
