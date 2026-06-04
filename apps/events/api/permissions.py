@@ -389,3 +389,44 @@ class CannotTargetEventCreator(permissions.BasePermission):
         if user_id and event and user_id == event.created_by_id:
             return False
         return True
+
+
+class CanManageEventVenueFloorPlans(permissions.BasePermission):
+    """
+    Grants authenticated event staff / owners full access to floor plans
+    that are scoped to an EventVenue.  Django staff / superusers always have
+    full access.
+
+    Reads and writes are both guarded: the caller must be authenticated and
+    must be either the event owner or a staff member of the event that owns
+    the referenced EventVenue.
+    """
+
+    message = "You must be the event owner or event staff to manage floor plans for this venue."
+
+    def _has_event_venue_access(self, request, view) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+        event_venue_pk = view.kwargs.get("event_venue_pk")
+        if not event_venue_pk:
+            return False
+        from apps.events.models import EventVenue
+        try:
+            ev = EventVenue.objects.select_related("event").get(
+                event_venue_id=event_venue_pk
+            )
+        except EventVenue.DoesNotExist:
+            return False
+        event = ev.event
+        return (
+            event.created_by == request.user
+            or event.staff_members.filter(user=request.user).exists()
+        )
+
+    def has_permission(self, request, view) -> bool:
+        return self._has_event_venue_access(request, view)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        return self._has_event_venue_access(request, view)

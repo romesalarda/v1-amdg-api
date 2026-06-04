@@ -25,6 +25,11 @@ from apps.events.api.viewsets import (
     EventNotificationViewSet,
 )
 from apps.events.api.statistics_viewsets import EventStatisticsViewSet
+from apps.events.api.floor_plan_viewsets import (
+    EventVenueFloorPlanViewSet,
+    EventVenueFloorPlanAnnotationViewSet,
+    EventVenueFloorPlanAnnotationMetadataViewSet,
+)
 
 app_name = 'events'
 
@@ -54,4 +59,40 @@ router.register(r'notifications', EventNotificationViewSet, basename='eventnotif
 
 urlpatterns = [
     path('event/', include(router.urls)),
+
+    # ── Nested: Floor Plans under EventVenue ─────────────────────────────
+    path(
+        'event/event-venues/<uuid:event_venue_pk>/floor-plans/',
+        EventVenueFloorPlanViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='event-venue-floor-plans-list',
+    ),
+    path(
+        'event/event-venues/<uuid:event_venue_pk>/floor-plans/<int:pk>/',
+        EventVenueFloorPlanViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}),
+        name='event-venue-floor-plans-detail',
+    ),
+
+    # ── Nested: Annotations under EventVenue Floor Plan ──────────────────
+    path(
+        'event/event-venues/<uuid:event_venue_pk>/floor-plans/<int:floor_plan_pk>/annotations/',
+        EventVenueFloorPlanAnnotationViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='event-venue-floor-plan-annotations-list',
+    ),
+    path(
+        'event/event-venues/<uuid:event_venue_pk>/floor-plans/<int:floor_plan_pk>/annotations/<int:pk>/',
+        EventVenueFloorPlanAnnotationViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}),
+        name='event-venue-floor-plan-annotations-detail',
+    ),
+
+    # ── Nested: Annotation Metadata ───────────────────────────────────────
+    path(
+        'event/event-venues/<uuid:event_venue_pk>/floor-plans/<int:floor_plan_pk>/annotations/<int:annotation_pk>/metadata/',
+        EventVenueFloorPlanAnnotationMetadataViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='event-venue-annotation-metadata-list',
+    ),
+    path(
+        'event/event-venues/<uuid:event_venue_pk>/floor-plans/<int:floor_plan_pk>/annotations/<int:annotation_pk>/metadata/<int:pk>/',
+        EventVenueFloorPlanAnnotationMetadataViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}),
+        name='event-venue-annotation-metadata-detail',
+    ),
 ]

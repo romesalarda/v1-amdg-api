@@ -124,6 +124,7 @@ class FloorPlan(models.Model):
     """
 
     venue = models.ForeignKey(Venue, on_delete=models.CASCADE, related_name='floor_plans')
+    event_venue = models.ForeignKey('events.EventVenue', on_delete=models.SET_NULL, null=True, blank=True, related_name='floor_plans', help_text='Optional link to an EventVenue snapshot for historical reference')
     name = models.CharField(max_length=255)
     level = models.PositiveIntegerField(default=0, help_text='0 = ground floor, increment upward')
     level_label = models.CharField(max_length=100, blank=True, help_text='Optional human-readable label, e.g. "Mezzanine"')
