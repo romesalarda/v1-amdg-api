@@ -96,7 +96,8 @@ class ProfileSerializer(serializers.HyperlinkedModelSerializer):
             'url', 'user', 'preferred_name', 'profile_picture', 'profile_picture_url',
             'profile_picture_uploaded_at', 'area_from', 'area_from_details',
             'contact_phone', 'preferred_language', 'timezone', 'full_name',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at', 'is_public', 'is_clergy_or_religious',
+            'ecclesiastical_status', 'ecclesiastical_rank'
         )
         read_only_fields = (
             'url', 'user', 'full_name', 'profile_picture_uploaded_at',

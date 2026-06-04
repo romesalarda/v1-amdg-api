@@ -15,7 +15,9 @@ User = get_user_model()
 MAX_GENERATED_CODE_ATTEMPTS = 5
 
 class Organisation(models.Model):
-    
+    '''
+    Model representing an organisation. This can be used to group events, sponsors, and other entities under a common banner.
+    '''
     title = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True)
     short_description = models.CharField(max_length=500, blank=True, help_text="A short description of the organisation for display in lists and summaries.")
@@ -40,6 +42,8 @@ class Organisation(models.Model):
         default=False, help_text="Indicates whether the organisation has been verified by an admin. This is separate from membership verification and can be used to denote that the organisation itself is legitimate or approved.")
     initially_sponsorship = models.BooleanField(
         default=False, help_text="Indicates whether the organisation is an initial sponsor. This can be used to highlight certain organisations on the platform.")
+    
+    parent_organisation = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='child_organisations')
 
     def __str__(self):
         return self.title
@@ -48,6 +52,10 @@ class Organisation(models.Model):
         if not self.url_safe_title:
             self.url_safe_title = slugify(self.title + "-" + str(uuid.uuid4())[:8])  # Ensure uniqueness with a short UUID suffix     
         super().save(*args, **kwargs)
+
+    @property
+    def is_child_organisation(self):
+        return self.parent_organisation is not None
 
 
 class OrganisationContact(models.Model):

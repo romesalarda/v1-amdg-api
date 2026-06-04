@@ -198,3 +198,37 @@ class LocationLeaderInvite(models.Model):
             f"Leader invite for {self.target_user} in {self.organisation} "
             f"({self.location_type}:{self.location_id})"
         )
+    
+class LeaderPermissionCode(models.TextChoices):
+    ALLOW_EVENT_APPROVAL = 'allow_event_approval', 'Allow Event Approval'
+    ALLOW_MANAGE_LEADERS = 'allow_manage_leaders', 'Allow Managing Leaders'
+    ALLOW_MANAGE_ORGANISATION = 'allow_manage_organisation', 'Allow Managing Organisation'
+    ALLOW_MEMBERSHIP_ACCESS = 'allow_membership_access', 'Allow Access to Membership Information'
+    ALLOW_ORGANISATION_SPONSOR = 'allow_organisation_sponsor', 'Allow Sponsoring the Organisation'
+    ALLOW_POLICY_MANAGEMENT = 'allow_policy_management', 'Allow Managing Organisation Policies'
+    ALLOW_DATA_MANAGEMENT = 'allow_data_management', 'Allow Managing Organisation Data'
+    ALLOW_REVIEW_ACCESS = 'allow_review_access', 'Allow Access to Reviews and Feedback'
+    ALLOW_MONETARY_ACCESS = 'allow_monetary_access', 'Allow Access to Monetary Transactions'
+    ALLOW_LANDING_PAGE_MANAGEMENT = 'allow_landing_page_management', 'Allow Managing Organisation Landing Page'
+
+class LeaderPermission(models.Model):
+    """
+    Model representing specific permissions for leaders. This allows for more granular control over what leaders can do within their authority scope.
+    """
+    leader = models.ForeignKey(Leader, on_delete=models.CASCADE, related_name='permissions')
+    permission_code = models.CharField(max_length=50, choices=LeaderPermissionCode.choices)
+    description = models.TextField(blank=True)
+
+    allow_create = models.BooleanField(default=False, help_text="Whether this permission allows create access.")
+    allow_read = models.BooleanField(default=True, help_text="Whether this permission allows read access.")
+    allow_update = models.BooleanField(default=False, help_text="Whether this permission allows update access.")
+    allow_delete = models.BooleanField(default=False, help_text="Whether this permission allows delete access.")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('leader', 'permission_code')
+
+    def __str__(self):
+        return f"Permission '{self.permission_code}' for {self.leader}"
