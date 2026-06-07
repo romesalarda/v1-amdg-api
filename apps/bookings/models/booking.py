@@ -7,10 +7,13 @@ from django.conf import settings
 from apps.bookings.models.ticket import TicketType
 from django.utils import timezone
 from apps.events.models import EventStatusChoices
+
+
 import uuid
 
 from apps.common.models import SoftDeleteModel
 from apps.common.mixins import HasAvailabilityMixin
+from core.utils.display import try_generate_unique_display_code
 
 class BookingIntentStatusChoices(models.TextChoices):
     """Status choices for booking intents."""
@@ -345,7 +348,6 @@ class Booking(models.Model, PaymentMixin):
     
     def save(self, *args, **kwargs):
         if not self.booking_reference:
-            from core.utils.display import try_generate_unique_display_code
             try:
                 self.booking_reference = try_generate_unique_display_code(
                     model_class=Booking,
@@ -357,7 +359,6 @@ class Booking(models.Model, PaymentMixin):
                 ).lower()
             except ValueError as e:
                 raise ValidationError({'booking_reference': 'Could not generate unique booking reference.'})
-        self.clean()
         super().save(*args, **kwargs)
 
     def get_verbose_description(self):
@@ -447,7 +448,6 @@ class Booking(models.Model, PaymentMixin):
         """
         from apps.products.models import Order
         from apps.bookings.models import Ticket
-        
         # Get all booking packages from tickets belonging to this booking's attendees
         package_ids = Ticket.objects.filter(
             attendee__booking=self

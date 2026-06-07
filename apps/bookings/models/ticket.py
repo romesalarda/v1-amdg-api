@@ -4,11 +4,11 @@ from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 
-from django.core import validators
-
 import uuid
 from core.utils.display import generate_human_readable_id, try_generate_unique_display_code
 from core.utils.data import save_with_unique_field
+from apps.common.models import VerificationStatus
+from apps.payments.models.refunds import RefundAssociation
 
 class TicketScopeChoices(models.TextChoices):
     FULL_EVENT = 'FULL_EVENT', 'Full Event'
@@ -235,8 +235,6 @@ class Ticket(models.Model):
 
         # Two-phase invalidation: verified active refunds temporarily block ticket usage
         # before final process status transitions are applied.
-        from apps.common.models import VerificationStatus
-        from apps.payments.models.refunds import RefundAssociation
 
         ticket_type = ContentType.objects.get_for_model(Ticket)
         has_verified_refund_block = RefundAssociation.objects.filter(

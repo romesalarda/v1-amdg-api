@@ -8,6 +8,7 @@ from .review import EventReview
 from .questions import EventQuestion, EventQuestionTypeChoices, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice
 from .venue import EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata, EventVenueContactRoleChoice
 from .notifications import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
+from .transport import EventTransportOption, EventTransportSchedule, EventTransportStop
 
 __all__ = [
     'Event',
@@ -40,4 +41,7 @@ __all__ = [
     'EventNotification',
     'NotificationTypeChoices',
     'NotificationPriorityChoices',
+    'EventTransportOption',
+    'EventTransportSchedule',
+    'EventTransportStop',
 ]

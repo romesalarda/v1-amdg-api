@@ -2,6 +2,7 @@ from .booking import Booking, BookingPackage, BookingPackageRule, PackageRuleTyp
 from .ticket import TicketType, Ticket, TicketScopeChoices, TicketStatusChoices
 from .identity import AttendeeAlternativeSigninIdentifier, EventAlternativeSigninIdentifier
 from .products import PackageProduct
+from .transport import TransportBooking
 
 __all__ = [
     'Booking',
@@ -17,4 +18,5 @@ __all__ = [
     'PackageProduct',
     'BookingIntent',
     'BookingIntentStatusChoices',
+    'TransportBooking',
 ]

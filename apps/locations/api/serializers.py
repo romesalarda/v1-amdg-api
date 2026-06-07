@@ -21,8 +21,6 @@ Version: 1.0.0
 """
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import ValidationError as DjangoValidationError
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
 from typing import Dict, Any, Optional
@@ -31,9 +29,8 @@ from apps.locations.models import (
     CountryLocation, ClusterLocation, ChapterLocation, AreaLocation, RelativeArea,
     POI, Venue, RoomVenue, VenueContact, VenueMetadata,
     FloorPlan, FloorPlanAnnotation, FloorPlanAnnotationMetadata,
-    GeneralSectorType, SpecificSectorType, POITypeChoice, VenueContactRoleChoice
 )
-from apps.organisations.models import Leader
+from apps.events.models.venue import EventVenueRoom
 
 User = get_user_model()
 
@@ -1204,6 +1201,7 @@ class FloorPlanAnnotationSerializer(serializers.ModelSerializer):
     metadata = FloorPlanAnnotationMetadataSerializer(many=True, read_only=True)
     metadata_write = FloorPlanAnnotationMetadataSerializer(many=True, write_only=True, required=False, source='metadata')
     room_venue_name = serializers.SerializerMethodField(read_only=True)
+    room_venue = serializers.PrimaryKeyRelatedField(queryset=EventVenueRoom.objects.all(), required=False, allow_null=True)
     added_by = serializers.StringRelatedField(read_only=True)
 
     class Meta:

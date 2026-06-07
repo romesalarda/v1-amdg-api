@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core import validators
+from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 
 from core.utils.validators import PhoneNumberValidator
@@ -37,6 +38,16 @@ class POI(models.Model): # only concerns locations
     def __str__(self):
         return self.name
     
+    def __repr__(self):
+        return f"<POI {self.name} ({self.get_poi_type_display()})>"
+    
+    def clean(self):
+        super().clean()
+        if self.latitude is not None and (self.latitude < -90 or self.latitude > 90):
+            raise ValidationError({'latitude': 'Latitude must be between -90 and 90 degrees.'})
+        if self.longitude is not None and (self.longitude < -180 or self.longitude > 180):
+            raise ValidationError({'longitude': 'Longitude must be between -180 and 180 degrees.'})
+    
 class Venue(models.Model):
     '''
     Venue model representing specific venues linked to POIs.
@@ -54,6 +65,9 @@ class Venue(models.Model):
     def __str__(self):
         return f"Venue: {self.poi.name}"
     
+    def __repr__(self):
+        return f"<Venue {self.poi.name}>"
+        
 class RoomVenue(models.Model):
     '''
     RoomVenue model representing rooms within a venue.
@@ -70,6 +84,9 @@ class RoomVenue(models.Model):
     def __str__(self):
         return f"Room: {self.room_name} in Venue: {self.venue.poi.name}"
     
+    def __repr__(self):
+        return f"<RoomVenue {self.room_name} in Venue: {self.venue.poi.name}>"
+        
 class VenueContactRoleChoice(models.TextChoices):
     MANAGER = 'MANAGER', 'Manager'
     OWNER = 'OWNER', 'Owner'
@@ -142,6 +159,16 @@ class FloorPlan(models.Model):
     def __str__(self):
         label = f' ({self.level_label})' if self.level_label else ''
         return f"Floor Plan: {self.name} — Level {self.level}{label} — {self.venue.poi.name}"
+    
+    def __repr__(self):
+        return f"<FloorPlan {self.name} for Venue: {self.venue.poi.name}>"
+    
+    def clean(self):
+        super().clean()
+        if self.original_width <= 0:
+            raise ValidationError({'original_width': 'Original width must be a positive integer.'})
+        if self.original_height <= 0:
+            raise ValidationError({'original_height': 'Original height must be a positive integer.'})
 
 
 class FloorPlanAnnotation(models.Model):
@@ -155,7 +182,7 @@ class FloorPlanAnnotation(models.Model):
 
     floor_plan = models.ForeignKey(FloorPlan, on_delete=models.CASCADE, related_name='annotations')
     room_venue = models.ForeignKey(
-        RoomVenue, on_delete=models.SET_NULL, null=True, blank=True,
+        'events.EventVenueRoom', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='floor_plan_annotations',
         help_text='Optional link to an existing room in this venue',
     )
@@ -174,6 +201,16 @@ class FloorPlanAnnotation(models.Model):
 
     def __str__(self):
         return f"Annotation: {self.label} on {self.floor_plan.name}"
+    
+    def clean(self):
+        super().clean()
+        if not isinstance(self.vertices, list) or len(self.vertices) < 3:
+            raise ValidationError({'vertices': 'At least 3 vertices are required to form a polygon.'})
+        for vertex in self.vertices:
+            if 'x' not in vertex or 'y' not in vertex:
+                raise ValidationError({'vertices': 'Each vertex must be an object with "x" and "y" properties.'})
+            if not (0.0 <= vertex['x'] <= 1.0) or not (0.0 <= vertex['y'] <= 1.0):
+                raise ValidationError({'vertices': 'Vertex coordinates must be normalised floats between 0.0 and 1.0.'})
 
 
 class FloorPlanAnnotationMetadata(models.Model):
@@ -193,3 +230,6 @@ class FloorPlanAnnotationMetadata(models.Model):
 
     def __str__(self):
         return f"Metadata: {self.label} on annotation '{self.annotation.label}'"
+    
+    def __repr__(self):
+        return f"<FloorPlanAnnotationMetadata {self.label} on annotation '{self.annotation.label}'>"
