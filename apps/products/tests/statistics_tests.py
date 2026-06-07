@@ -14,7 +14,6 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db.models import Q, Sum
 from rest_framework.test import APIClient
-from rest_framework import status as http_status
 from datetime import date, timedelta
 from decimal import Decimal
 from djmoney.money import Money
@@ -22,7 +21,7 @@ from djmoney.money import Money
 from apps.products.models.product import Product, ProductVariant, ProductSizeChoices
 from apps.products.models.orders import Order, OrderItem, OrderStatusChoices
 from apps.products.models.category import ProductCategory, EventProductCategory
-from apps.products import statistics
+from apps.products.services import statistics
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.organisations.models import Organisation
 from apps.attendee.models import Attendee, AttendeeRelationship

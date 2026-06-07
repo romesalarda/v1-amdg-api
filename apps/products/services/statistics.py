@@ -17,8 +17,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.db.models import (
-    Count, Sum, Avg, F, Q, Case, When, Value, 
-    IntegerField, FloatField, DecimalField
+    Count, Sum, Avg, Q
 )
 from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, Coalesce
 from django.utils import timezone

@@ -26,7 +26,7 @@ from drf_spectacular.types import OpenApiTypes
 from django.utils import timezone
 from datetime import datetime
 
-from apps.products import statistics
+from apps.products.services import statistics
 from apps.products.models import Product
 from apps.products.api.serializers.statistics import (
     ProductOverviewSerializer,
