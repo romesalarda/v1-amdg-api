@@ -84,7 +84,7 @@ class EventStaffInvite(models.Model):
 
         # Apply permission template if one is set
         if self.permission_template:
-            from apps.events.utils.staff_helpers import apply_permission_template
+            from apps.events.services.staff_service import apply_permission_template
             try:
                 apply_permission_template(
                     event=self.event,

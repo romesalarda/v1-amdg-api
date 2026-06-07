@@ -23,12 +23,10 @@ from apps.events.api.viewsets import (
     EventVenueContactViewSet,
     EventVenueMetadataViewSet,
     EventNotificationViewSet,
-)
-from apps.events.api.statistics_viewsets import EventStatisticsViewSet
-from apps.events.api.floor_plan_viewsets import (
     EventVenueFloorPlanViewSet,
     EventVenueFloorPlanAnnotationViewSet,
     EventVenueFloorPlanAnnotationMetadataViewSet,
+    EventStatisticsViewSet
 )
 
 app_name = 'events'

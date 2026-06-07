@@ -12,7 +12,7 @@ import logging
 
 from celery import shared_task
 
-from apps.payments.email_service import RefundEmailService
+from apps.payments.services.email_service import RefundEmailService
 
 logger = logging.getLogger(__name__)
 

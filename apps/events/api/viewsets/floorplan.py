@@ -44,7 +44,7 @@ from apps.locations.api.serializers import (
     FloorPlanListSerializer,
 )
 from apps.locations.api.viewsets import StandardPagination
-from .permissions import CanManageEventVenueFloorPlans
+from apps.events.api.permissions import CanManageEventVenueFloorPlans
 
 
 # ---------------------------------------------------------------------------

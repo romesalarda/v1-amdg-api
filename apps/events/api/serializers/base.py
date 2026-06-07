@@ -2415,7 +2415,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
     def get_permission_template_name(self, obj):
         """Get the name of the permission template if one is set."""
         if obj.permission_template:
-            from apps.events.permission_templates import get_template
+            from apps.events.services.permission_templates import get_template
             template = get_template(obj.permission_template)
             return template['name'] if template else obj.permission_template
         return None
@@ -2481,7 +2481,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
     def validate_permission_template(self, value):
         """Validate that the permission template code is valid."""
         if value:
-            from apps.events.permission_templates import is_valid_template
+            from apps.events.services.permission_templates import is_valid_template
             if not is_valid_template(value):
                 raise serializers.ValidationError(
                     f"Invalid permission template code: {value}. "
@@ -2511,7 +2511,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
             if target_user:
                 # Validate user is in the organization (if event has one)
                 if event.organisation:
-                    from apps.events.utils.staff_helpers import validate_user_in_organization
+                    from apps.events.services.staff_service import validate_user_in_organization
                     try:
                         validate_user_in_organization(target_user, event)
                     except serializers.ValidationError as e:

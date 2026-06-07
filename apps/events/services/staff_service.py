@@ -9,7 +9,7 @@ from apps.events.models import (
     Event, EventStaff, EventPermission, EventPermissionAssignment,
     EventPermissionCategoryChoices
 )
-from apps.events.permission_templates import get_template, is_valid_template
+from apps.events.services.permission_templates import get_template, is_valid_template
 from apps.organisations.models import UserOrganisationMembership
 
 
