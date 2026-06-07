@@ -7,7 +7,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from typing import Dict, Any
 
-from apps.events.services import event_formatter_service
+from apps.events.services import formatter
 
 
 class BaseStatisticsSerializer(serializers.Serializer):
@@ -53,7 +53,7 @@ class EventStatusDistributionSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as donut chart with status colors."""
-        return event_formatter_service.format_status_distribution_chart(
+        return formatter.format_status_distribution_chart(
             data=data['distribution'],
             title='Event Status Distribution'
         )
@@ -74,7 +74,7 @@ class TypeDistributionSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as pie chart."""
-        return event_formatter_service.format_pie_chart(
+        return formatter.format_pie_chart(
             data=data['distribution'],
             title='Event Type Distribution'
         )
@@ -91,7 +91,7 @@ class OrganizationDistributionSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as horizontal bar chart."""
-        return event_formatter_service.format_bar_chart(
+        return formatter.format_bar_chart(
             data=data['distribution'],
             title='Events by Organization',
             x_axis_label='Number of Events',
@@ -116,7 +116,7 @@ class UpcomingEventsSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as timeline/calendar chart."""
-        return event_formatter_service.format_event_timeline_chart(
+        return formatter.format_event_timeline_chart(
             data=data['events'],
             title=f"Upcoming Events ({data['total_upcoming']})"
         )
@@ -158,7 +158,7 @@ class EventRevenueOverviewSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as revenue breakdown pie chart."""
-        return event_formatter_service.format_revenue_breakdown_chart(
+        return formatter.format_revenue_breakdown_chart(
             data=data['breakdown'],
             title='Revenue Overview',
             subtitle=f"Total: ${data['total_revenue']}"
@@ -178,7 +178,7 @@ class RevenueByEventSerializer(BaseStatisticsSerializer):
         """Format as stacked bar chart showing revenue breakdown."""
         show_breakdown = self.context.get('request').query_params.get('show_breakdown', 'false').lower() == 'true'
         
-        return event_formatter_service.format_revenue_bar_chart(
+        return formatter.format_revenue_bar_chart(
             data=data['events'],
             title='Revenue by Event',
             show_multiple=show_breakdown
@@ -198,7 +198,7 @@ class EventPaymentStatusDistributionSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as payment status pie chart."""
-        return event_formatter_service.format_payment_status_chart(
+        return formatter.format_payment_status_chart(
             data=data['distribution'],
             title='Payment Status Distribution'
         )
@@ -217,7 +217,7 @@ class CapacityUtilizationSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as horizontal bar chart with color coding."""
-        return event_formatter_service.format_capacity_utilization_chart(
+        return formatter.format_capacity_utilization_chart(
             data=data['events'],
             title='Capacity Utilization by Event'
         )
@@ -282,7 +282,7 @@ class EventRegistrationTrendsSerializer(BaseStatisticsSerializer):
                 {'label': item['period'], 'value': item['count']}
                 for item in data['trends']
             ]
-            return event_formatter_service.format_line_chart(
+            return formatter.format_line_chart(
                 data=chart_data,
                 title='Registration Trends',
                 x_axis_label='Period',
@@ -310,7 +310,7 @@ class ReviewStatisticsSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as rating distribution bar chart."""
-        return event_formatter_service.format_rating_distribution_chart(
+        return formatter.format_rating_distribution_chart(
             data=data['rating_distribution'],
             title='Review Rating Distribution',
             average_rating=data['average_rating']
@@ -334,7 +334,7 @@ class StaffAllocationSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as horizontal bar chart."""
-        return event_formatter_service.format_staff_allocation_chart(
+        return formatter.format_staff_allocation_chart(
             data=data['events'],
             title='Staff Allocation per Event'
         )
@@ -353,7 +353,7 @@ class BookingPackagePerformanceSerializer(BaseStatisticsSerializer):
     
     def format_for_echarts(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format as dual-axis chart (bookings + revenue)."""
-        return event_formatter_service.format_booking_package_chart(
+        return formatter.format_booking_package_chart(
             data=data['packages'],
             title='Booking Package Performance'
         )
@@ -378,7 +378,7 @@ class SponsorPackagePerformanceSerializer(BaseStatisticsSerializer):
             {'label': item.get('package_name', 'Unknown'), 'value': item.get('sponsors_count', 0)}
             for item in data.get('packages', [])
         ]
-        return event_formatter_service.format_bar_chart(
+        return formatter.format_bar_chart(
             data=distribution,
             title='Sponsorship Package Utilization',
             x_axis_label='Package',
@@ -433,13 +433,13 @@ class OverviewStatisticsSerializer(BaseStatisticsSerializer):
                     'total_reviews': data['total_reviews']
                 },
                 'charts': {
-                    'capacity_gauge': event_formatter_service.format_gauge_chart(
+                    'capacity_gauge': formatter.format_gauge_chart(
                         value=data['average_capacity_utilization'],
                         title='Average Capacity Utilization',
                         max_value=100,
                         unit='%'
                     ),
-                    'rating_gauge': event_formatter_service.format_gauge_chart(
+                    'rating_gauge': formatter.format_gauge_chart(
                         value=data.get('average_rating', 0) * 20,  # Convert to 0-100
                         title='Average Rating',
                         max_value=100,

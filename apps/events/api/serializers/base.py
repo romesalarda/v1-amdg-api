@@ -8,17 +8,17 @@ from drf_spectacular.types import OpenApiTypes
 
 from apps.events.models import (
     Event, EventType, EventSettings, EventStatusChoices,
-    EventAuthorization, EventAuthorizationStatusChoices,
-    EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices,
-    EventRole, EventRoleAssignment, EventRoleCategoryChoices,
+    EventAuthorization,
+    EventPermission, EventPermissionAssignment, 
+    EventRole, EventRoleAssignment, 
     EventStaff, EventStaffAvailability, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
     EventQuestionAnswer, EventQuestionAnswerChoice,
     EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
-    EventNotification, NotificationTypeChoices, NotificationPriorityChoices,
+    EventNotification, 
 )
-from apps.common.models import AvailabilityWindow, Resource
+from apps.common.models import Resource
 from apps.common.api.serializers import (
     AvailabilityWindowSerializer, 
     ResourceSerializer
@@ -2511,7 +2511,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
             if target_user:
                 # Validate user is in the organization (if event has one)
                 if event.organisation:
-                    from apps.events.services.staff_service import validate_user_in_organization
+                    from apps.events.services.staff import validate_user_in_organization
                     try:
                         validate_user_in_organization(target_user, event)
                     except serializers.ValidationError as e:

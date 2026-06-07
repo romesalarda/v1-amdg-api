@@ -23,7 +23,7 @@ from apps.common.email import send_templated_email
 from qr_code.qrcode.maker import make_qr_code_image
 from qr_code.qrcode.utils import QRCodeOptions
 
-from .models import Booking
+from ..models import Booking
 from apps.payments.models import Payment
 
 logger = logging.getLogger(__name__)

@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
-from apps.events.services import event_statistics_service
+from apps.events.services import statistics
 from apps.events.api.serializers.statistics import (
     EventStatusDistributionSerializer,
     TypeDistributionSerializer,
@@ -244,7 +244,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
     def overview(self, request):
         """Get comprehensive overview statistics."""
         filters = self._get_common_filters(request)
-        data = event_statistics_service.calculate_overview_statistics(**filters)
+        data = statistics.calculate_overview_statistics(**filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = OverviewStatisticsSerializer(data, context={'request': request})
@@ -280,7 +280,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
     def status_distribution(self, request):
         """Get event status distribution."""
         filters = self._get_common_filters(request)
-        data = event_statistics_service.calculate_status_distribution(**filters)
+        data = statistics.calculate_status_distribution(**filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = EventStatusDistributionSerializer(data, context={'request': request})
@@ -316,7 +316,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
     def type_distribution(self, request):
         """Get event type distribution."""
         filters = self._get_common_filters(request)
-        data = event_statistics_service.calculate_type_distribution(**filters)
+        data = statistics.calculate_type_distribution(**filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = TypeDistributionSerializer(data, context={'request': request})
@@ -341,7 +341,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         filters = self._get_common_filters(request)
         limit = int(request.query_params.get('limit', 10))
         
-        data = event_statistics_service.calculate_organization_distribution(limit=limit, **filters)
+        data = statistics.calculate_organization_distribution(limit=limit, **filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = OrganizationDistributionSerializer(data, context={'request': request})
@@ -387,7 +387,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         filters = self._get_common_filters(request)
         days_ahead = int(request.query_params.get('days_ahead', 30))
         
-        data = event_statistics_service.calculate_upcoming_events(days_ahead=days_ahead, **filters)
+        data = statistics.calculate_upcoming_events(days_ahead=days_ahead, **filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = UpcomingEventsSerializer(data, context={'request': request})
@@ -428,7 +428,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
     def revenue_overview(self, request):
         """Get revenue overview."""
         filters = self._get_common_filters(request)
-        data = event_statistics_service.calculate_revenue_overview(**filters)
+        data = statistics.calculate_revenue_overview(**filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = EventRevenueOverviewSerializer(data, context={'request': request})
@@ -457,7 +457,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         limit = int(request.query_params.get('limit', 15))
         sort_by = request.query_params.get('sort_by', 'total_revenue')
         
-        data = event_statistics_service.calculate_revenue_by_event(
+        data = statistics.calculate_revenue_by_event(
             limit=limit,
             sort_by=sort_by,
             **filters
@@ -484,7 +484,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
     def payment_status(self, request):
         """Get payment status distribution."""
         filters = self._get_common_filters(request)
-        data = event_statistics_service.calculate_payment_status_distribution(**filters)
+        data = statistics.calculate_payment_status_distribution(**filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = EventPaymentStatusDistributionSerializer(data, context={'request': request})
@@ -507,7 +507,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
     def capacity_utilization(self, request):
         """Get capacity utilization."""
         filters = self._get_common_filters(request)
-        data = event_statistics_service.calculate_capacity_utilization(**filters)
+        data = statistics.calculate_capacity_utilization(**filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = CapacityUtilizationSerializer(data, context={'request': request})
@@ -540,7 +540,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
             )
         cumulative = request.query_params.get('cumulative', 'false').lower() == 'true'
         
-        data = event_statistics_service.calculate_registration_trends(
+        data = statistics.calculate_registration_trends(
             event_id=filters.get('event_id'),
             period=period,
             cumulative=cumulative
@@ -568,7 +568,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         filters = self._get_common_filters(request)
         limit = int(request.query_params.get('limit', 10))
         
-        data = event_statistics_service.calculate_review_statistics(limit=limit, **filters)
+        data = statistics.calculate_review_statistics(limit=limit, **filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = ReviewStatisticsSerializer(data, context={'request': request})
@@ -592,7 +592,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         filters = self._get_common_filters(request)
         limit = int(request.query_params.get('limit', 10))
         
-        data = event_statistics_service.calculate_staff_allocation(limit=limit, **filters)
+        data = statistics.calculate_staff_allocation(limit=limit, **filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = StaffAllocationSerializer(data, context={'request': request})
@@ -616,7 +616,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         filters = self._get_common_filters(request)
         limit = int(request.query_params.get('limit', 10))
         
-        data = event_statistics_service.calculate_booking_package_performance(limit=limit, **filters)
+        data = statistics.calculate_booking_package_performance(limit=limit, **filters)
         data = self._add_filter_metadata(data, request)
         
         serializer = BookingPackagePerformanceSerializer(data, context={'request': request})
@@ -640,7 +640,7 @@ class EventStatisticsViewSet(viewsets.GenericViewSet):
         filters = self._get_common_filters(request)
         limit = int(request.query_params.get('limit', 10))
 
-        data = event_statistics_service.calculate_sponsorship_package_performance(limit=limit, **filters)
+        data = statistics.calculate_sponsorship_package_performance(limit=limit, **filters)
         data = self._add_filter_metadata(data, request)
 
         serializer = SponsorPackagePerformanceSerializer(data, context={'request': request})

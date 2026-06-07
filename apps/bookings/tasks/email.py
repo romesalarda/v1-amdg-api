@@ -8,7 +8,7 @@ import logging
 
 from celery import shared_task
 
-from apps.bookings.email_service import BookingEmailService
+from apps.bookings.services.email import BookingEmailService
 
 logger = logging.getLogger(__name__)
 
