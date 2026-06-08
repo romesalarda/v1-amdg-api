@@ -12,8 +12,7 @@ from apps.attendee.models import (
     MedicalCondition, AttendeeMedicalCondition,
     EmergencyContact, Consent, AttendeeConsent,
     EventAttendance, AttendeeOrganisation,
-    AttendeeActionChoices, AttendeeMessagePriority,
-    HumanRelationshipChoices
+    AttendeeActionChoices, AttendeeCheckIn, CheckInAction
 )
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.locations.models import (
@@ -511,7 +510,7 @@ class AttendeeModelTest(TestCase):
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.CANCELLED,
             attendee=attendee,
-            performed_by=attendee
+            performed_by=self.user
         )
         
         self.assertTrue(attendee.is_cancelled)
@@ -533,7 +532,7 @@ class AttendeeModelTest(TestCase):
         AttendeeAction.objects.create(
             action=AttendeeActionChoices.REGISTERED,
             attendee=attendee,
-            performed_by=attendee
+            performed_by=self.user
         )
         
         self.assertTrue(attendee.is_registered)
@@ -552,11 +551,11 @@ class AttendeeModelTest(TestCase):
         
         self.assertFalse(attendee.is_checked_in)
         
-        attendance = EventAttendance.objects.create(
-            event=self.event,
-            attendee=attendee
-        )
-        attendance.check_in(timezone.now(), self.user)
+
+        AttendeeCheckIn.objects.create(
+            attendee=attendee,
+            attendee_status_snapshot=AttendeeActionChoices.CHECKED_IN,
+            )
         
         # Refresh from db
         attendee.refresh_from_db()
@@ -638,7 +637,7 @@ class AttendeeModelTest(TestCase):
             date_of_birth=date(1990, 1, 1)
         )
         
-        attendee.mark_registered(performed_by=attendee) 
+        attendee.mark_registered(performed_by=self.user) 
         
         self.assertTrue(attendee.is_registered)
         action = AttendeeAction.objects.filter(
@@ -816,7 +815,7 @@ class AttendeeActionModelTest(TestCase):
         action = AttendeeAction.objects.create(
             action=AttendeeActionChoices.REGISTERED,
             attendee=self.attendee,
-            performed_by=self.attendee,
+            performed_by=self.user,
             notes='Test registration'
         )
         
@@ -829,14 +828,14 @@ class AttendeeActionModelTest(TestCase):
         action1 = AttendeeAction.objects.create(
             action=AttendeeActionChoices.REGISTERED,
             attendee=self.attendee,
-            performed_by=self.attendee
+            performed_by=self.user
         )
         
         # Wait a moment and create another action
         action2 = AttendeeAction.objects.create(
             action=AttendeeActionChoices.CHECKED_IN,
             attendee=self.attendee,
-            performed_by=self.attendee
+            performed_by=self.user
         )
         
         latest = self.attendee.latest_action()
