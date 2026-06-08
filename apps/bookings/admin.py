@@ -5,8 +5,11 @@ from apps.bookings.models import (
     BookingPackage, BookingPackageRule,
     TicketType, Ticket,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
-    PackageProduct
+    PackageProduct, Delegation, DelegationType, DelegationHead, DelegationHeadRoleChoices, DelegationHeadInvite
 )
+
+from django.utils import timezone
+from django.core.exceptions import ValidationError
 
 
 class BookingPackageRuleInline(admin.TabularInline):
@@ -357,3 +360,96 @@ class PackageProductAdmin(admin.ModelAdmin):
             'booking_package', 'product', 'booking_package__event', 'added_by'
         )
 
+class DelegationHeadInline(admin.TabularInline):
+    model = DelegationHead
+    extra = 0
+    fields = ('attendee', 'user', 'role', 'added_by', 'added_at')
+    readonly_fields = ('added_at',)
+    autocomplete_fields = ['attendee', 'user', 'added_by']
+
+@admin.register(Delegation)
+class DelegationAdmin(admin.ModelAdmin):
+    list_display = ('name', 'type', 'contact_email', 'contact_phone', 'is_location_based', 'created_at')
+    list_filter = ('type', 'created_at')
+    search_fields = ('name', 'description', 'contact_email', 'contact_phone')
+    readonly_fields = ('created_at', 'updated_at')
+    inlines = [DelegationHeadInline]
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'description', 'type')
+        }),
+        ('Contact Information', {
+            'fields': ('contact_email', 'contact_phone')
+        }),
+        ('Metadata', {
+            'fields': ('created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('created_by')
+    
+
+@admin.register(DelegationHead)
+class DelegationHeadAdmin(admin.ModelAdmin):
+    list_display = ('user', 'attendee', 'delegation', 'role', 'added_at')
+    list_filter = ('role', 'added_at', 'delegation__type')
+    search_fields = (
+        'user__username', 'user__email',
+        'attendee__first_name', 'attendee__last_name',
+        'delegation__name'
+    )
+    readonly_fields = ('added_at',)
+    autocomplete_fields = ['user', 'attendee', 'delegation', 'added_by']
+    
+    fieldsets = (
+        ('Delegation Head Information', {
+            'fields': ('user', 'attendee', 'delegation', 'role')
+        }),
+        ('Metadata', {
+            'fields': ('added_by', 'added_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'user', 'attendee', 'delegation', 'added_by'
+        )
+    
+@admin.register(DelegationHeadInvite)
+class DelegationHeadInviteAdmin(admin.ModelAdmin):
+    list_display = ('email', 'delegation', 'role', 'status', 'expires_at', 'invited_at')
+    list_filter = ('role', 'status', 'invited_at', 'expires_at')
+    search_fields = ('email', 'delegation__name')
+    readonly_fields = ('invite_id', 'invited_at', 'accepted_at')
+    autocomplete_fields = ['delegation', 'user', 'invited_by', 'accepted_by']
+    
+    fieldsets = (
+        ('Invitation Information', {
+            'fields': ('invite_id', 'delegation', 'email', 'role')
+        }),
+        ('Status & Expiry', {
+            'fields': ('status', 'expires_at')
+        }),
+        ('Metadata', {
+            'fields': ('invited_by', 'invited_at', 'accepted_by', 'accepted_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def status(self, obj):
+        if obj.accepted_at:
+            return format_html('<span style="color: green; font-weight: bold;">✓ Accepted</span>')
+        elif obj.expires_at and obj.expires_at < timezone.now():
+            return format_html('<span style="color: red;">✗ Expired</span>')
+        else:
+            return format_html('<span style="color: orange;">⏳ Pending</span>')
+    status.short_description = 'Status'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'delegation', 'user', 'invited_by', 'accepted_by'
+        )
