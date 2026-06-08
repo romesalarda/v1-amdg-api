@@ -21,6 +21,7 @@ Exports all statistics serializers for easy importing.
 # )
 from .statistics import *
 from .base import *
+from .forms import *
 
 
 # __all__ = [

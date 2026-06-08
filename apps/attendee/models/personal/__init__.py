@@ -6,6 +6,7 @@ from .emergency import EmergencyContact, HumanRelationshipChoices
 from .consent import AttendeeConsent, Consent
 from .attendance import EventAttendance
 from .oraganisation import AttendeeOrganisation
+from .notes import AttendeeNote
 
 __all__ = [
     'BaseAttendeePersonalInfoModel',
@@ -22,4 +23,5 @@ __all__ = [
     'EventAttendance',
     'AttendeeOrganisation',
     'HumanRelationshipChoices',
+    'AttendeeNote',
 ]

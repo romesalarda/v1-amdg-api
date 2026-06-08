@@ -26,7 +26,13 @@ from apps.events.api.viewsets import (
     EventVenueFloorPlanViewSet,
     EventVenueFloorPlanAnnotationViewSet,
     EventVenueFloorPlanAnnotationMetadataViewSet,
-    EventStatisticsViewSet
+    EventStatisticsViewSet,
+    EventFormViewSet,
+    EventFormQuestionViewSet,
+    EventFormQuestionOptionViewSet,
+    EventFormResponseViewSet,
+    EventFormResponseAnswerViewSet,
+    EventFormDelegateTokenViewSet,
 )
 
 app_name = 'events'
@@ -54,6 +60,12 @@ router.register(r'venue-contacts', EventVenueContactViewSet, basename='eventvenu
 router.register(r'venue-metadata', EventVenueMetadataViewSet, basename='eventvenuemetadata')
 router.register(r'statistics', EventStatisticsViewSet, basename='eventstatistics')
 router.register(r'notifications', EventNotificationViewSet, basename='eventnotification')
+router.register(r'forms', EventFormViewSet, basename='eventform')
+router.register(r'form-questions', EventFormQuestionViewSet, basename='eventformquestion')
+router.register(r'form-question-options', EventFormQuestionOptionViewSet, basename='eventformquestionoption')
+router.register(r'form-responses', EventFormResponseViewSet, basename='eventformresponse')
+router.register(r'form-response-answers', EventFormResponseAnswerViewSet, basename='eventformresponseanswer')
+router.register(r'form-delegate-tokens', EventFormDelegateTokenViewSet, basename='eventformdelegatetoken')
 
 urlpatterns = [
     path('event/', include(router.urls)),

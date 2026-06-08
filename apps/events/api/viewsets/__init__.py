@@ -11,3 +11,4 @@ from .statistics import *
 from .transport import *
 from .venue import *
 from .floorplan import *
+from .forms import *

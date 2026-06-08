@@ -1,5 +1,11 @@
 from .events import Event, EventType, EventStatusChoices, EventSettings
 from .permissions import EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices
+from .forms import (
+    EventForm, EventFormStatusChoices,
+    EventFormQuestion, EventFormQuestionTypeChoices, EventFormQuestionOption,
+    EventFormResponse, EventFormResponseAnswer, EventFormResponseAnswerChoice,
+    EventFormDelegateToken,
+)
 from .staff import EventStaff, EventStaffAvailability
 from .staff_invite import EventStaffInvite
 from .roles import EventRole, EventRoleAssignment, EventRoleCategoryChoices
@@ -44,4 +50,13 @@ __all__ = [
     'EventTransportOption',
     'EventTransportSchedule',
     'EventTransportStop',
+    'EventForm',
+    'EventFormStatusChoices',
+    'EventFormQuestion',
+    'EventFormQuestionTypeChoices',
+    'EventFormQuestionOption',
+    'EventFormResponse',
+    'EventFormResponseAnswer',
+    'EventFormResponseAnswerChoice',
+    'EventFormDelegateToken',
 ]

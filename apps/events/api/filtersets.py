@@ -820,3 +820,105 @@ class EventNotificationFilterSet(filters.FilterSet):
             'is_read', 'related_payment', 'related_order', 'related_booking',
             'created_after', 'created_before',
         ]
+
+
+# ── Event Forms Filtersets ────────────────────────────────────────────────────
+
+class EventFormFilterSet(filters.FilterSet):
+    event = filters.CharFilter(
+        field_name='event__url_safe_title',
+        help_text="Filter by event URL-safe title",
+    )
+    status = filters.MultipleChoiceFilter(
+        choices=[('draft', 'Draft'), ('published', 'Published'), ('closed', 'Closed')],
+        help_text="Filter by form status",
+    )
+    required = filters.BooleanFilter(help_text="Filter by required flag")
+    search = filters.CharFilter(method='filter_search', help_text="Search title and description")
+
+    class Meta:
+        from apps.events.models import EventForm
+        model = EventForm
+        fields = ['event', 'status', 'required', 'created_by']
+
+    def filter_search(self, queryset, name, value):
+        return queryset.filter(
+            Q(title__icontains=value) | Q(description__icontains=value)
+        )
+
+
+class EventFormQuestionFilterSet(filters.FilterSet):
+    form = filters.UUIDFilter(
+        field_name='form__id',
+        help_text="Filter by form ID (UUID)",
+    )
+    question_type = filters.MultipleChoiceFilter(
+        choices=[
+            ('short_answer', 'Short Answer'),
+            ('long_answer', 'Long Answer'),
+            ('upload', 'Upload'),
+            ('multiple_choice', 'Multiple Choice'),
+            ('single_choice', 'Single Choice'),
+            ('slider', 'Slider'),
+            ('date', 'Date'),
+            ('time', 'Time'),
+            ('email', 'Email'),
+            ('phone', 'Phone'),
+            ('rating', 'Rating'),
+        ],
+        help_text="Filter by question type",
+    )
+    required = filters.BooleanFilter(help_text="Filter by required flag")
+    search = filters.CharFilter(method='filter_search', help_text="Search title and body")
+
+    class Meta:
+        from apps.events.models import EventFormQuestion
+        model = EventFormQuestion
+        fields = ['form', 'question_type', 'required']
+
+    def filter_search(self, queryset, name, value):
+        return queryset.filter(
+            Q(question_title__icontains=value) | Q(question_body__icontains=value)
+        )
+
+
+class EventFormResponseFilterSet(filters.FilterSet):
+    form = filters.UUIDFilter(
+        field_name='form__id',
+        help_text="Filter by form ID (UUID)",
+    )
+    attendee = filters.NumberFilter(
+        field_name='attendee__id',
+        help_text="Filter by attendee integer PK",
+    )
+    attendee_id = filters.UUIDFilter(
+        field_name='attendee__attendee_id',
+        help_text="Filter by attendee UUID",
+    )
+    is_complete = filters.BooleanFilter(help_text="Filter by completion status")
+
+    class Meta:
+        from apps.events.models import EventFormResponse
+        model = EventFormResponse
+        fields = ['form', 'attendee', 'attendee_id', 'is_complete']
+
+
+class EventFormResponseAnswerFilterSet(filters.FilterSet):
+    response = filters.UUIDFilter(
+        field_name='response__id',
+        help_text="Filter by response ID (UUID)",
+    )
+    question = filters.UUIDFilter(
+        field_name='question__id',
+        help_text="Filter by question ID (UUID)",
+    )
+    answer_text = filters.CharFilter(
+        field_name='answer_text',
+        lookup_expr='icontains',
+        help_text="Search in answer text",
+    )
+
+    class Meta:
+        from apps.events.models import EventFormResponseAnswer
+        model = EventFormResponseAnswer
+        fields = ['response', 'question', 'answer_text']

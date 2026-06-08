@@ -6,7 +6,9 @@ from .models import (
     EventRoleAssignment, EventStaff, EventStaffAvailability, EventStaffInvite,
     EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice,
     EventSettings, EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
-    EventNotification, EventTransportOption, EventTransportSchedule, EventTransportStop
+    EventNotification, EventTransportOption, EventTransportSchedule, EventTransportStop,
+    EventForm, EventFormQuestion, EventFormQuestionOption,
+    EventFormResponse, EventFormResponseAnswer, EventFormDelegateToken,
 )
 
 
@@ -629,3 +631,118 @@ class EventTransportStopAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+# ── Event Forms ───────────────────────────────────────────────────────────────
+
+class EventFormQuestionOptionInline(admin.TabularInline):
+    model = EventFormQuestionOption
+    extra = 1
+    fields = ('option_text', 'order')
+    ordering = ('order',)
+
+
+class EventFormQuestionInline(admin.StackedInline):
+    model = EventFormQuestion
+    extra = 0
+    fields = ('question_title', 'question_type', 'required', 'order', 'min_value', 'max_value')
+    ordering = ('order',)
+    show_change_link = True
+
+
+@admin.register(EventForm)
+class EventFormAdmin(admin.ModelAdmin):
+    list_display = ('title', 'event', 'status', 'required', 'allow_response_editing', 'created_by', 'created_at')
+    list_filter = ('status', 'required', 'created_at')
+    search_fields = ('title', 'event__title', 'description')
+    readonly_fields = ('id', 'created_at', 'updated_at')
+    autocomplete_fields = ('event',)
+    inlines = [EventFormQuestionInline]
+
+    fieldsets = (
+        ('Form Details', {
+            'fields': ('id', 'event', 'title', 'description')
+        }),
+        ('Settings', {
+            'fields': ('status', 'required', 'allow_response_editing')
+        }),
+        ('Metadata', {
+            'fields': ('created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    actions = ['publish_forms', 'close_forms']
+
+    @admin.action(description='Publish selected forms')
+    def publish_forms(self, request, queryset):
+        count = queryset.exclude(status='closed').update(status='published')
+        self.message_user(request, f'{count} form(s) published.')
+
+    @admin.action(description='Close selected forms')
+    def close_forms(self, request, queryset):
+        count = queryset.update(status='closed')
+        self.message_user(request, f'{count} form(s) closed.')
+
+
+@admin.register(EventFormQuestion)
+class EventFormQuestionAdmin(admin.ModelAdmin):
+    list_display = ('question_title', 'form', 'question_type', 'required', 'order')
+    list_filter = ('question_type', 'required')
+    search_fields = ('question_title', 'question_body', 'form__title')
+    readonly_fields = ('created_at', 'updated_at')
+    inlines = [EventFormQuestionOptionInline]
+
+    fieldsets = (
+        ('Question', {
+            'fields': ('form', 'question_title', 'question_body', 'question_type', 'required', 'order')
+        }),
+        ('Range Settings', {
+            'fields': ('min_value', 'max_value'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(EventFormQuestionOption)
+class EventFormQuestionOptionAdmin(admin.ModelAdmin):
+    list_display = ('option_text', 'question', 'order')
+    search_fields = ('option_text', 'question__question_title')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+class EventFormResponseAnswerInline(admin.TabularInline):
+    model = EventFormResponseAnswer
+    extra = 0
+    fields = ('question', 'answer_text', 'answer_file', 'submitted_at')
+    readonly_fields = ('submitted_at',)
+    show_change_link = True
+
+
+@admin.register(EventFormResponse)
+class EventFormResponseAdmin(admin.ModelAdmin):
+    list_display = ('id', 'form', 'attendee', 'is_complete', 'submitted_at')
+    list_filter = ('is_complete', 'submitted_at')
+    search_fields = ('form__title', 'attendee__email')
+    readonly_fields = ('id', 'submitted_at', 'updated_at')
+    inlines = [EventFormResponseAnswerInline]
+
+
+@admin.register(EventFormResponseAnswer)
+class EventFormResponseAnswerAdmin(admin.ModelAdmin):
+    list_display = ('id', 'question', 'response', 'submitted_at')
+    search_fields = ('question__question_title', 'answer_text')
+    readonly_fields = ('id', 'submitted_at', 'updated_at')
+
+
+@admin.register(EventFormDelegateToken)
+class EventFormDelegateTokenAdmin(admin.ModelAdmin):
+    list_display = ('token', 'response', 'is_used', 'expires_at', 'created_by', 'created_at')
+    list_filter = ('is_used', 'created_at')
+    search_fields = ('token', 'response__form__title')
+    readonly_fields = ('id', 'token', 'created_at')
+
