@@ -4,7 +4,8 @@ Tests all methods, validation, edge cases, and critical functionality.
 """
 from django.test import TestCase
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -23,6 +24,8 @@ from apps.payments.models import Discount, DiscountType, DiscountRule, DiscountR
 from apps.payments.services.evaluator import DiscountContext
 from apps.bookings.models import Booking
 from apps.organisations.models import Organisation
+
+ValidationError = (DjangoValidationError, DRFValidationError)
 
 User = get_user_model()
 
@@ -1246,7 +1249,7 @@ class ProductVariantPurchaseTest(TestCase):
         with self.assertRaises(ValidationError) as context:
             self.variant.can_attendee_purchase_quantity(self.attendee, 5, raise_exception=True)
         
-        self.assertIn('exceed maximum', str(context.exception).lower())
+        self.assertIn('purchase quantity exceeds the maximum allowed per attendee', str(context.exception).lower())
         
     def test_cannot_purchase_quantity_exceeding_stock(self):
         """Test that quantity cannot exceed available stock"""
