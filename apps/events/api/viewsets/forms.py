@@ -422,6 +422,8 @@ class EventFormResponseViewSet(viewsets.ModelViewSet):
     ordering = ['-submitted_at']
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return EventFormResponse.objects.none()
         qs = EventFormResponse.objects.select_related(
             'form__event', 'attendee'
         ).prefetch_related('answers__question', 'answers__selected_options__option').all()
@@ -504,6 +506,8 @@ class EventFormResponseAnswerViewSet(viewsets.ModelViewSet):
     ordering = ['-submitted_at']
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return EventFormResponseAnswer.objects.none()
         qs = EventFormResponseAnswer.objects.select_related(
             'response__form__event', 'response__attendee', 'question'
         ).prefetch_related('selected_options__option').all()
@@ -549,6 +553,8 @@ class EventFormDelegateTokenViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return EventFormDelegateToken.objects.none()
         qs = EventFormDelegateToken.objects.select_related(
             'response__form__event', 'response__attendee', 'created_by'
         ).all()

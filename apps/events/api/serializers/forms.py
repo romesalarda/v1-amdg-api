@@ -302,7 +302,6 @@ class EventFormResponseAnswerSerializer(serializers.ModelSerializer):
         required=False,
     )
     selected_options = EventFormResponseAnswerChoiceSerializer(
-        source='selected_options',
         many=True,
         read_only=True,
     )

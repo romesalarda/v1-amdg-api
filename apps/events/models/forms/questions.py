@@ -16,8 +16,6 @@ class EventFormQuestionTypeChoices(models.TextChoices):
     RATING = 'rating', 'Rating'
 
     # Types that support min/max
-    _RANGE_TYPES = None  # see class method below
-
     @classmethod
     def range_types(cls):
         return {cls.SLIDER, cls.RATING}
