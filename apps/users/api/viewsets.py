@@ -36,7 +36,7 @@ from apps.users.tasks import (
     send_password_changed_email,
     send_password_reset_confirmation_email,
 )
-from apps.users.tokens import email_verification_token
+from apps.users.services.tokens import email_verification_token
 
 from drf_spectacular.utils import (
     extend_schema,

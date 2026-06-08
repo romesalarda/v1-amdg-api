@@ -11,7 +11,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from typing import Dict, Any
 
-from apps.attendee import formatters
+from apps.attendee.services import formatters
 
 # IMPORTANT: This module contains product-specific statistics serializers.
 # The ProductOverviewStatisticsSerializer is deliberately named to avoid

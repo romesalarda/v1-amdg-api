@@ -43,7 +43,7 @@ from apps.events.models import Event, EventType, EventStatusChoices, EventStaff
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.bookings.models import Booking
 from apps.common.models.resource import Resource, ResourceTypeChoices
-from apps.payments.evaluator import DiscountContext
+from apps.payments.services.evaluator import DiscountContext
 from apps.organisations.models import Organisation
 
 User = get_user_model()

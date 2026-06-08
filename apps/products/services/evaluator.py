@@ -1,5 +1,10 @@
 from apps.common.evaluator import BaseEvaluator, BaseContext, rules_apply
 
+'''
+WARNING: This module is currently not in use. It is intended for future implementation of product-related rules and evaluations.
+
+Pending deprecation
+'''
 
 class ProductContext(BaseContext): #not in use
     '''

@@ -8,7 +8,7 @@ import logging
 
 from celery import shared_task
 
-from apps.products.services.email_service import OrderEmailService
+from apps.products.services.email import OrderEmailService
 
 logger = logging.getLogger(__name__)
 

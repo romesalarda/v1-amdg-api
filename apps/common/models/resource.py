@@ -8,7 +8,7 @@ from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
 from imagekit.models import ImageSpecField
-from apps.common.image_specs import ThumbnailSpec, MediumSpec, LargeSpec
+from apps.common.services.image_specs import ThumbnailSpec, MediumSpec, LargeSpec
 from PIL import Image as PilImage
 
 User = get_user_model()

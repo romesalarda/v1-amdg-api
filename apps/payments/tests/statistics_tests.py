@@ -26,7 +26,7 @@ from apps.payments.models.methods import PaymentMethod, PaymentMethodTypeChoices
 from apps.payments.models.discounts import Discount, DiscountType, DiscountRule, DiscountRuleTypeChoices
 from apps.payments.models.refunds import RefundRequest
 from apps.payments.models.donations import Donation
-from apps.payments import statistics
+from apps.payments.services import statistics
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.organisations.models import Organisation
 from apps.attendee.models import Attendee, AttendeeRelationship

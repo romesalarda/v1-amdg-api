@@ -18,7 +18,7 @@ import logging
 
 from django.conf import settings
 
-from apps.common.email import send_templated_email
+from apps.common.services.email import send_templated_email
 from apps.payments.models import Payment
 from apps.products.models import Order
 

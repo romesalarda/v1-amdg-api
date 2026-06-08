@@ -12,7 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.organisations import statistics
+from apps.organisations.services import statistics
 from apps.organisations.api.serializers.statistics import (
 	EventPerformanceSerializer,
 	EventsOnMapSerializer,

@@ -19,7 +19,7 @@ import logging
 
 from django.conf import settings
 
-from apps.common.email import send_templated_email
+from apps.common.services.email import send_templated_email
 from qr_code.qrcode.maker import make_qr_code_image
 from qr_code.qrcode.utils import QRCodeOptions
 

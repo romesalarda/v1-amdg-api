@@ -25,7 +25,7 @@ from apps.organisations.models import (
     OrganisationControl,
     UserOrganisationMembership,
 )
-from apps.organisations.statistics import calculate_event_performance_statistics
+from apps.organisations.services.statistics import calculate_event_performance_statistics
 from apps.payments.models import Payment, PaymentStatusChoices
 from apps.payments.models.donations import Donation
 

@@ -619,7 +619,7 @@ class DiscountEvaluatorNullSafetyTests(DiscountCheckoutTestCase):
 
     def test_none_code_does_not_match_code_rule(self):
         """Attendee.pricing_context() with no code must not match a CODE_MATCHES rule."""
-        from apps.payments.evaluator import DiscountContext, DiscountRuleEvaluator
+        from apps.payments.services.evaluator import DiscountContext, DiscountRuleEvaluator
         from apps.payments.models.discounts import DiscountRule as DRule, DiscountRuleTypeChoices as DRT
 
         _, attendee = self._create_attendee_in_booking()
@@ -635,7 +635,7 @@ class DiscountEvaluatorNullSafetyTests(DiscountCheckoutTestCase):
 
     def test_matching_code_evaluates_true(self):
         """pricing_context with the correct code should match a CODE_MATCHES rule."""
-        from apps.payments.evaluator import DiscountRuleEvaluator
+        from apps.payments.services.evaluator import DiscountRuleEvaluator
         from apps.payments.models.discounts import DiscountRuleTypeChoices as DRT
 
         _, attendee = self._create_attendee_in_booking()
@@ -650,7 +650,7 @@ class DiscountEvaluatorNullSafetyTests(DiscountCheckoutTestCase):
 
     def test_location_none_does_not_crash(self):
         """location_matches with None location in metadata returns False, not AttributeError."""
-        from apps.payments.evaluator import DiscountContext, DiscountRuleEvaluator
+        from apps.payments.services.evaluator import DiscountContext, DiscountRuleEvaluator
         from apps.payments.models.discounts import DiscountRuleTypeChoices as DRT
 
         context = DiscountContext(

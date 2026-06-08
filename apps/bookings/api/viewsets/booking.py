@@ -575,7 +575,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         def calculate_total_and_validate(intent_obj, selections, code=None):
             from apps.payments.models import DiscountType
-            from apps.payments.evaluator import discount_applies
+            from apps.payments.services.evaluator import discount_applies
 
             total_amount = Money(0, 'GBP')
             applied_discounts_snapshot = []
@@ -1312,7 +1312,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         import logging
         from django.utils import timezone
         from apps.payments.models import DiscountType
-        from apps.payments.evaluator import discount_applies
+        from apps.payments.services.evaluator import discount_applies
 
         logger = logging.getLogger(__name__)
         serializer = CheckoutPreviewSerializer(data=request.data, context={'request': request})

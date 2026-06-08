@@ -915,7 +915,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='eligibility-preview')
     def eligibility_preview(self, request):
         from apps.attendee.models import Attendee
-        from apps.payments.evaluator import DiscountRuleEvaluator
+        from apps.payments.services.evaluator import DiscountRuleEvaluator
         from django.contrib.contenttypes.models import ContentType
         from apps.bookings.models import BookingPackage, PackageProduct
         from apps.products.models import Product, ProductVariant

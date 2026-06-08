@@ -12,7 +12,7 @@ from datetime import date
 import uuid
 
 from apps.locations.models import AreaLocation
-from apps.payments.evaluator import DiscountContext
+from apps.payments.services.evaluator import DiscountContext
 
 from apps.common.models.verification import VerificationStatus
 from apps.common.evaluator import BaseEvaluator, BaseContext, rules_apply

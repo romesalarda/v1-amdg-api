@@ -66,7 +66,7 @@ from .permissions import (
     IsOrderOwnerOrAdministrative, IsReadOnly,
     CanManageProducts, CanManageCategories,
 )
-from apps.payments.evaluator import discount_applies as _discount_applies
+from apps.payments.services.evaluator import discount_applies as _discount_applies
 from apps.payments.models.discounts import DiscountType as _DiscountType
 from djmoney.money import Money
 
@@ -3394,7 +3394,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='preview-pricing')
     def preview_pricing(self, request):
         from apps.attendee.models import Attendee
-        from apps.payments.evaluator import discount_applies
+        from apps.payments.services.evaluator import discount_applies
         from apps.payments.models.discounts import DiscountType
 
         attendee_id = request.data.get('attendee_id')

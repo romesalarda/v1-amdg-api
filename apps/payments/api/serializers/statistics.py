@@ -8,7 +8,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from typing import Dict, Any
 
-from apps.attendee import formatters
+from apps.attendee.services import formatters
 
 
 class BasePaymentStatisticsSerializer(serializers.Serializer):

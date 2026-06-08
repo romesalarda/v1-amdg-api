@@ -5,7 +5,7 @@ from typing import Any
 
 from rest_framework import serializers
 
-from apps.attendee import formatters
+from apps.attendee.services import formatters
 
 
 class BaseOrganisationStatisticsSerializer(serializers.Serializer):

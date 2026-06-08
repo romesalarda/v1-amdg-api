@@ -12,7 +12,7 @@ from djmoney.money import Money
 
 from apps.bookings.models import BookingPackage, BookingPackageRule, PackageRuleTypeChoices, TicketType, TicketScopeChoices
 from apps.payments.models import Discount, DiscountType, DiscountRule, DiscountRuleTypeChoices
-from apps.payments.evaluator import DiscountContext
+from apps.payments.services.evaluator import DiscountContext
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.attendee.models import Attendee, AttendeeRelationship
 from apps.organisations.models import Organisation

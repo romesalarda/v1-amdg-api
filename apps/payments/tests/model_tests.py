@@ -12,7 +12,7 @@ from apps.payments.models import (
     Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices,
     CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence
 )
-from apps.payments.evaluator import DiscountRuleEvaluator, DiscountContext, discount_applies
+from apps.payments.services.evaluator import DiscountRuleEvaluator, DiscountContext, discount_applies
 from apps.users.models import CommunityUser
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.organisations.models import Organisation

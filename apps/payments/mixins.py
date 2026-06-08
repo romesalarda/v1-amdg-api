@@ -231,7 +231,7 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         :return: Money representing total discounts applied
         '''
         from apps.payments.models.discounts import DiscountType
-        from apps.payments.evaluator import discount_applies
+        from apps.payments.services.evaluator import discount_applies
         from djmoney.money import Money
         
         percentage_total = Decimal('0.00')

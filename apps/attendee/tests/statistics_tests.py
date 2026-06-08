@@ -24,7 +24,7 @@ from apps.attendee.models import (
     EmergencyContact, Consent, AttendeeConsent,
     EventAttendance
 )
-from apps.attendee import statistics
+from apps.attendee.services import statistics
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.organisations.models import Organisation
 from apps.locations.models import (

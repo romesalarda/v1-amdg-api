@@ -20,7 +20,7 @@ from apps.common.models.resource import Resource, ResourceTypeChoices
 from apps.common.models.availability import AvailabilityWindow, AvailabilityTypeChoices
 from apps.common.models.rules import AccessRule, BaseEventRuleChoices
 from apps.payments.models import Discount, DiscountType, DiscountRule, DiscountRuleTypeChoices
-from apps.payments.evaluator import DiscountContext
+from apps.payments.services.evaluator import DiscountContext
 from apps.bookings.models import Booking
 from apps.organisations.models import Organisation
 

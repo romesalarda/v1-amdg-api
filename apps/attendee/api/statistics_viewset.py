@@ -18,16 +18,12 @@ from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
     OpenApiParameter,
-    OpenApiResponse,
     OpenApiExample,
 )
 from drf_spectacular.types import OpenApiTypes
 from django.utils import timezone
-from datetime import datetime, date
-from django.shortcuts import get_object_or_404
-from urllib3 import request
-
-from apps.attendee import statistics
+from datetime import datetime
+from apps.attendee.services import statistics
 from apps.attendee.models import Attendee
 from apps.attendee.api.serializers.statistics import (
     AgeDistributionSerializer,
@@ -49,8 +45,6 @@ from apps.attendee.api.serializers.statistics import (
 )
 
 from apps.utils.querying import get_event_or_url_safe_title
-import uuid
-
 
 # ============================================================================
 # COMMON PARAMETERS FOR DOCUMENTATION

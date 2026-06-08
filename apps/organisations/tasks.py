@@ -8,7 +8,7 @@ import logging
 
 from celery import shared_task
 
-from apps.organisations.email_service import SponsorshipEmailService
+from apps.organisations.services.email import SponsorshipEmailService
 
 logger = logging.getLogger(__name__)
 

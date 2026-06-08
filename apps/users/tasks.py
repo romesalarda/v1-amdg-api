@@ -8,7 +8,7 @@ import logging
 
 from celery import shared_task
 
-from apps.users.email_service import UserEmailService
+from apps.users.services.email import UserEmailService
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ def send_password_reset_email(self, user_id: int, reset_url: str) -> str:
     Returns:
         A short status string for Celery result inspection.
     """
-    from apps.common.email import send_templated_email
+    from apps.common.services.email import send_templated_email
     from django.contrib.auth import get_user_model
     from django.conf import settings
 

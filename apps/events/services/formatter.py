@@ -10,7 +10,7 @@ event-specific formatters.
 from typing import Dict, List, Any, Optional
 
 # Import base formatters from attendee app to reuse
-from apps.attendee.formatters import (
+from apps.attendee.services.formatters import (
     format_pie_chart,
     format_donut_chart,
     format_bar_chart,

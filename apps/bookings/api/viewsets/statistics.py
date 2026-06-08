@@ -55,7 +55,7 @@ from apps.bookings.api.serializers.statistics import (
     BookingRevenueBreakdownSerializer,
     BookingStatisticsOverviewSerializer,
 )
-from apps.attendee import formatters
+from apps.attendee.services import formatters
 
 
 # ============================================================================

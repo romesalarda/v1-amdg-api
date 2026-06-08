@@ -575,7 +575,6 @@ class EventVenueMetadataAdmin(admin.ModelAdmin):
 @admin.register(EventTransportOption)
 class EventTransportOptionAdmin(admin.ModelAdmin):
     list_display = ('transport_type', 'event', 'is_provided_by_event', 'contact_info', 'created_at', 'base_amount',)
-    list_filter = ('transport_type', 'is_provided_by_event', 'created_at'),
     search_fields = ('event__title', 'description', 'contact_info')
     readonly_fields = ('created_at', 'updated_at')
     autocomplete_fields = ('event',)

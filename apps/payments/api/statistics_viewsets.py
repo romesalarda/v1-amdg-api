@@ -32,7 +32,7 @@ from django.utils import timezone
 from datetime import datetime, date
 import uuid
 
-from apps.payments import statistics
+from apps.payments.services import statistics
 from apps.payments.models import Payment
 from apps.payments.api.serializers.statistics import (
     PaymentStatusDistributionSerializer,

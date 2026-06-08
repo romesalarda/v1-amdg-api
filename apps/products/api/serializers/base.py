@@ -37,7 +37,7 @@ from apps.products.models import (
 from apps.events.models import Event
 from apps.common.models import Resource
 from apps.common.api.serializers import AvailabilityWindowSerializer
-from apps.payments.evaluator import discount_applies
+from apps.payments.services.evaluator import discount_applies
 from apps.payments.models import DiscountType, RefundAssociation
 from apps.payments.api.serializers import StockAuditLogSerializer
 

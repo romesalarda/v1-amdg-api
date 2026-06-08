@@ -8,7 +8,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from typing import Dict, Any
 
-from apps.attendee import formatters
+from apps.attendee.services import formatters
 
 
 class BaseStatisticsSerializer(serializers.Serializer):
@@ -507,7 +507,7 @@ class CheckInDayStatsSerializer(BaseStatisticsSerializer):
         days = instance.get('days', [])
         if not days:
             return {}
-        from apps.attendee import formatters
+        from apps.attendee.services import formatters
         bar_data = [
             {
                 'label': f"Day {d['event_day']}" + (f" ({d['date']})" if d.get('date') else ''),
