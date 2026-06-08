@@ -17,7 +17,7 @@ while action paths use hyphens (increment-stock) for URL readability.
 Author: AMDG Platform Team
 Version: 1.0.0
 """
-from django.urls import path, include, re_path
+from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from apps.products.api.viewsets import (
@@ -27,8 +27,8 @@ from apps.products.api.viewsets import (
     ProductVariantViewSet,
     OrderViewSet,
     OrderItemViewSet,
+    ProductStatisticsViewSet
 )
-from apps.products.api.statistics_viewsets import ProductStatisticsViewSet
 
 app_name = 'products'
 
