@@ -6,7 +6,7 @@ from .models import (
     EventRoleAssignment, EventStaff, EventStaffAvailability, EventStaffInvite,
     EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice,
     EventSettings, EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
-    EventNotification
+    EventNotification, EventTransportOption, EventTransportSchedule, EventTransportStop
 )
 
 
@@ -572,3 +572,61 @@ class EventVenueMetadataAdmin(admin.ModelAdmin):
     readonly_fields = ('added_at', 'updated_at')
 
     
+@admin.register(EventTransportOption)
+class EventTransportOptionAdmin(admin.ModelAdmin):
+    list_display = ('transport_type', 'event', 'is_provided_by_event', 'contact_info', 'created_at', 'base_amount',)
+    list_filter = ('transport_type', 'is_provided_by_event', 'created_at'),
+    search_fields = ('event__title', 'description', 'contact_info')
+    readonly_fields = ('created_at', 'updated_at')
+    autocomplete_fields = ('event',)
+    
+    fieldsets = (
+        ('Transport Information', {
+            'fields': ('transport_type', 'event', 'description', 'is_provided_by_event', 'contact_info')
+        }),
+        ('Payment Information', {
+            'fields': ('base_amount','percentage_modifier', 'original_amount'),
+            'description': 'Any discounts associated with this transport option will be applied to the total price of the event booking when this transport option is selected.'
+        }),
+
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)    
+        }),
+    )
+
+@admin.register(EventTransportSchedule)
+class EventTransportScheduleAdmin(admin.ModelAdmin):
+    list_display = ('transport_option', 'start_datetime', 'end_datetime', 'frequency_minutes')
+    list_filter = ('transport_option__transport_type', 'start_datetime')
+    search_fields = ('transport_option__event__title', 'transport_option__description')
+    readonly_fields = ('created_at', 'updated_at')
+    autocomplete_fields = ('transport_option',)
+    
+    fieldsets = (
+        ('Schedule Information', {
+            'fields': ('transport_option', 'start_datetime', 'end_datetime', 'frequency_minutes')
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+@admin.register(EventTransportStop)
+class EventTransportStopAdmin(admin.ModelAdmin):
+    list_display = ('transport_option', 'stop_name', 'arrival_datetime', 'departure_datetime')
+    list_filter = ('transport_option__transport_type', 'arrival_datetime')
+    search_fields = ('transport_option__event__title', 'stop_name')
+    readonly_fields = ('created_at', 'updated_at')
+    autocomplete_fields = ('transport_option',)
+    
+    fieldsets = (
+        ('Stop Information', {
+            'fields': ('transport_option', 'stop_name', 'arrival_datetime', 'departure_datetime')
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )

@@ -5,7 +5,9 @@ from apps.bookings.models import (
     BookingPackage, BookingPackageRule,
     TicketType, Ticket,
     EventAlternativeSigninIdentifier, AttendeeAlternativeSigninIdentifier,
-    PackageProduct, Delegation, DelegationType, DelegationHead, DelegationHeadRoleChoices, DelegationHeadInvite
+    PackageProduct, Delegation, DelegationHead, 
+    DelegationHeadInvite,
+    TransportBooking,
 )
 
 from django.utils import timezone
@@ -452,4 +454,40 @@ class DelegationHeadInviteAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
             'delegation', 'user', 'invited_by', 'accepted_by'
+        )
+    
+@admin.register(TransportBooking)
+class TransportBookingAdmin(admin.ModelAdmin):
+    list_display = ('booking_reference', 'transport_option', 'attendee', 'is_valid', 'is_cancelled', 'booked_at')
+    list_filter = ('is_valid', 'is_cancelled', 'booked_at', 'transport_option__event')
+    search_fields = (
+        'booking_reference',
+        'transport_option__name',
+        'transport_option__event__title',
+        'attendee__first_name',
+        'attendee__last_name',
+        'attendee__attendee_display_id'
+    )
+    readonly_fields = ('transport_booking_id', 'booking_reference', 'booked_at')
+    autocomplete_fields = ['transport_option', 'attendee', 'made_by']
+    
+    fieldsets = (
+        ('Transport Booking Information', {
+            'fields': ('transport_booking_id', 'transport_option', 'booking_reference', 'attendee')
+        }),
+        ('Status & Validity', {
+            'fields': ('is_valid', 'is_cancelled')
+        }),
+        ('Additional Information', {
+            'fields': ('additional_info',)
+        }),
+        ('Metadata', {
+            'fields': ('made_by', 'booked_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'transport_option__event', 'attendee', 'made_by'
         )

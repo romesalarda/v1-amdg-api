@@ -22,10 +22,60 @@ class CountryLocationAdmin(admin.ModelAdmin):
         }),
     )
 
-admin.site.register(FloorPlan)
-admin.site.register(FloorPlanAnnotation)
-admin.site.register(FloorPlanAnnotationMetadata)
 
+
+@admin.register(FloorPlan)
+class FloorPlanAdmin(admin.ModelAdmin):
+    list_display = ('name', 'venue', 'event_venue', 'added_at', 'added_by')
+    list_filter = ('added_at',)
+    search_fields = ('name', 'description', 'venue__poi__name')
+    readonly_fields = ('added_at', 'updated_at')
+    
+    fieldsets = (
+        ('Floor Plan Information', {
+            'fields': ('venue', 'name', 'description', 'event_venue', 'level', 'level_label', 
+                       'original_width', 'original_height',
+                       )
+        }),
+        ('Metadata', {
+            'fields': ('added_by', 'added_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+@admin.register(FloorPlanAnnotation)
+class FloorPlanAnnotationAdmin(admin.ModelAdmin):
+    list_display = ('floor_plan', 'room_venue', 'added_at', 'added_by')
+    list_filter = ('room_venue', 'added_at')
+    search_fields = ('description', 'floor_plan__name')
+    readonly_fields = ('added_at', 'updated_at')
+    
+    fieldsets = (
+        ('Annotation Information', {
+            'fields': ('floor_plan', 'annotation_type', 'description', 'coordinates', 'room_venue', 'vertices', 'colour')
+        }),
+        ('Metadata', {
+            'fields': ('added_by', 'added_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+@admin.register(FloorPlanAnnotationMetadata)
+class FloorPlanAnnotationMetadataAdmin(admin.ModelAdmin):
+    list_display = ('annotation', 'label', 'value', 'added_at', 'added_by')
+    list_filter = ('label', 'added_at')
+    search_fields = ('label', 'value', 'annotation__description')
+    readonly_fields = ('added_at',)
+    
+    fieldsets = (
+        ('Annotation Metadata Information', {
+            'fields': ('annotation', 'label', 'value')
+        }),
+        ('Metadata', {
+            'fields': ('added_by', 'added_at', ),
+            'classes': ('collapse',)
+        }),
+    )
 
 @admin.register(ClusterLocation)
 class ClusterLocationAdmin(admin.ModelAdmin):
