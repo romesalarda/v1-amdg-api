@@ -24,18 +24,15 @@ from apps.payments.api.viewsets import (
     BankTransferEvidenceViewSet,
     DebitExpenseViewSet,
     BudgetProposalViewSet,
-)
-from apps.payments.api.statistics_viewsets import PaymentStatisticsViewSet
-from apps.payments.api.stripe_views import (
     StripeConfigView,
     StripeConnectStatusView,
     StripeConnectOnboardingView,
     CreatePaymentIntentView,
     StripeConfirmPaymentView,
+    PaymentStatisticsViewSet,
+    StripeConnectedAccountViewSet,
     stripe_webhook_view,
 )
-from apps.payments.api.stripe_account_viewsets import StripeConnectedAccountViewSet
-
 app_name = 'payments'
 
 # Initialize router

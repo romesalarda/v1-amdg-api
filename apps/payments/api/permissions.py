@@ -699,3 +699,47 @@ class IsBudgetProposalAccessible(permissions.BasePermission):
             return True
 
         return _user_has_finance_role(request.user, event)
+
+def user_has_finance_role(user, event) -> bool:
+    '''
+    return True if the user has a finance-related role for the event, False otherwise.
+    '''
+    if not user or not getattr(user, 'is_authenticated', False) or not event:
+        return False
+
+    return EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__name__icontains='finance'
+    ).exists() or EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__code__iexact='FIN'
+    ).exists()
+
+
+def user_can_manage_credits(user, event) -> bool:
+    '''
+    returns True if the user can manage credits for the event, which is true if they are a superuser, staff, or have a finance-related role for the event.
+    '''
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+
+    if user.is_superuser or user.is_staff:
+        return True
+
+    if EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+    ).exists():
+        return True
+
+    return user_has_finance_role(user, event)
+
+
+def user_can_manage_bank_evidence(user, event) -> bool:
+    ''' 
+    returns True if the user can manage bank transfer evidence for the event, which is true if they are a superuser, staff, or have a finance-related role for the event.
+    '''
+    return user_can_manage_credits(user, event)
