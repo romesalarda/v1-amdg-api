@@ -25,8 +25,8 @@ from apps.attendee.api.viewsets import (
     EventAttendanceViewSet,
     AttendeeOrganisationViewSet,
     CheckInViewSet,
+    AttendeeStatisticsViewSet
 )
-from apps.attendee.api.statistics_viewset import AttendeeStatisticsViewSet
 
 app_name = 'attendee'
 

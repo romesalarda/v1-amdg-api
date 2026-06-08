@@ -1656,8 +1656,6 @@ class AttendeeOrganisationViewSet(NestedAttendeeViewSetMixin, viewsets.ModelView
     ordering = ['-added_at']
     http_method_names = ['get', 'post', 'delete', 'head', 'options']  # No update
 
-from apps.utils.querying import get_event_list_or_url_safe_title
-
 
 # ============================================================================
 # CHECKIN VIEWSET
