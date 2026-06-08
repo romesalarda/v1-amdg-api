@@ -12,7 +12,8 @@ from apps.attendee.models import (
     MedicalCondition, AttendeeMedicalCondition,
     EmergencyContact, Consent, AttendeeConsent,
     EventAttendance, AttendeeOrganisation,
-    AttendeeActionChoices, AttendeeCheckIn, CheckInAction
+    AttendeeActionChoices, AttendeeCheckIn, CheckInAction,
+    HumanRelationshipChoices, AttendeeMessagePriority
 )
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.locations.models import (
