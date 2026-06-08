@@ -948,7 +948,6 @@ class OrderAPITestCase(APITestCase):
             ]
         }
         response = self.client.post('/api/products/orders/', data, format='json')
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         
         # Verify order was created with correct total
@@ -1024,7 +1023,6 @@ class OrderAPITestCase(APITestCase):
         
         self.client.force_authenticate(user=self.customer_user)
         response = self.client.post(f'/api/products/orders/{self.order.order_id}/cancel/')
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, OrderStatusChoices.CANCELLED)

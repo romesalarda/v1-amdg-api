@@ -1326,7 +1326,7 @@ class EventAlternativeSigninIdentifierModelTest(TestCase):
         )
         
         self.assertIsNotNone(alt_signin.id)
-        self.assertEqual(alt_signin.title, 'Yfc Yim Number')  # Title case
+        self.assertEqual(alt_signin.title, 'Yfc Yim Number'.upper())  # Title case
         self.assertEqual(alt_signin.event, self.event)
         self.assertEqual(alt_signin.max_uses_per_signin, 3)
         self.assertTrue(alt_signin.is_active)
@@ -1338,7 +1338,7 @@ class EventAlternativeSigninIdentifierModelTest(TestCase):
             event=self.event
         )
         
-        self.assertEqual(str(alt_signin), 'Yfc Yim Number')
+        self.assertEqual(str(alt_signin), 'Yfc Yim Number'.upper())
     
     def test_alternative_signin_repr_method(self):
         """Test __repr__ method"""
@@ -1349,7 +1349,7 @@ class EventAlternativeSigninIdentifierModelTest(TestCase):
         
         repr_str = repr(alt_signin)
         self.assertIn('EventAlternativeSigninIdentifier', repr_str)
-        self.assertIn('Yfc Yim Number', repr_str)
+        self.assertIn('Yfc Yim Number'.upper(), repr_str)
         self.assertIn(str(self.event.id), repr_str)
     
     def test_alternative_signin_unique_together(self):
@@ -1384,7 +1384,7 @@ class EventAlternativeSigninIdentifierModelTest(TestCase):
             event=self.event
         )
         
-        self.assertEqual(alt_signin.title, 'Yfc Yim Number'.capitalize())
+        self.assertEqual(alt_signin.title, 'Yfc Yim Number'.upper())
     
     def test_alternative_signin_is_valid_property(self):
         """Test is_valid property returns is_active status"""

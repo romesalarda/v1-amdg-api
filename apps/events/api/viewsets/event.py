@@ -333,7 +333,6 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def upcoming(self, request):
         from django.utils import timezone
-        print("upcoming: " + str(self.get_queryset()))
         queryset = self.get_queryset().filter(start_datetime__gte=timezone.now())
 
 
@@ -778,8 +777,6 @@ class EventViewSet(viewsets.ModelViewSet):
 
         if attendee_filter:
             order_qs = order_qs.filter(attendee__attendee_id=attendee_filter)
-
-        print("order_qs: " + str(order_qs))
 
         def serialize_order_context(order):
             attendee = order.attendee

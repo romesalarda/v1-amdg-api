@@ -423,7 +423,6 @@ class UserOrganisationMembershipAPITest(TestCase):
             'access_code': 'ACCEPT123'
         }
         response = self.client.post(url, data, format='json')
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         membership = UserOrganisationMembership.objects.get(user=self.member_user)
         self.assertEqual(membership.added_by, self.controller_user)
@@ -1122,26 +1121,6 @@ class LeaderAPITest(TestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
     
-    # def test_create_leader(self):
-    #     """Test creating leader for organisation."""
-    #     self.client.force_authenticate(user=self.controller_user)
-    #     url = reverse('organisations:leader-list')
-    #     data = {
-    #         'user': self.leader_user.id,
-    #         'organisation': self.organisation.id,
-    #         'notes': 'Youth ministry coordinator'
-    #     }
-    #     response = self.client.post(url, data, format='json')
-    #     print(response.data)
-    #     self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        
-    #     # Verify leader was created with correct generic FK
-    #     from django.contrib.contenttypes.models import ContentType
-    #     org_ct = ContentType.objects.get_for_model(Organisation)
-    #     leader = Leader.objects.get(user=self.leader_user)
-    #     self.assertEqual(leader.target_type, org_ct)
-    #     self.assertEqual(leader.target_id, self.organisation.id)
-    #     self.assertEqual(leader.authority_object, self.organisation)
     
     def test_create_duplicate_leader_fails(self):
         """Test creating duplicate leader fails."""
@@ -1182,7 +1161,6 @@ class LeaderAPITest(TestCase):
         url = reverse('organisations:leader-detail', kwargs={'pk': leader.id})
         data = {'notes': 'Updated responsibilities', 'organisation': self.organisation.id, 'user': self.leader_user.id}
         response = self.client.patch(url, data, format='json')
-        print(response.data)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         leader.refresh_from_db()

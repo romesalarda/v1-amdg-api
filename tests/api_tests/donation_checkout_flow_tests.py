@@ -421,7 +421,6 @@ class DonationCheckoutAPITestCase(TestCase):
         }
         
         response = self.client.post(verify_url, verify_data, format='json')
-        print(f"Bank transfer verification response data: {response.data}")
         # Verify response
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         

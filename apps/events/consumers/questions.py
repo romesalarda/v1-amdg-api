@@ -334,7 +334,6 @@ class EventQuestionConsumer(BaseRealtimeConsumer):
                 event = Event.objects.get(id=question_data['event'])
             except Event.DoesNotExist:
                 return {'success': False, 'error': 'Event not found', 'code': 'NOT_FOUND'}
-            print("Event found:", event.event_id)
             serializer_data = {**question_data, 'event': event.event_id}
             serializer_data.pop('event_id', None)
             

@@ -1,6 +1,6 @@
 from .serializers import *
 from .statistics import *
-from .checkout_serializer import (
+from .checkout import (
 	ProductSelectionSerializer,
 	EmergencyContactDraftSerializer,
 	PersonalInfoItemSerializer,

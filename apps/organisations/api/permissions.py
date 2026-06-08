@@ -52,7 +52,6 @@ class IsOrganisationController(permissions.BasePermission):
     
     def has_object_permission(self, request, view, obj) -> bool:
         """Check if user has control over the organisation."""
-        print(f"Checking IsOrganisationController for user {request.user} on object {obj}")
         if not request.user or not request.user.is_authenticated:
             return False
         

@@ -1082,8 +1082,6 @@ class AttendeeStatisticsAPITests(AttendeeStatisticsBaseTestCase):
             f'/api/attendees/statistics/gender-distribution/?event_id={self.event1.event_id}&include_deleted=true'
         )
         total_with_deleted = response2.data['total']
-
-        print(Attendee.objects.all())
         
         # Should be different - deleted attendee should be included
         self.assertEqual(total_without_deleted, 5)

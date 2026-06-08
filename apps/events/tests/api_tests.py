@@ -1682,7 +1682,6 @@ class EventVenueAPITest(BaseEventAPITestCase):
             # 'source_venue_id': None
         }
         response = self.client.post('/api/event/venues/', data, format='json')
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['name'], 'Custom Venue')
         self.assertIsNone(response.data['source_venue_id'])

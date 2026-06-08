@@ -422,7 +422,7 @@ class DelegationHeadAdmin(admin.ModelAdmin):
 @admin.register(DelegationHeadInvite)
 class DelegationHeadInviteAdmin(admin.ModelAdmin):
     list_display = ('email', 'delegation', 'role', 'status', 'expires_at', 'invited_at')
-    list_filter = ('role', 'status', 'invited_at', 'expires_at')
+    list_filter = ('role', 'invited_at', 'expires_at')
     search_fields = ('email', 'delegation__name')
     readonly_fields = ('invite_id', 'invited_at', 'accepted_at')
     autocomplete_fields = ['delegation', 'user', 'invited_by', 'accepted_by']

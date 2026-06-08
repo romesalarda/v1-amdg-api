@@ -233,7 +233,6 @@ class AttendeeFilterSet(django_filters.FilterSet):
                     Q(attendee_display_id__icontains=value)
                 )
         # TODO: WARNING: need to ensure similarirty function is enabled on new postgres creation
-        print(f"Base search for '{value}' found {base.count()} attendees.")
 
         if TrigramSimilarity:
             qs = queryset.all().annotate(
@@ -245,7 +244,6 @@ class AttendeeFilterSet(django_filters.FilterSet):
                     # TrigramSimilarity('attendee_display_id', Value(value, output_field=TextField()))
             ).filter(similarity__gt=0.3).order_by('-similarity')
             if not qs.exists():
-                print("Trigram search found no attendees, falling back to base search.")
                 return base
             return qs.all()
         

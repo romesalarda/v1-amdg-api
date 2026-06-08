@@ -986,7 +986,6 @@ class RevenueTrendsTests(BookingStatisticsBaseTestCase):
         self._create_payment(booking2, status=PaymentStatusChoices.COMPLETED, amount=150, days_ago=1)
         
         stats = statistics.calculate_revenue_trends(group_by='day')
-        print("data:", stats)
         self.assertEqual(stats['total_revenue'], 250.0)
         self.assertGreaterEqual(len(stats['trends']), 2)
 
@@ -1060,7 +1059,6 @@ class BookingStatisticsAPITests(BookingStatisticsBaseTestCase):
         """Test that authentication is required."""
         self.client.force_authenticate(user=None)
         response = self.client.get('/api/bookings/statistics/overview/')
-        print("data:", response.data)
     
     def test_overview_endpoint_raw_format(self):
         """Test overview endpoint with raw format."""
@@ -1090,7 +1088,6 @@ class BookingStatisticsAPITests(BookingStatisticsBaseTestCase):
             self._create_ticket(attendee)
         
         response = self.client.get('/api/bookings/statistics/ticket-overview/')
-        print("data:", response.data)
         self.assertEqual(response.status_code, http_status.HTTP_200_OK)
         self.assertIn('total_tickets', response.data)
         self.assertEqual(response.data['total_tickets'], 2)

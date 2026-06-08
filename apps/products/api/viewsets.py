@@ -3414,7 +3414,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         self._assert_attendee_access(attendee, request.user)
 
         attendee_context = attendee.pricing_context(code=discount_code)
-        print(f"Attendee context for pricing preview: {attendee_context}")  # Debug log
         currency_code = 'GBP'
         lines = []
         subtotal = decimal.Decimal('0.00')

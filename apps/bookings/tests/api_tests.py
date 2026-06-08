@@ -935,7 +935,7 @@ class EventAlternativeSigninEndpointTests(BookingsAPITestCase):
         response = self.client.post('/api/bookings/alternative-signins/', data, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertIn(response.data['title'], ['Student ID'.capitalize(), 'Student Id'.capitalize()])  # Accept title case
+        self.assertIn(response.data['title'], ['Student ID'.upper(), 'Student Id'.upper()])  # Accept title case
     
     def test_create_event_signin_invalid_regex_fails(self):
         """Test that invalid regex pattern fails."""

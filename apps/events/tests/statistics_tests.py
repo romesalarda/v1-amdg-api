@@ -890,7 +890,6 @@ class BookingPackagePerformanceTest(EventStatisticsBaseTestCase):
         # Find VIP package
         vip_package = next((p for p in data['packages'] if p['package_name'] == 'VIP Package'), None)
         self.assertIsNotNone(vip_package)
-        print(vip_package)
         self.assertEqual(vip_package['bookings'], 1)
         self.assertEqual(float(vip_package['revenue']), 500.00)
     

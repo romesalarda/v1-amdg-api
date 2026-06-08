@@ -25,8 +25,8 @@ from apps.bookings.api.viewsets import (
     BookingPackageViewSet,
     EventAlternativeSigninViewSet,
     AttendeeAlternativeSigninViewSet,
+    BookingStatisticsViewSet
 )
-from apps.bookings.api.statistics_viewset import BookingStatisticsViewSet
 
 app_name = 'bookings'
 

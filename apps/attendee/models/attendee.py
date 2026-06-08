@@ -308,9 +308,7 @@ class Attendee(SoftDeleteModel):
         Determine if the attendee is currently checked in based on their latest event attendance.
         '''
         latest_check_in = self.check_in_records.order_by('-performed_at').first()
-        print(f"Latest check-in records for attendee {self.attendee_display_id}: {latest_check_in}")
         if latest_check_in:
-            print(f"Latest check-in action: {latest_check_in.action}, status snapshot: {latest_check_in.attendee_status_snapshot}")
             return latest_check_in.action == CheckInAction.CHECK_IN and latest_check_in.attendee_status_snapshot == AttendeeStatus.CHECKED_IN
         return False
     

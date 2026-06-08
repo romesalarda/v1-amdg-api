@@ -739,9 +739,7 @@ class UserViewSet(viewsets.ModelViewSet):
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            print(f"Password reset requested for non-existent email: {email}")
             return NEUTRAL_RESPONSE
-        print("Password reset requested for email: {email} (user ID: {user.id})")
         if not user.is_active:
             return NEUTRAL_RESPONSE
 

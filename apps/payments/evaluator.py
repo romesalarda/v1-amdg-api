@@ -83,7 +83,6 @@ def discount_applies(discount, context):
     '''
     evaluator = DiscountRuleEvaluator()
     rules = discount.rules.filter(active=True)
-    print(f"Evaluating discount '{discount}' with rules: {rules} and context: {context}")  # Debug log
     return all(
         evaluator.evaluate(rule, context)
         for rule in rules

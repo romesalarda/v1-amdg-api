@@ -364,7 +364,6 @@ class PaymentAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.admin_user)
         url = reverse('payments:payment-cancel', kwargs={'payment_id': pending_payment.payment_id})
         response = self.client.post(url)
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         pending_payment.refresh_from_db()
         linked_order.refresh_from_db()
@@ -1475,7 +1474,6 @@ class RefundRequestAPITestCase(APITestCase):
             'reason': 'Cannot attend the event due to personal reasons.'
         }
         response = self.client.post(url, data)
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(RefundRequest.objects.count(), 1)
     
@@ -2097,7 +2095,6 @@ class RefundRequestAPITestCase(APITestCase):
             },
             format='json',
         )
-        print(create_response.data)
         self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
 
         refund = RefundRequest.objects.get(payment=payment)
