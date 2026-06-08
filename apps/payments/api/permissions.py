@@ -699,6 +699,29 @@ class IsBudgetProposalAccessible(permissions.BasePermission):
             return True
 
         return _user_has_finance_role(request.user, event)
+    
+class IsFinanceRole(permissions.BasePermission):
+    """Allow access to users with finance-related roles for the event."""
+
+    message = "You do not have permission to access this resource."
+
+    def has_permission(self, request, view) -> bool:
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        event = getattr(obj, 'event', None)
+        if not event:
+            return False
+
+        return _user_has_finance_role(request.user, event)
+    
+
 
 def user_has_finance_role(user, event) -> bool:
     '''
@@ -717,6 +740,28 @@ def user_has_finance_role(user, event) -> bool:
         role__code__iexact='FIN'
     ).exists()
 
+class CanManageBudgetProposals(permissions.BasePermission):
+    """Allow access to users who can manage budget proposals for the event."""
+
+    message = "You do not have permission to manage budget proposals for this event."
+
+    def has_permission(self, request, view) -> bool:
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        event = getattr(obj, 'event', None)
+        if not event:
+            return False
+
+        return user_can_manage_credits(request.user, event)
+
+# TODO: deprecate meethods in favour of Django Guardian object-level permissions and/or more granular event role checks, but for now this provides a clear centralized permission check for credit management that can be used across views and viewsets.
 
 def user_can_manage_credits(user, event) -> bool:
     '''
