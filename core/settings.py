@@ -198,6 +198,7 @@ LOCAL_APPS = [
     "apps.attendee.apps.AttendeeConfig",
     "apps.products.apps.ProductsConfig",
     "apps.bookings.apps.BookingsConfig",
+    "apps.workshops.apps.WorkshopsConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
