@@ -664,7 +664,9 @@ class EventFormAdmin(admin.ModelAdmin):
             'fields': ('id', 'event', 'title', 'description')
         }),
         ('Settings', {
-            'fields': ('status', 'required', 'allow_response_editing')
+            'fields': ('status', 'required', 'allow_response_editing',
+                       'deadline', 'deadline_message', 'opens_at', 'pre_opens_message'
+                       )
         }),
         ('Metadata', {
             'fields': ('created_by', 'created_at', 'updated_at'),

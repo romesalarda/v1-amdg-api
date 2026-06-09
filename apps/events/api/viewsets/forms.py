@@ -298,7 +298,7 @@ class EventFormViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             order_map = {item['id']: item['order'] for item in questions_data}
             for q in questions:
-                q.order = order_map[str(q.id)]
+                q.order = order_map[q.id]
                 q.save(update_fields=['order'])
 
         _broadcast_form_event(

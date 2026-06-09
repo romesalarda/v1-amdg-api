@@ -40,6 +40,26 @@ class EventForm(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    deadline = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Optional deadline for form submission. Ignored if the form is closed.',
+    )
+    deadline_message = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text='Optional message to display when the deadline has passed.',
+    )
+    opens_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Optional opening time for the form. Ignored if the form is published.',
+    )
+    pre_opens_message = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text='Optional message to display before the form opens.',
+    )
     class Meta:
         ordering = ['-created_at']
 
