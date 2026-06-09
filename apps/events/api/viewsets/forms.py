@@ -390,6 +390,7 @@ class EventFormQuestionOptionViewSet(viewsets.ModelViewSet):
 
 
 # ── EventFormResponseViewSet ──────────────────────────────────────────────────
+from rest_framework.exceptions import PermissionDenied
 
 @extend_schema_view(
     list=extend_schema(
@@ -437,15 +438,12 @@ class EventFormResponseViewSet(viewsets.ModelViewSet):
 
     def validate_form_is_open(self, form):
         if form.status != EventFormStatusChoices.PUBLISHED:
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("This form is not currently accepting responses.")
 
     def validate_editing_allowed(self, form):
         if form.status == EventFormStatusChoices.CLOSED:
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("This form is closed and responses can no longer be edited.")
         if not form.allow_response_editing:
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Response editing is not allowed for this form.")
 
     def perform_create(self, serializer):
@@ -522,11 +520,9 @@ class EventFormResponseAnswerViewSet(viewsets.ModelViewSet):
         instance = serializer.instance
         form = instance.response.form
         if form.status == EventFormStatusChoices.CLOSED:
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("This form is closed.")
         if not form.allow_response_editing:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Response editing is not allowed for this form.")
+            raise PermissionDenied("Response editing is not allowed for this form.")    
         serializer.save()
 
 

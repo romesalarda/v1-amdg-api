@@ -24,6 +24,8 @@ from apps.events.models import (
     EventFormDelegateToken,
 )
 
+from apps.attendee.models import Attendee
+
 
 # ── Option Serializers ────────────────────────────────────────────────────────
 
@@ -224,6 +226,7 @@ class EventFormListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'event', 'event_title', 'title', 'status', 'status_display',
             'required', 'allow_response_editing', 'question_count',
+            'deadline', 'opens_at', 'pre_opens_message', 'deadline_message',
             'created_at', 'updated_at', '_links',
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
@@ -400,10 +403,12 @@ class EventFormResponseAnswerSerializer(serializers.ModelSerializer):
 
 
 # ── Response Serializer ────────────────────────────────────────────────────────
+# TODO: 
 
 class EventFormResponseSerializer(serializers.ModelSerializer):
     """Serializer for EventFormResponse with nested read-only answers."""
     answers = EventFormResponseAnswerSerializer(many=True, read_only=True)
+    attendee = serializers.SlugRelatedField(slug_field='attendee_id', queryset=Attendee.objects.all())
     attendee_display = serializers.SerializerMethodField(read_only=True)
     _links = serializers.SerializerMethodField()
 
