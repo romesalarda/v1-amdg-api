@@ -187,7 +187,7 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 locked_order=None,
                 booking=None,
                 event=payment.event,
-                notif_type=NotificationTypeChoices.REFUND_REQUEST,
+                notification_type=NotificationTypeChoices.REFUND_REQUEST,
                 priority=NotificationPriorityChoices.HIGH,
                 metadata={
                     'refund_request_id': refund_request.pk,

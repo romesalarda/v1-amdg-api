@@ -373,3 +373,5 @@ celery -A core worker --loglevel=info
 celery -A core beat --loglevel=info
 python manage.py spectacular --file openapi-schema.yml
 docker compose --file docker-compose.local.yml up -d
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;

@@ -16,6 +16,8 @@ from apps.payments.models.donations import Donation
 from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices, RefundRollbackLog
 from apps.organisations.models import EventSponsor
 
+from apps.events.services.notifications import create_notification, NotificationPriorityChoices, NotificationTypeChoices
+
 logger = logging.getLogger(__name__)
 
 
@@ -1119,6 +1121,19 @@ class AttendeeRefundService:
             },
         )
 
+        create_notification(
+            event=refund_request.payment.event,
+            payment=refund_request.payment,
+            message=f"Refund finalized for payment {refund_request.payment.payment_reference}: {finalized_tickets} tickets and {finalized_orders} orders finalized.",
+            metadata={
+                "refund_tracking_reference": refund_request.tracking_reference,
+                "payment_reference": refund_request.payment.payment_reference,
+            },
+            notification_type=NotificationTypeChoices.REFUND_PROCESSED,
+            priority=NotificationPriorityChoices.HIGH,
+            force_create=True,
+        )
+
         return {"finalized_tickets": finalized_tickets, "finalized_orders": finalized_orders}
 
     @classmethod
@@ -1282,6 +1297,27 @@ class AttendeeRefundService:
         }
         rollback_log.validation_issues = snapshot_issues
         rollback_log.save(update_fields=['status', 'snapshot_after', 'validation_issues', 'updated_at'])
+
+        create_notification(
+            event=refund_request.payment.event,
+            payment=refund_request.payment,
+            message=(
+                f"Refund rejection rollback for payment {refund_request.payment.payment_reference}: "
+                f"{restored_orders} orders restored, {skipped_orders} orders skipped, "
+                f"{len(failed_order_ids)} orders failed to restore."
+            ),
+            metadata={
+                "refund_tracking_reference": refund_request.tracking_reference,
+                "payment_reference": refund_request.payment.payment_reference,
+                "restored_orders": restored_orders,
+                "skipped_orders": skipped_orders,
+                "failed_order_ids": failed_order_ids,
+                "restored_payment_status": restored_payment_status,
+            },
+            notification_type=NotificationTypeChoices.REFUND_REJECTED,
+            priority=NotificationPriorityChoices.HIGH,
+            force_create=True,
+        )
 
         return {
             "restored_orders": restored_orders,

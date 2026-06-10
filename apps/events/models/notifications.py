@@ -16,6 +16,7 @@ class NotificationTypeChoices(models.TextChoices):
     REFUND_REQUEST = 'REFUND_REQUEST', _('Refund Requested')
     REFUND_UPDATE = 'REFUND_UPDATE', _('Refund Updated')
     REFUND_APPROVAL = 'REFUND_APPROVAL', _('Refund Approval Needed')
+    REFUND_PROCESSED = 'REFUND_PROCESSED', _('Refund Processed')
     REFUND_REJECTION = 'REFUND_REJECTION', _('Refund Rejected')
     PAYMENT_SUCCESS = 'PAYMENT_SUCCESS', _('Payment Successful')
     PAYMENT_FAILED = 'PAYMENT_FAILED', _('Payment Failed')
