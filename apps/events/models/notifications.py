@@ -19,6 +19,7 @@ class NotificationTypeChoices(models.TextChoices):
     REFUND_REJECTION = 'REFUND_REJECTION', _('Refund Rejected')
     PAYMENT_SUCCESS = 'PAYMENT_SUCCESS', _('Payment Successful')
     PAYMENT_FAILED = 'PAYMENT_FAILED', _('Payment Failed')
+    PAYMENT_UPDATE = 'PAYMENT_UPDATE', _('Payment Updated')
     CAPACITY_WARNING = 'CAPACITY_WARNING', _('Capacity Warning')
     AUTHORIZATION_REQUEST = 'AUTHORIZATION_REQUEST', _('Authorization Request')
     GENERAL = 'GENERAL', _('General Notification')

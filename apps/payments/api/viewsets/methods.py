@@ -3,8 +3,6 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
-    OpenApiParameter,
-    OpenApiResponse,
     inline_serializer,
 )
 from apps.payments.models import PaymentMethod
@@ -14,6 +12,7 @@ from apps.payments.api.serializers import (
 from apps.payments.api.filtersets import PaymentMethodFilterSet
 from apps.payments.api.permissions import IsAdministrativeStaffOnly
 from apps.common.pagination import StandardPagination
+from apps.events.services.notifications import create_notification, NotificationPriorityChoices, NotificationTypeChoices
 
 @extend_schema_view(
     list=extend_schema(
@@ -85,3 +84,66 @@ class PaymentMethodViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Set created_by to current user."""
         serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        """Set created_by to current user on update."""
+
+        old_instance = self.get_object()
+
+        payment_method =serializer.save(created_by=self.request.user)
+
+        new_instance = self.get_object()
+
+        changes = []
+        stripe_account_id_changed = False
+        new_stripe_account_id = None
+        # detect changes to title, description, provided details and check account name, sort code, account number for bank transfer details
+
+        if old_instance.title != new_instance.title:
+            changes.append(f"title changed from '{old_instance.title}' to '{new_instance.title}'")
+
+        if old_instance.description != new_instance.description:
+            changes.append(f"description changed from '{old_instance.description}' to '{new_instance.description}'")
+
+        if old_instance.provided_details != new_instance.provided_details:
+
+            if old_instance.provided_details.get('account_name') != new_instance.provided_details.get('account_name'):
+                changes.append(f"account name changed from '{old_instance.provided_details.get('account_name')}' to '{new_instance.provided_details.get('account_name')}'")
+
+            if old_instance.provided_details.get('sort_code') != new_instance.provided_details.get('sort_code'):
+                changes.append(f"sort code changed from '{old_instance.provided_details.get('sort_code')}' to '{new_instance.provided_details.get('sort_code')}'")
+
+            if old_instance.provided_details.get('account_number') != new_instance.provided_details.get('account_number'):
+                changes.append(f"account number changed from '{old_instance.provided_details.get('account_number')}' to '{new_instance.provided_details.get('account_number')}'")
+
+            if old_instance.provided_details.get('stripe_account_id') != new_instance.provided_details.get('stripe_account_id'):
+                changes.append(f"Stripe account ID changed from '{old_instance.provided_details.get('stripe_account_id')}' to '{new_instance.provided_details.get('stripe_account_id')}'")
+                stripe_account_id_changed = True
+                new_stripe_account_id = new_instance.provided_details.get('stripe_account_id')
+
+        if stripe_account_id_changed:
+            create_notification(
+                event=payment_method.event,
+                message=f"Stripe account ID for payment method '{payment_method.title}' updated. New Stripe Account ID: {new_stripe_account_id}",
+                metadata={
+                    'action': 'UPDATED_STRIPE_ACCOUNT',
+                    'performed_by_id': self.request.user.id,
+                    'performed_by_username': self.request.user.username,
+                },
+                notification_type=NotificationTypeChoices.GENERAL,
+                priority=NotificationPriorityChoices.HIGH,
+                force_create=True,
+            )
+
+        else:
+            create_notification(
+                event=payment_method.event,
+                message=f"Payment method '{payment_method.title}' updated. Changes: {', '.join(changes)}",
+                metadata={
+                    'action': 'UPDATED',
+                    'performed_by_id': self.request.user.id,
+                    'performed_by_username': self.request.user.username,
+                },
+                notification_type=NotificationTypeChoices.GENERAL,
+                force_create=True,
+            )

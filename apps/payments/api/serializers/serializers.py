@@ -68,7 +68,7 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'method_id', 'code', 'title', 'method_type', 'is_active',
             'bank_transfer_required_immediately',
-            'event', 'event_name', 'created_by', 'created_by_name',
+            'event', 'event_name', 'created_by', 'created_by_name', 'description',
             'created_at', 'updated_at', 'provided_details', '_links'
         )
         read_only_fields = ('id', 'method_id', 'code', 'created_at', 'updated_at')

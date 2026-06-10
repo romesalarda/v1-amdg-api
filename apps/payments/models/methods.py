@@ -1,8 +1,9 @@
 from django.db import models
 from django.contrib.auth import get_user_model
-from typing import Optional
+from core.utils.display import generate_human_readable_id
 
 import uuid
+from typing import Optional
 
 class PaymentMethodTypeChoices(models.TextChoices):
     
@@ -46,7 +47,6 @@ class PaymentMethod(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.code:
-            from core.utils.display import generate_human_readable_id
             self.code = generate_human_readable_id(20, 'PYM', str(self.event.id))
         
         if self.pk and self.__class__.objects.filter(pk=self.pk).values('code').first()['code'] != self.code:

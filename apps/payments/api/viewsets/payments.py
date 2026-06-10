@@ -9,13 +9,12 @@ from django.db.models import Q
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
-    OpenApiParameter,
     OpenApiResponse,
     inline_serializer,
 )
 
 from apps.payments.models import (
-    Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
+    Payment, PaymentStatusChoices, PaymentMethodTypeChoices,
     Donation, PaymentHistoryAction,
 )
 from apps.common.models import VerificationStatus
@@ -33,6 +32,8 @@ from apps.organisations.models import EventSponsor
 from apps.products.models import Order, OrderStatusChoices
 from apps.payments.models import Donation
 from apps.common.pagination import StandardPagination
+
+from apps.events.services.notifications import create_notification, NotificationPriorityChoices, NotificationTypeChoices
 
 import logging
 
@@ -187,6 +188,21 @@ class PaymentViewSet(viewsets.ModelViewSet):
             description='Payment marked as completed by administrator',
             performed_by=request.user
         )
+
+        create_notification(
+            payment=payment,
+            locked_order=payment.orders.first() if payment.orders.exists() else None,
+            booking=payment.target if isinstance(payment.target, Booking) else None,
+            event=payment.event,
+            message=f'Payment marked as completed by {request.user.username}',
+            metadata={
+                'action': 'MARKED_COMPLETED',
+                'performed_by_id': request.user.id,
+                'performed_by_username': request.user.username,
+            },
+            priority=NotificationPriorityChoices.HIGH,
+            notification_type=NotificationTypeChoices.PAYMENT_UPDATE
+        )
         
         serializer = self.get_serializer(payment)
         return Response(serializer.data)
@@ -216,8 +232,23 @@ class PaymentViewSet(viewsets.ModelViewSet):
         PaymentHistoryAction.objects.create(
             payment=payment,
             action='MARKED_FAILED',
-            description='Payment marked as failed by administrator',
+            description=f'Payment marked as failed by {request.user.username}',
             performed_by=request.user
+        )
+
+        create_notification(
+            payment=payment,
+            locked_order=payment.target if isinstance(payment.target, Order) else None,
+            booking=payment.target if isinstance(payment.target, Booking) else None,
+            event=payment.event,
+            message=f'Payment marked as failed by {request.user.username}',
+            metadata={
+                'action': 'MARKED_FAILED',
+                'performed_by_id': request.user.id,
+                'performed_by_username': request.user.username,
+            },
+            priority=NotificationPriorityChoices.HIGH,
+            notification_type=NotificationTypeChoices.PAYMENT_UPDATE
         )
         
         serializer = self.get_serializer(payment)
@@ -279,11 +310,27 @@ class PaymentViewSet(viewsets.ModelViewSet):
         PaymentHistoryAction.objects.create(
             payment=payment,
             action='CANCELLED',
-            description='Payment cancelled by administrator',
+            description=f'Payment cancelled by {request.user.username}. Cancelled orders: {cancelled_order_ids}',
             performed_by=request.user,
             metadata={
                 'cancelled_order_ids': cancelled_order_ids,
             },
+        )
+
+        create_notification(
+            payment=payment,
+            locked_order=payment.target if isinstance(payment.target, Order) else None,
+            booking=payment.target if isinstance(payment.target, Booking) else None,
+            event=payment.event,
+            message=f'Payment cancelled by {request.user.username}',
+            metadata={
+                'action': 'CANCELLED',
+                'performed_by_id': request.user.id,
+                'performed_by_username': request.user.username,
+                'cancelled_order_ids': cancelled_order_ids,
+            },
+            priority=NotificationPriorityChoices.HIGH,
+            notification_type=NotificationTypeChoices.PAYMENT_UPDATE
         )
         
         serializer = self.get_serializer(payment)
@@ -341,8 +388,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
         
         Supports targets: Booking, Order, Donation
         """
-
-        logger = logging.getLogger(__name__)
         
         payment = self.get_object()
         
@@ -380,6 +425,25 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 notes=notes,
                 performed_by=request.user
             )
+
+            create_notification(
+                payment=payment,
+                locked_order=payment.target if isinstance(payment.target, Order) else None,
+                booking=payment.target if isinstance(payment.target, Booking) else None,
+                event=payment.event,
+                message=f'Bank transfer failed for {target_type} by {request.user.username}',
+                metadata={
+                    'action': 'BANK_TRANSFER_FAILED',
+                    'failed_by_id': request.user.id,
+                    'failed_by_username': request.user.username,
+                    'bank_reference': payment.bank_transfer_reference,
+                    'target_type': target_type,
+                    'notes': notes,
+                },
+                priority=NotificationPriorityChoices.HIGH,
+                notification_type=NotificationTypeChoices.PAYMENT_UPDATE
+            )
+
             serializer = self.get_serializer(payment)
             return Response(serializer.data, status=status.HTTP_200_OK)
         
@@ -426,6 +490,24 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 },
                 notes=notes,
                 performed_by=request.user
+            )
+
+            create_notification(
+                payment=payment,
+                locked_order=payment.target if isinstance(payment.target, Order) else None,
+                booking=payment.target if isinstance(payment.target, Booking) else None,
+                event=payment.event,
+                message=f'Bank transfer verified for {target_type} by {request.user.username}',
+                metadata={
+                    'action': 'BANK_TRANSFER_VERIFIED',
+                    'verified_by_id': request.user.id,
+                    'verified_by_username': request.user.username,
+                    'bank_reference': payment.bank_transfer_reference,
+                    'target_type': target_type,
+                    'notes': notes,
+                },
+                priority=NotificationPriorityChoices.HIGH,
+                notification_type=NotificationTypeChoices.PAYMENT_UPDATE
             )
             
             response_data = {}
@@ -515,17 +597,4 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 {'error': f'Failed to verify payment: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
-# ============================================================================
-# REFUND REQUEST VIEWSETS
-# ============================================================================
-            
-            return Response(
-                {
-                    'error': f'Failed to verify bank transfer: {str(e)}'
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
 
