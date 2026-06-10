@@ -15,13 +15,14 @@ class WorkshopFilterSet(filters.FilterSet):
     - allocation_mode: FCFS, INTEREST_RANKING, RANDOM, MANUAL
     - date_after / date_before: filter by workshop date range
     """
-
+    event = filters.CharFilter(field_name='event__url_safe_title', lookup_expr='exact')   
+    event_id = filters.CharFilter(field_name='event__event_id', lookup_expr='exact')
     date_after = filters.DateTimeFilter(field_name='date', lookup_expr='gte')
     date_before = filters.DateTimeFilter(field_name='date', lookup_expr='lte')
 
     class Meta:
         model = Workshop
-        fields = ('event', 'status', 'allocation_mode')
+        fields = ('event', 'status', 'event_id', 'allocation_mode')
 
 
 class WorkshopRegistrationFilterSet(filters.FilterSet):
@@ -35,6 +36,8 @@ class WorkshopRegistrationFilterSet(filters.FilterSet):
     - allocation_method: which method produced the registration
     """
 
+    attendee = filters.CharFilter(field_name='attendee__attendee_id', lookup_expr='exact')
+
     class Meta:
         model = WorkshopRegistration
         fields = ('workshop', 'attendee', 'status', 'allocation_method')
@@ -45,11 +48,16 @@ class WorkshopInterestSubmissionFilterSet(filters.FilterSet):
     Filterset for WorkshopInterestSubmission list endpoints.
 
     Supported filters:
-    - event: filter by event ID
+    - event: filter by event URL safe title
+    - event_id: filter by event ID
     - attendee: filter by attendee ID
     - is_finalised: boolean — only finalised / only draft submissions
     """
 
+    event = filters.CharFilter(field_name='event__url_safe_title', lookup_expr='exact')
+    event_id = filters.CharFilter(field_name='event__event_id', lookup_expr='exact')
+    attendee = filters.CharFilter(field_name='attendee__attendee_id', lookup_expr='exact')
+
     class Meta:
         model = WorkshopInterestSubmission
-        fields = ('event', 'attendee', 'is_finalised')
+        fields = ('event', 'event_id', 'attendee', 'is_finalised')

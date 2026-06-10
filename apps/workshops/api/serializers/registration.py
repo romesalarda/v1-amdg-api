@@ -3,12 +3,13 @@ from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
 
 from apps.workshops.models.registration import WorkshopRegistration, WorkshopRegistrationStatus
-
+from apps.attendee.models import Attendee
 
 class WorkshopRegistrationListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for listing workshop registrations."""
 
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    attendee = serializers.SlugRelatedField(slug_field='attendee_id', queryset=Attendee.objects.all())
     attendee_name = serializers.SerializerMethodField()
     _links = serializers.SerializerMethodField()
 
@@ -69,6 +70,8 @@ class WorkshopRegistrationDetailSerializer(WorkshopRegistrationListSerializer):
 
 class WorkshopRegistrationCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating a new workshop registration."""
+
+    attendee = serializers.SlugRelatedField(slug_field='attendee_id', queryset=Attendee.objects.all())
 
     class Meta:
         model = WorkshopRegistration

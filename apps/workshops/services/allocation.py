@@ -39,6 +39,9 @@ def _create_or_update_registration(
     """
     Get-or-create a WorkshopRegistration, updating status/method when it already exists.
     """
+    if WorkshopRegistration.objects.filter(workshop=workshop, attendee=attendee).exists():
+        return False
+
     registration, _ = WorkshopRegistration.objects.get_or_create(
         workshop=workshop,
         attendee=attendee,
@@ -230,6 +233,7 @@ def run_interest_ranking_allocation(
     """
     from apps.workshops.models.workshop import WorkshopStatus
     from apps.workshops.models.interest import WorkshopInterestSubmission
+    from apps.workshops.models.workshop import Workshop as WorkshopModel
 
     target_workshop_ids = None
     if workshops is not None:
@@ -243,7 +247,6 @@ def run_interest_ranking_allocation(
     )
 
     # Track current confirmed counts per workshop (avoid repeated DB hits)
-    from apps.workshops.models.workshop import Workshop as WorkshopModel
     qs = WorkshopModel.objects.filter(event=event, status=WorkshopStatus.OPEN)
     if target_workshop_ids:
         qs = qs.filter(pk__in=target_workshop_ids)
@@ -269,7 +272,11 @@ def run_interest_ranking_allocation(
             cap = ws.capacity
             if cap is not None and confirmed_counts[ws_pk] >= cap:
                 continue  # full — try next rank
-
+            
+            # do not add attendee if they already have a registration for this workshop (e.g. from FCFS phase)
+            if WorkshopRegistration.objects.filter(workshop=ws, attendee=attendee).exists():
+                allocated = True  # consider them "placed" since they have a spot, even if not from this allocation run
+                break
             # Allocate
             _create_or_update_registration(
                 workshop=ws,

@@ -3,7 +3,8 @@ from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
 
 from apps.workshops.models.interest import WorkshopInterestSubmission, WorkshopInterestRank
-
+from apps.events.models import Event
+from apps.attendee.models import Attendee
 
 class WorkshopInterestRankSerializer(serializers.ModelSerializer):
     """Serializer for a single ranked entry within an interest submission."""
@@ -24,6 +25,8 @@ class WorkshopInterestSubmissionSerializer(serializers.ModelSerializer):
     """Read serializer for an interest submission including nested ranks."""
 
     ranks = WorkshopInterestRankSerializer(many=True, read_only=True)
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
+    attendee = serializers.SlugRelatedField(slug_field='attendee_id', queryset=Attendee.objects.all(), allow_null=True)
     attendee_name = serializers.SerializerMethodField()
     _links = serializers.SerializerMethodField()
 
@@ -70,6 +73,8 @@ class WorkshopInterestSubmissionCreateSerializer(serializers.ModelSerializer):
     """
 
     ranks = WorkshopInterestRankSerializer(many=True)
+    event = serializers.SlugRelatedField(slug_field='event_id', queryset=Event.objects.all())
+    attendee = serializers.SlugRelatedField(slug_field='attendee_id', queryset=Attendee.objects.all(), allow_null=True)
 
     class Meta:
         model = WorkshopInterestSubmission

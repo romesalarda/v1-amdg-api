@@ -135,7 +135,7 @@ class WorkshopViewSet(viewsets.ModelViewSet):
             "Only event staff may trigger allocation."
         ),
         tags=["Workshops"],
-        responses={200: OpenApiResponse(description="Allocation result summary")},
+        responses={200: OpenApiResponse(description="Allocation result message or updated workshop details.")},
     )
     @action(detail=True, methods=['post'], url_path='run-allocation',
             permission_classes=[CanManageWorkshopAllocations])

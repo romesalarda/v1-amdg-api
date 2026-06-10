@@ -29,6 +29,15 @@ class Workshop(RequiresVerificationModel):
 
     title = models.CharField(max_length=255)
     description = models.TextField(help_text=_("Detailed description of the workshop"))
+    landing_image = models.ImageField(
+        upload_to='workshop_images/',
+        null=True,
+        blank=True,
+        help_text=_("Optional image to display on the workshop landing page"),
+    )
+    what_to_expect = models.TextField(blank=True, null=True, help_text=_("Information about what attendees can expect from the workshop"))
+    what_to_bring = models.TextField(blank=True, null=True, help_text=_("Information about what attendees should bring to the workshop"))
+    
     event = models.ForeignKey("events.Event", on_delete=models.CASCADE, related_name="workshops")
     date = models.DateTimeField()
     venue = models.ForeignKey("events.EventVenue", on_delete=models.SET_NULL, null=True, blank=True, related_name="workshops")

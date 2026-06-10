@@ -46,7 +46,7 @@ class WorkshopAdmin(admin.ModelAdmin):
     inlines = [WorkshopRegistrationInline, WorkshopStaffInline]
     fieldsets = (
         (None, {
-            'fields': ('title', 'description', 'event', 'date', 'notes'),
+            'fields': ('title', 'description', 'event', 'date', 'notes', 'landing_image', 'what_to_expect', 'what_to_bring'),
         }),
         ('Venue', {
             'fields': ('venue', 'room'),
