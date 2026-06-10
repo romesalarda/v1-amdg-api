@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, permissions, filters
+from rest_framework import viewsets, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import OuterRef, Subquery
 from drf_spectacular.utils import (
@@ -15,6 +15,7 @@ from apps.payments.api.serializers import StockAuditLogSerializer
 from apps.payments.api.filtersets import StockAuditLogFilterSet
 from apps.payments.api.permissions import permissions
 from apps.common.pagination import StandardPagination
+from apps.events.models import Event
 
 @extend_schema_view(
     list=extend_schema(
@@ -45,7 +46,6 @@ class StockAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        from apps.events.models import Event
         queryset = super().get_queryset()
         user = self.request.user
 

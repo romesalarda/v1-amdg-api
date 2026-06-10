@@ -18,7 +18,6 @@ from apps.payments.models import (
     RefundRequest, RefundAssociation, RefundPolicy,
     PaymentHistoryAction,
 )
-from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 from apps.payments.api.serializers import (
     RefundRequestListSerializer, RefundRequestDetailSerializer, RefundRequestCreateSerializer, RefundRequestUpdateSerializer,
@@ -31,6 +30,11 @@ from apps.payments.api.permissions import IsAdministrativeStaffOnly, IsRefundReq
 from apps.payments.services.attendee_refunds import AttendeeRefundService
 from apps.payments.tasks import send_refund_email
 from apps.common.pagination import StandardPagination
+from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+
+from apps.events.services.notifications import create_notification, NotificationPriorityChoices, NotificationTypeChoices
+
+from rest_framework.exceptions import PermissionDenied
 
 import logging
 
@@ -146,7 +150,6 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         # Check if user owns the payment or is admin
         if not (user.is_superuser or user.is_staff) and payment.user != user: # TODO: this should be implemented in object perms
             # Check if user is admin for the event
-            from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
             is_event_admin = EventRoleAssignment.objects.filter(
                 user=user,
                 event=payment.event,
@@ -154,7 +157,6 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             ).exists()
             
             if not is_event_admin:
-                from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You can only create refund requests for your own payments.")
             
         with transaction.atomic():
@@ -178,6 +180,26 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 },
                 notes="Refund request created and payment marked as pending refund.",
                 performed_by=user
+            )
+
+            create_notification(
+                payment=payment,
+                locked_order=None,
+                booking=None,
+                event=payment.event,
+                notif_type=NotificationTypeChoices.REFUND_REQUEST,
+                priority=NotificationPriorityChoices.HIGH,
+                metadata={
+                    'refund_request_id': refund_request.pk,
+                    'refund_request_tracking_reference': refund_request.tracking_reference,
+                    'requested_by_id': user.id,
+                    'requested_by_username': user.username,
+                    'bank_reference': payment.bank_transfer_reference,
+                    'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+                    'target_kind': (refund_request.metadata or {}).get('target_kind'),
+                    'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                },
+                message=f"Refund request {refund_request.tracking_reference} created for payment {payment.payment_reference} by {user.username}"
             )
 
             logger.info(
@@ -233,6 +255,27 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 notes="Refund request marked as verified and payment marked as pending refund.",
                 performed_by=request.user
             )
+
+            create_notification(
+                payment=refund_request.payment,
+                locked_order=None,
+                booking=None,
+                event=refund_request.payment.event,
+                priority=NotificationPriorityChoices.HIGH,
+                notification_type=NotificationTypeChoices.REFUND_UPDATE,
+                metadata={
+                    'refund_request_id': refund_request.pk,
+                    'refund_request_tracking_reference': refund_request.tracking_reference,
+                    'verified_by_id': request.user.id,
+                    'verified_by_username': request.user.username,
+                    'bank_reference': refund_request.payment.bank_transfer_reference,
+                    'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+                    'target_kind': (refund_request.metadata or {}).get('target_kind'),
+                    'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                    'blocked_orders': blocked_summary.get('blocked_orders', 0),
+                },
+                message=f"Refund request {refund_request.tracking_reference} verified for payment {refund_request.payment.payment_reference} by {request.user.username}"
+            )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
         return Response(serializer.data)
@@ -286,6 +329,28 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
 
             _refund_pk = refund_request.pk
             transaction.on_commit(lambda: send_refund_email.delay(_refund_pk))
+
+            create_notification(
+                payment=refund_request.payment,
+                locked_order=None,
+                booking=None,
+                event=refund_request.payment.event,
+                priority=NotificationPriorityChoices.HIGH,
+                notification_type=NotificationTypeChoices.REFUND_UPDATE,
+                metadata={
+                    'refund_request_id': refund_request.pk,
+                    'refund_request_tracking_reference': refund_request.tracking_reference,
+                    'processed_by_id': request.user.id,
+                    'processed_by_username': request.user.username,
+                    'bank_reference': refund_request.payment.bank_transfer_reference,
+                    'selected_attendee_ids': (refund_request.metadata or {}).get('selected_attendee_ids', []),
+                    'target_kind': (refund_request.metadata or {}).get('target_kind'),
+                    'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                    'finalized_tickets': finalized_summary.get('finalized_tickets', 0),
+                    'finalized_orders': finalized_summary.get('finalized_orders', 0),
+                },
+                message=f"Refund request {refund_request.tracking_reference} processed for payment {refund_request.payment.payment_reference} by {request.user.username}"
+            )
             logger.info(
                 "Queued refund email for refund_request pk=%s (payment %s)",
                 _refund_pk,
@@ -346,6 +411,29 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
                 },
                 notes="Refund request marked as rejected and linked entities restored to pre-refund state where possible.",
                 performed_by=request.user
+            )
+
+            create_notification(
+                payment=refund_request.payment,
+                locked_order=None,
+                booking=None,
+                event=refund_request.payment.event,
+                priority=NotificationPriorityChoices.HIGH,
+                notification_type=NotificationTypeChoices.REFUND_REJECTION,
+                metadata={
+                    'refund_request_id': refund_request.pk,
+                    'refund_request_tracking_reference': refund_request.tracking_reference,
+                    'rejected_by_id': request.user.id,
+                    'rejected_by_username': request.user.username,
+                    'bank_reference': refund_request.payment.bank_transfer_reference,
+                    'target_kind': (refund_request.metadata or {}).get('target_kind'),
+                    'refund_scope': (refund_request.metadata or {}).get('refund_scope'),
+                    'restored_payment_status': restored_payment_status,
+                    'restored_orders': rollback_summary.get('restored_orders', 0),
+                    'skipped_orders': rollback_summary.get('skipped_orders', 0),
+                    'failed_order_ids': rollback_summary.get('failed_order_ids', []),
+                },
+                message=f"Refund request {refund_request.tracking_reference} rejected for payment {refund_request.payment.payment_reference} by {request.user.username}"
             )
         
         serializer = RefundRequestDetailSerializer(refund_request, context={'request': request})
