@@ -5,6 +5,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 User = get_user_model()
 
@@ -25,6 +26,10 @@ class NotificationTypeChoices(models.TextChoices):
     AUTHORIZATION_REQUEST = 'AUTHORIZATION_REQUEST', _('Authorization Request')
     GENERAL = 'GENERAL', _('General Notification')
 
+GENERAL_NOTIFICATION_TYPES = {
+    NotificationTypeChoices.CAPACITY_WARNING,
+    NotificationTypeChoices.GENERAL,
+}
 
 class NotificationPriorityChoices(models.TextChoices):
     """Priority levels for notifications."""
@@ -44,6 +49,8 @@ class EventNotification(models.Model):
     - Capacity threshold reached
     - Manual verification required
     """
+
+    GENERAL_NOTIFICATION_TYPES = GENERAL_NOTIFICATION_TYPES
     
     event = models.ForeignKey(
         'events.Event',
@@ -153,12 +160,15 @@ class EventNotification(models.Model):
     
     def clean(self):
         """Validate at least one related object exists for non-general notifications."""
-        if self.notification_type != NotificationTypeChoices.GENERAL:
+        if self.notification_type not in self.GENERAL_NOTIFICATION_TYPES:
             if not any([self.related_payment, self.related_order, self.related_booking]):
                 raise ValidationError(
                     "Non-general notifications must have at least one related object "
                     "(payment, order, or booking)."
                 )
+        # prevent date from being in the future
+        if self.created_at and self.created_at > timezone.now():
+            raise ValidationError("created_at cannot be in the future.")
     
     def save(self, *args, **kwargs):
         self.clean()
@@ -166,7 +176,6 @@ class EventNotification(models.Model):
     
     def mark_as_read(self):
         """Mark notification as read with timestamp."""
-        from django.utils import timezone
         self.is_read = True
         self.read_at = timezone.now()
         self.save(update_fields=['is_read', 'read_at'])

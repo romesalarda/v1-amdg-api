@@ -76,6 +76,8 @@ from apps.organisations.api.serializers import (
     EventSponsorPackageCreateUpdateSerializer,
 )
 
+from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
+
 @extend_schema_view(
     list=extend_schema(
         summary="List Event Types",
@@ -262,6 +264,7 @@ class EventViewSet(viewsets.ModelViewSet):
     lookup_field = 'url_safe_title'
     
     def get_queryset(self):
+        # public queryset that filterts out draft and deleted events for non staff users, but allows event creators and staff to see their own events regardless of status
         queryset = Event.objects.select_related(
             'event_type', 'organisation', 'created_by'
         ).prefetch_related('settings')
@@ -299,6 +302,9 @@ class EventViewSet(viewsets.ModelViewSet):
         obj = get_object_or_404(Event.objects.select_related(
             'event_type', 'organisation', 'created_by'
         ).prefetch_related('settings'), url_safe_title=self.kwargs['url_safe_title'])
+
+        self.check_object_permissions(self.request, obj)
+
         return obj
     
     def get_serializer_class(self):
@@ -313,7 +319,26 @@ class EventViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
-    
+
+    def perform_update(self, serializer):
+        
+        old_event = self.get_non_restrictive_object()
+
+        instance = super().perform_update(serializer)
+
+        new_event = self.get_non_restrictive_object()
+
+        if old_event.status != new_event.status:
+            create_notification(
+                event=new_event,
+                message=f"{self.request.user} changed the status of the event '{new_event.title}' from {old_event.status} to {new_event.status}",
+                notification_type=NotificationTypeChoices.GENERAL,
+                priority=NotificationPriorityChoices.HIGH,
+                force_create=True,
+            )
+
+
+        return instance    
     @extend_schema(
         summary="Get Upcoming Events",
         description=(

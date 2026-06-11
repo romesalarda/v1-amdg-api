@@ -41,7 +41,6 @@ from apps.events.api.serializers import (
     EventFormSerializer, EventFormListSerializer,
     EventFormQuestionSerializer, EventFormQuestionOptionSerializer,
     EventFormResponseSerializer, EventFormResponseAnswerSerializer,
-    EventFormResponseAnswerChoiceSerializer,
     EventFormDelegateTokenSerializer, EventFormDelegateTokenValidateSerializer,
 )
 from apps.events.api.filtersets import (
@@ -49,6 +48,7 @@ from apps.events.api.filtersets import (
     EventFormResponseFilterSet, EventFormResponseAnswerFilterSet,
 )
 from apps.events.api.pagination import StandardPagination
+from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +210,13 @@ class EventFormViewSet(viewsets.ModelViewSet):
             data=self._get_broadcast_data(form),
             actor=_get_actor(request),
         )
+
+        create_notification(
+            event=form.event,
+            message=f"{request.user} has just published the form '{form.title}'.",
+            notification_type=NotificationTypeChoices.GENERAL,
+            priority=NotificationPriorityChoices.NORMAL,
+        )
         serializer = EventFormSerializer(form, context={'request': request})
         return Response(serializer.data)
 
@@ -229,6 +236,12 @@ class EventFormViewSet(viewsets.ModelViewSet):
             event_type='form.closed',
             data=self._get_broadcast_data(form),
             actor=_get_actor(request),
+        )
+        create_notification(
+            event=form.event,
+            message=f"{request.user} has just closed the form '{form.title}'.",
+            notification_type=NotificationTypeChoices.GENERAL,
+            priority=NotificationPriorityChoices.NORMAL,
         )
         serializer = EventFormSerializer(form, context={'request': request})
         return Response(serializer.data)
@@ -463,10 +476,20 @@ class EventFormResponseViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        instance = serializer.instance
-        self.validate_editing_allowed(instance.form)
+        old_instance = serializer.instance
+        
+        self.validate_editing_allowed(old_instance.form)
         instance = serializer.save()
         instance.refresh_from_db()
+
+        if old_instance.submitted_at != instance.submitted_at:
+            create_notification(
+                event=instance.form.event,
+                message=f"{self.request.user} has just updated their response to the form '{instance.form.title}'.",
+                notification_type=NotificationTypeChoices.GENERAL,
+                priority=NotificationPriorityChoices.NORMAL,
+            )
+
         data = json.loads(json.dumps(
             EventFormResponseSerializer(instance, context={'request': self.request}).data,
             cls=DjangoJSONEncoder,

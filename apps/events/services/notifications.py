@@ -19,7 +19,7 @@ def create_notification(
     metadata: Dict[str, Any] = None,
     priority: str = NotificationPriorityChoices.NORMAL,
     notification_type: str = NotificationTypeChoices.GENERAL,
-    force_create: bool = False,
+    force_create: bool = True,
 ) -> EventNotification:
     '''
     Create or update an event notification.
@@ -30,6 +30,9 @@ def create_notification(
         booking (Booking): The related booking instance.
         event (Event): The related event instance.
         metadata (Dict[str, Any]): Additional metadata for the notification.
+        priority (str): The priority level of the notification.
+        notification_type (str): The type/category of the notification.
+        force_create (bool): If True, always create a new notification even if one already exists.
 
     Returns:
         EventNotification: The created or updated event notification instance.
