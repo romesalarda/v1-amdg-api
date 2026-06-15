@@ -45,6 +45,8 @@ from apps.bookings.services import BookingCheckoutFinalizer
 from apps.payments.services.stripe.payment_intents import PaymentIntentService
 from apps.bookings.api.pagination import StandardPagination
 
+from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1045,6 +1047,21 @@ class BookingViewSet(viewsets.ModelViewSet):
                         booking=prefinalized_booking,
                         bank_transfer_evidence=bank_transfer_evidence,
                     )
+
+                    create_notification(
+                        event=intent.event,
+                        notification_type=NotificationTypeChoices.BOOKING_CONFIRMATION,
+                        priority=NotificationPriorityChoices.HIGH,
+                        payment=payment,
+                        booking=prefinalized_booking,
+                        metadata={
+                            'message': f'New bank transfer payment pending verification for booking intent {intent.booking_intent_id}.',
+                            'payment_id': str(payment.payment_id),
+                            'booking_intent_id': str(intent.booking_intent_id),
+                        },
+                    )
+
+
                     return Response(response_data, status=status.HTTP_201_CREATED)
 
                 if payment_method.method_type == PaymentMethodTypeChoices.CASH:

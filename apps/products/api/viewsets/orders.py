@@ -35,6 +35,12 @@ from apps.payments.models.discounts import DiscountType as _DiscountType
 from apps.common.pagination import StandardPagination
 from djmoney.money import Money
 
+from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
+from apps.products.tasks import send_order_pending_bank_transfer_email
+
+from django.db import transaction
+import logging
+
 import decimal
 
 User = get_user_model()
@@ -978,8 +984,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         from apps.products.api.serializers import OrderCheckoutSerializer
         from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices
         from apps.payments.services.stripe.payment_intents import PaymentIntentService
-        from django.db import transaction
-        import logging
         
         logger = logging.getLogger(__name__)
 
@@ -1252,7 +1256,6 @@ class OrderViewSet(viewsets.ModelViewSet):
                 
                 logger.info(f"Generated bank transfer reference {payment.bank_transfer_reference} for payment {payment.payment_reference}")
 
-                from apps.products.tasks import send_order_pending_bank_transfer_email
                 _order_pk = locked_order.pk
                 _payment_pk = payment.pk
                 transaction.on_commit(
@@ -1262,6 +1265,18 @@ class OrderViewSet(viewsets.ModelViewSet):
                     "Queued pending bank transfer email for order %s (payment %s)",
                     locked_order.order_reference_id,
                     payment.payment_reference,
+                )
+
+                create_notification(
+                    payment=payment,
+                    locked_order=locked_order,
+                    event=order_event,
+                    message=(
+                        f"New order {locked_order.order_reference_id} is pending bank transfer payment. "
+                        f"Amount: {discounted_total}, Reference: {payment.bank_transfer_reference}"
+                    ),
+                    notification_type=NotificationTypeChoices.ORDER_FULFILLMENT,
+                    priority=NotificationPriorityChoices.HIGH,
                 )
             
             elif method_type == PaymentMethodTypeChoices.CASH:

@@ -5,6 +5,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
 import uuid
 
@@ -50,7 +51,6 @@ class AvailabilityWindow(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def clean(self):
-        from django.core.exceptions import ValidationError
         
         if self.available_from >= self.available_to:
             raise ValidationError("available_from must be earlier than available_to")
