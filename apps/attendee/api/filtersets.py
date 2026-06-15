@@ -21,7 +21,7 @@ from apps.attendee.models import (
 )
 
 from apps.common.models import VerificationStatus
-from apps.events.models import EventQuestionTypeChoices
+from apps.events.models import EventQuestionTypeChoices, EventFormQuestionTypeChoices
 from apps.products.models import OrderStatusChoices, ProductVariant
 from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
 from django.db.models import Value, TextField
@@ -36,6 +36,23 @@ PAYMENT_TARGET_CHOICES = (
     ('order', 'Order'),
     ('ticket', 'Ticket'),
 )
+
+
+# ── Custom multi-value filters ─────────────────────────────────────────────────
+
+class CharInFilter(django_filters.BaseInFilter, django_filters.CharFilter):
+    """Accepts comma-separated string values, e.g. ?status=active,inactive"""
+    pass
+
+
+class NumberInFilter(django_filters.BaseInFilter, django_filters.NumberFilter):
+    """Accepts comma-separated integer/float values, e.g. ?ids=1,2,3"""
+    pass
+
+
+class UUIDInFilter(django_filters.BaseInFilter, django_filters.UUIDFilter):
+    """Accepts comma-separated UUID values, e.g. ?uuids=abc...,def..."""
+    pass
 
 
 class AttendeeFilterSet(django_filters.FilterSet):
@@ -70,15 +87,15 @@ class AttendeeFilterSet(django_filters.FilterSet):
     self_registered = django_filters.BooleanFilter(method='filter_self_registered')
     
     # Event filters
-    event = django_filters.CharFilter(field_name='event__url_safe_title')
+    event = CharInFilter(field_name='event__url_safe_title', lookup_expr='in', label='Filter by event slug(s), comma-separated')
     event_title = django_filters.CharFilter(field_name='event__title', lookup_expr='icontains')
     
     # Booking filters
-    booking = django_filters.UUIDFilter(field_name='booking__booking_id')
+    booking = UUIDInFilter(field_name='booking__booking_id', lookup_expr='in', label='Filter by booking UUID(s), comma-separated')
     has_booking = django_filters.BooleanFilter(method='filter_has_booking')
     
     # Location filters
-    area_from = django_filters.NumberFilter(field_name='area_from__id')
+    area_from = NumberInFilter(field_name='area_from__id', lookup_expr='in', label='Filter by area ID(s), comma-separated')
     area_from_name = django_filters.CharFilter(field_name='area_from__area_name', lookup_expr='icontains')
     
     # Status filters
@@ -89,18 +106,18 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     # Personal information filters
     has_dietary_requirements = django_filters.BooleanFilter(method='filter_has_dietary_requirements')
-    dietary_requirement = django_filters.NumberFilter(method='filter_dietary_requirement')
+    dietary_requirement = NumberInFilter(method='filter_dietary_requirement', label='Filter by dietary requirement ID(s), comma-separated')
     
     has_medical_conditions = django_filters.BooleanFilter(method='filter_has_medical_conditions')
-    medical_condition = django_filters.NumberFilter(method='filter_medical_condition')
+    medical_condition = NumberInFilter(method='filter_medical_condition', label='Filter by medical condition ID(s), comma-separated')
     
     has_accessibility_requirements = django_filters.BooleanFilter(method='filter_has_accessibility_requirements')
-    accessibility_requirement = django_filters.NumberFilter(method='filter_accessibility_requirement')
+    accessibility_requirement = NumberInFilter(method='filter_accessibility_requirement', label='Filter by accessibility requirement ID(s), comma-separated')
     
     has_emergency_contacts = django_filters.BooleanFilter(method='filter_has_emergency_contacts')
     
     # Organisation filters
-    organisation = django_filters.NumberFilter(method='filter_organisation')
+    organisation = NumberInFilter(method='filter_organisation', label='Filter by organisation ID(s), comma-separated')
     organisation_name = django_filters.CharFilter(method='filter_organisation_name')
     
     # Date range filters
@@ -114,11 +131,11 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     # Question answer filters
     has_answered_questions = django_filters.BooleanFilter(method='filter_has_answered_questions', label='Has answered any questions')
-    question = django_filters.UUIDFilter(method='filter_question', label='Filter by specific question UUID')
+    question = UUIDInFilter(method='filter_question', label='Filter by question UUID(s), comma-separated')
     question_answer_search = django_filters.CharFilter(method='filter_question_answer_search', label='Search within answer text')
-    answered_question_type = django_filters.ChoiceFilter(method='filter_answered_question_type', choices=EventQuestionTypeChoices.choices, label='Filter by question type')
+    answered_question_type = CharInFilter(method='filter_answered_question_type', label='Filter by question type(s), comma-separated')
     has_unanswered_required_questions = django_filters.BooleanFilter(method='filter_has_unanswered_required_questions', label='Has incomplete required questions')
-    selected_option = django_filters.NumberFilter(method='filter_selected_option', label='Filter by selected choice option ID')
+    selected_option = NumberInFilter(method='filter_selected_option', label='Filter by selected choice option ID(s), comma-separated')
     answer_submitted_after = django_filters.DateTimeFilter(method='filter_answer_submitted_after', label='Answers submitted after date')
     answer_submitted_before = django_filters.DateTimeFilter(method='filter_answer_submitted_before', label='Answers submitted before date')
     slider_answer_min = django_filters.NumberFilter(method='filter_slider_answer_min', label='Slider answer minimum value')
@@ -126,9 +143,9 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     # Order filters
     has_orders = django_filters.BooleanFilter(method='filter_has_orders', label='Has any orders')
-    order_status = django_filters.ChoiceFilter(method='filter_order_status', choices=OrderStatusChoices.choices, label='Filter by order status')
-    order_status_not = django_filters.ChoiceFilter(method='filter_order_status_not', choices=OrderStatusChoices.choices, label='Exclude order status')
-    purchased_product = django_filters.NumberFilter(method='filter_purchased_product', label='Filter by purchased product variant ID')
+    order_status = CharInFilter(method='filter_order_status', label='Filter by order status(es), comma-separated')
+    order_status_not = CharInFilter(method='filter_order_status_not', label='Exclude order status(es), comma-separated')
+    purchased_product = NumberInFilter(method='filter_purchased_product', label='Filter by purchased product variant ID(s), comma-separated')
     purchased_product_title = django_filters.CharFilter(method='filter_purchased_product_title', label='Search in purchased product titles')
     order_total_min = django_filters.NumberFilter(method='filter_order_total_min', label='Order total minimum amount')
     order_total_max = django_filters.NumberFilter(method='filter_order_total_max', label='Order total maximum amount')
@@ -140,36 +157,92 @@ class AttendeeFilterSet(django_filters.FilterSet):
 
     # Payment filters
     has_payments = django_filters.BooleanFilter(method='filter_has_payments', label='Has any payments')
-    payment_id = django_filters.UUIDFilter(method='filter_payment_id', label='Filter by payment UUID')
+    payment_id = UUIDInFilter(method='filter_payment_id', label='Filter by payment UUID(s), comma-separated')
     payment_reference = django_filters.CharFilter(method='filter_payment_reference', label='Filter by payment reference')
     bank_transfer_reference = django_filters.CharFilter(method='filter_bank_transfer_reference', label='Filter by bank transfer reference')
-    payment_status = django_filters.ChoiceFilter(
+    payment_status = CharInFilter(
         method='filter_payment_status',
-        choices=PaymentStatusChoices.choices,
-        label='Filter by payment status'
+        label='Filter by payment status(es), comma-separated'
     )
     payment_target = django_filters.ChoiceFilter(method='filter_payment_target', choices=PAYMENT_TARGET_CHOICES, label='Payment target type')
-    payment_method_type = django_filters.ChoiceFilter(
+    payment_method_type = CharInFilter(
         method='filter_payment_method_type',
-        choices=PaymentMethodTypeChoices.choices,
-        label='Filter by payment method type'
+        label='Filter by payment method type(s), comma-separated'
     )
     payment_method_title = django_filters.CharFilter(method='filter_payment_method_title', label='Filter by payment method title')
 
     # Refund filters
     has_refunds = django_filters.BooleanFilter(method='filter_has_refunds', label='Has any refunds')
-    refund_status = django_filters.ChoiceFilter(method='filter_refund_status', choices=VerificationStatus.choices, label='Filter by refund verification status')
+    refund_status = CharInFilter(method='filter_refund_status', label='Filter by refund verification status(es), comma-separated')
     refund_is_active = django_filters.BooleanFilter(method='filter_refund_is_active', label='Filter by active refund requests')
 
     # Donation filters
     has_donations = django_filters.BooleanFilter(method='filter_has_donations', label='Has any donations')
-    donation_status = django_filters.ChoiceFilter(method='filter_donation_status', choices=VerificationStatus.choices, label='Filter by donation verification status')
+    donation_status = CharInFilter(method='filter_donation_status', label='Filter by donation verification status(es), comma-separated')
 
     # Discount filters (actual transaction-linked usage)
     has_discounts_used = django_filters.BooleanFilter(method='filter_has_discounts_used', label='Has discounts used in transactions')
-    discount_id = django_filters.UUIDFilter(method='filter_discount_id', label='Filter by discount UUID')
+    discount_id = UUIDInFilter(method='filter_discount_id', label='Filter by discount UUID(s), comma-separated')
     discount_name = django_filters.CharFilter(method='filter_discount_name', label='Filter by discount name')
-    
+
+    # ── EventForm response filters ─────────────────────────────────────────────
+    has_form_responses = django_filters.BooleanFilter(
+        method='filter_has_form_responses',
+        label='Has any EventForm responses',
+    )
+    form_response_form = UUIDInFilter(
+        method='filter_form_response_form',
+        label='Filter by EventForm UUID(s), comma-separated',
+    )
+    form_response_complete = django_filters.BooleanFilter(
+        method='filter_form_response_complete',
+        label='Filter by form response completion status',
+    )
+    form_answer_search = django_filters.CharFilter(
+        method='filter_form_answer_search',
+        label='Search within EventForm answer text (icontains)',
+    )
+    form_answered_question = NumberInFilter(
+        method='filter_form_answered_question',
+        label='Filter by EventForm question ID(s), comma-separated',
+    )
+    form_answered_question_type = CharInFilter(
+        method='filter_form_answered_question_type',
+        label='Filter by EventForm question type(s), comma-separated',
+    )
+    form_has_unanswered_required = django_filters.BooleanFilter(
+        method='filter_form_has_unanswered_required',
+        label='Has unanswered required EventForm questions (uses is_complete flag)',
+    )
+    form_selected_option = NumberInFilter(
+        method='filter_form_selected_option',
+        label='Filter by selected EventForm choice option ID(s), comma-separated',
+    )
+    form_answer_submitted_after = django_filters.DateTimeFilter(
+        method='filter_form_answer_submitted_after',
+        label='EventForm answers submitted after this datetime',
+    )
+    form_answer_submitted_before = django_filters.DateTimeFilter(
+        method='filter_form_answer_submitted_before',
+        label='EventForm answers submitted before this datetime',
+    )
+    form_numeric_answer_min = django_filters.NumberFilter(
+        method='filter_form_numeric_answer_min',
+        label='EventForm slider/rating answer minimum value (numeric cast)',
+    )
+    form_numeric_answer_max = django_filters.NumberFilter(
+        method='filter_form_numeric_answer_max',
+        label='EventForm slider/rating answer maximum value (numeric cast)',
+    )
+    form_answer_date_after = django_filters.DateFilter(
+        method='filter_form_answer_date_after',
+        label='EventForm date-type answer on or after this date (YYYY-MM-DD)',
+    )
+    form_answer_date_before = django_filters.DateFilter(
+        method='filter_form_answer_date_before',
+        label='EventForm date-type answer on or before this date (YYYY-MM-DD)',
+    )
+
     class Meta:
         model = Attendee
         fields = {
@@ -342,8 +415,8 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.filter(attendeedietaryrequirement__isnull=True).distinct()
     
     def filter_dietary_requirement(self, queryset, name, value):
-        """Filter by specific dietary requirement."""
-        return queryset.filter(attendeedietaryrequirement__dietary_requirement__id=value).distinct()
+        """Filter by specific dietary requirement(s)."""
+        return queryset.filter(attendeedietaryrequirement__dietary_requirement__id__in=value).distinct()
     
     def filter_has_medical_conditions(self, queryset, name, value):
         """Filter attendees with medical conditions."""
@@ -353,8 +426,8 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.filter(attendeemedicalcondition__isnull=True).distinct()
     
     def filter_medical_condition(self, queryset, name, value):
-        """Filter by specific medical condition."""
-        return queryset.filter(attendeemedicalcondition__medical_condition__id=value).distinct()
+        """Filter by specific medical condition(s)."""
+        return queryset.filter(attendeemedicalcondition__medical_condition__id__in=value).distinct()
     
     def filter_has_accessibility_requirements(self, queryset, name, value):
         """Filter attendees with accessibility requirements."""
@@ -364,9 +437,9 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.filter(attendeeaccessibilityrequirement__isnull=True).distinct()
     
     def filter_accessibility_requirement(self, queryset, name, value):
-        """Filter by specific accessibility requirement."""
+        """Filter by specific accessibility requirement(s)."""
         return queryset.filter(
-            attendeeaccessibilityrequirement__accessibility_requirement__id=value
+            attendeeaccessibilityrequirement__accessibility_requirement__id__in=value
         ).distinct()
     
     def filter_has_emergency_contacts(self, queryset, name, value):
@@ -377,8 +450,8 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.filter(emergency_contacts__isnull=True).distinct()
     
     def filter_organisation(self, queryset, name, value):
-        """Filter by organisation ID."""
-        return queryset.filter(organisations__organisation__id=value).distinct()
+        """Filter by organisation ID(s)."""
+        return queryset.filter(organisations__organisation__id__in=value).distinct()
     
     def filter_organisation_name(self, queryset, name, value):
         """Filter by organisation name."""
@@ -400,16 +473,20 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.filter(question_answers__isnull=True).distinct()
     
     def filter_question(self, queryset, name, value):
-        """Filter attendees who answered a specific question."""
-        return queryset.filter(question_answers__question__id=value).distinct()
+        """Filter attendees who answered specific question(s)."""
+        return queryset.filter(question_answers__question__id__in=value).distinct()
     
     def filter_question_answer_search(self, queryset, name, value):
         """Search within question answer text."""
         return queryset.filter(question_answers__answer_text__icontains=value).distinct()
     
     def filter_answered_question_type(self, queryset, name, value):
-        """Filter attendees who answered questions of a specific type."""
-        return queryset.filter(question_answers__question__question_type=value).distinct()
+        """Filter attendees who answered questions of specific type(s)."""
+        valid = {c[0] for c in EventQuestionTypeChoices.choices}
+        values = [v for v in value if v in valid]
+        if not values:
+            return queryset
+        return queryset.filter(question_answers__question__question_type__in=values).distinct()
     
     def filter_has_unanswered_required_questions(self, queryset, name, value):
         """Filter attendees with incomplete required questions for their event."""
@@ -426,9 +503,9 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.filter(question_answers__question__required=True).distinct()
     
     def filter_selected_option(self, queryset, name, value):
-        """Filter attendees who selected a specific choice option."""
+        """Filter attendees who selected specific choice option(s)."""
         return queryset.filter(
-            question_answers__selected_options__option__id=value
+            question_answers__selected_options__option__id__in=value
         ).distinct()
     
     def filter_answer_submitted_after(self, queryset, name, value):
@@ -462,17 +539,25 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.filter(orders__isnull=True).distinct()
     
     def filter_order_status(self, queryset, name, value):
-        """Filter attendees with orders in a specific status."""
-        return queryset.filter(orders__status=value).distinct()
+        """Filter attendees with orders in specific status(es)."""
+        valid = {c[0] for c in OrderStatusChoices.choices}
+        values = [v for v in value if v in valid]
+        if not values:
+            return queryset
+        return queryset.filter(orders__status__in=values).distinct()
     
     def filter_order_status_not(self, queryset, name, value):
-        """Exclude attendees with orders in a specific status."""
-        return queryset.exclude(orders__status=value).distinct()
+        """Exclude attendees with orders in specific status(es)."""
+        valid = {c[0] for c in OrderStatusChoices.choices}
+        values = [v for v in value if v in valid]
+        if not values:
+            return queryset
+        return queryset.exclude(orders__status__in=values).distinct()
     
     def filter_purchased_product(self, queryset, name, value):
-        """Filter attendees who purchased a specific product variant."""
+        """Filter attendees who purchased specific product variant(s)."""
         return queryset.filter(
-            orders__order_items__product_variant__id=value
+            orders__order_items__product_variant__id__in=value
         ).distinct()
     
     def filter_purchased_product_title(self, queryset, name, value):
@@ -532,9 +617,9 @@ class AttendeeFilterSet(django_filters.FilterSet):
         return queryset.exclude(id__in=matched.values_list('id', flat=True)).distinct()
 
     def filter_payment_id(self, queryset, name, value):
-        """Filter attendees by payment UUID."""
+        """Filter attendees by payment UUID(s)."""
         from apps.payments.models import Payment
-        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(payment_id=value))
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(payment_id__in=value))
 
     def filter_payment_reference(self, queryset, name, value):
         """Filter attendees by payment reference."""
@@ -547,8 +632,13 @@ class AttendeeFilterSet(django_filters.FilterSet):
         return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(bank_transfer_reference__icontains=value))
 
     def filter_payment_status(self, queryset, name, value):
-        """Filter attendees by payment status."""
+        """Filter attendees by payment status(es)."""
         from apps.payments.models import Payment
+
+        valid = {c[0] for c in PaymentStatusChoices.choices}
+        values = [v for v in value if v in valid]
+        if not values:
+            return queryset
 
         selected_target = self.form.cleaned_data.get('payment_target')
         valid_targets = {choice[0] for choice in PAYMENT_TARGET_CHOICES}
@@ -559,7 +649,7 @@ class AttendeeFilterSet(django_filters.FilterSet):
 
         return self._filter_attendees_by_payment_queryset(
             queryset,
-            Payment.objects.filter(status=value),
+            Payment.objects.filter(status__in=values),
             targets=targets,
         )
 
@@ -569,9 +659,13 @@ class AttendeeFilterSet(django_filters.FilterSet):
         return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.all(), targets={value})
 
     def filter_payment_method_type(self, queryset, name, value):
-        """Filter attendees by payment method type."""
+        """Filter attendees by payment method type(s)."""
         from apps.payments.models import Payment
-        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(method__method_type=value))
+        valid = {c[0] for c in PaymentMethodTypeChoices.choices}
+        values = [v for v in value if v in valid]
+        if not values:
+            return queryset
+        return self._filter_attendees_by_payment_queryset(queryset, Payment.objects.filter(method__method_type__in=values))
 
     def filter_payment_method_title(self, queryset, name, value):
         """Filter attendees by payment method title."""
@@ -592,11 +686,15 @@ class AttendeeFilterSet(django_filters.FilterSet):
         return queryset.exclude(id__in=matched.values_list('id', flat=True)).distinct()
 
     def filter_refund_status(self, queryset, name, value):
-        """Filter attendees by refund verification status."""
+        """Filter attendees by refund verification status(es)."""
         from apps.payments.models import Payment
+        valid = {c[0] for c in VerificationStatus.choices}
+        values = [v for v in value if v in valid]
+        if not values:
+            return queryset
         return self._filter_attendees_by_payment_queryset(
             queryset,
-            Payment.objects.filter(refund_requests__verification_status=value).distinct()
+            Payment.objects.filter(refund_requests__verification_status__in=values).distinct()
         )
 
     def filter_refund_is_active(self, queryset, name, value):
@@ -621,11 +719,15 @@ class AttendeeFilterSet(django_filters.FilterSet):
         return queryset.exclude(id__in=matched.values_list('id', flat=True)).distinct()
 
     def filter_donation_status(self, queryset, name, value):
-        """Filter attendees by donation verification status."""
+        """Filter attendees by donation verification status(es)."""
         from apps.payments.models import Payment
+        valid = {c[0] for c in VerificationStatus.choices}
+        values = [v for v in value if v in valid]
+        if not values:
+            return queryset
         return self._filter_attendees_by_payment_queryset(
             queryset,
-            Payment.objects.filter(donations__verification_status=value).distinct()
+            Payment.objects.filter(donations__verification_status__in=values).distinct()
         )
 
     # Discount filter methods
@@ -639,11 +741,11 @@ class AttendeeFilterSet(django_filters.FilterSet):
         return queryset.exclude(id__in=matched.values_list('id', flat=True)).distinct()
 
     def filter_discount_id(self, queryset, name, value):
-        """Filter attendees by discount UUID used in transaction-linked entities."""
+        """Filter attendees by discount UUID(s) used in transaction-linked entities."""
         from apps.payments.models import Discount
         return self._filter_attendees_by_discount_queryset(
             queryset,
-            Discount.objects.filter(discount_id=value)
+            Discount.objects.filter(discount_id__in=value)
         )
 
     def filter_discount_name(self, queryset, name, value):
@@ -653,6 +755,126 @@ class AttendeeFilterSet(django_filters.FilterSet):
             queryset,
             Discount.objects.filter(name__icontains=value)
         )
+
+    # ── EventForm response filter methods ─────────────────────────────────────
+
+    def filter_has_form_responses(self, queryset, name, value):
+        """Filter attendees who have (or have not) submitted any EventForm responses."""
+        if value:
+            return queryset.filter(form_responses__isnull=False).distinct()
+        return queryset.filter(form_responses__isnull=True).distinct()
+
+    def filter_form_response_form(self, queryset, name, value):
+        """Filter attendees who responded to specific EventForm(s) by UUID."""
+        return queryset.filter(form_responses__form__id__in=value).distinct()
+
+    def filter_form_response_complete(self, queryset, name, value):
+        """Filter attendees by whether their form response is marked complete."""
+        return queryset.filter(form_responses__is_complete=value).distinct()
+
+    def filter_form_answer_search(self, queryset, name, value):
+        """Search attendees by text within their EventForm answer_text fields."""
+        return queryset.filter(
+            form_responses__answers__answer_text__icontains=value
+        ).distinct()
+
+    def filter_form_answered_question(self, queryset, name, value):
+        """Filter attendees who answered specific EventForm question(s) by ID."""
+        return queryset.filter(
+            form_responses__answers__question__id__in=value
+        ).distinct()
+
+    def filter_form_answered_question_type(self, queryset, name, value):
+        """Filter attendees who answered EventForm questions of specific type(s)."""
+        valid = {c[0] for c in EventFormQuestionTypeChoices.choices}
+        values = [v for v in value if v in valid]
+        if not values:
+            return queryset
+        return queryset.filter(
+            form_responses__answers__question__question_type__in=values
+        ).distinct()
+
+    def filter_form_has_unanswered_required(self, queryset, name, value):
+        """Filter attendees with incomplete (is_complete=False) EventForm responses."""
+        if value:
+            return queryset.filter(
+                form_responses__isnull=False,
+                form_responses__is_complete=False,
+            ).distinct()
+        return queryset.exclude(
+            form_responses__isnull=False,
+            form_responses__is_complete=False,
+        ).distinct()
+
+    def filter_form_selected_option(self, queryset, name, value):
+        """Filter attendees who selected specific EventForm choice option(s) by ID."""
+        return queryset.filter(
+            form_responses__answers__selected_options__option__id__in=value
+        ).distinct()
+
+    def filter_form_answer_submitted_after(self, queryset, name, value):
+        """Filter attendees who submitted EventForm answers after a specific datetime."""
+        return queryset.filter(
+            form_responses__answers__submitted_at__gte=value
+        ).distinct()
+
+    def filter_form_answer_submitted_before(self, queryset, name, value):
+        """Filter attendees who submitted EventForm answers before a specific datetime."""
+        return queryset.filter(
+            form_responses__answers__submitted_at__lte=value
+        ).distinct()
+
+    def filter_form_numeric_answer_min(self, queryset, name, value):
+        """Filter by EventForm slider/rating answers >= value (numeric cast)."""
+        from apps.events.models.forms.responses import EventFormResponseAnswer
+        from django.db.models.functions import Cast
+        from django.db.models import IntegerField
+
+        range_types = list(EventFormQuestionTypeChoices.range_types())
+        matching = (
+            EventFormResponseAnswer.objects
+            .filter(
+                question__question_type__in=range_types,
+                answer_text__regex=r'^-?\d+$',
+            )
+            .annotate(numeric_val=Cast('answer_text', output_field=IntegerField()))
+            .filter(numeric_val__gte=value)
+            .values('response__attendee_id')
+        )
+        return queryset.filter(id__in=matching).distinct()
+
+    def filter_form_numeric_answer_max(self, queryset, name, value):
+        """Filter by EventForm slider/rating answers <= value (numeric cast)."""
+        from apps.events.models.forms.responses import EventFormResponseAnswer
+        from django.db.models.functions import Cast
+        from django.db.models import IntegerField
+
+        range_types = list(EventFormQuestionTypeChoices.range_types())
+        matching = (
+            EventFormResponseAnswer.objects
+            .filter(
+                question__question_type__in=range_types,
+                answer_text__regex=r'^-?\d+$',
+            )
+            .annotate(numeric_val=Cast('answer_text', output_field=IntegerField()))
+            .filter(numeric_val__lte=value)
+            .values('response__attendee_id')
+        )
+        return queryset.filter(id__in=matching).distinct()
+
+    def filter_form_answer_date_after(self, queryset, name, value):
+        """Filter by EventForm DATE-type answers on or after the given date."""
+        return queryset.filter(
+            form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
+            form_responses__answers__answer_text__gte=value.isoformat(),
+        ).distinct()
+
+    def filter_form_answer_date_before(self, queryset, name, value):
+        """Filter by EventForm DATE-type answers on or before the given date."""
+        return queryset.filter(
+            form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
+            form_responses__answers__answer_text__lte=value.isoformat(),
+        ).distinct()
 
 
 class AttendeeGuardianFilterSet(django_filters.FilterSet):

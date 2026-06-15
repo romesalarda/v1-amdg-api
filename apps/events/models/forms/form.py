@@ -37,6 +37,7 @@ class EventForm(models.Model):
         blank=True,
         related_name='created_event_forms',
     )
+        
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
