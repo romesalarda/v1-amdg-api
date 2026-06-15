@@ -1,6 +1,177 @@
 from rest_framework import permissions
 
 
+# ---------------------------------------------------------------------------
+# Helpers shared across permission classes
+# ---------------------------------------------------------------------------
+
+def _get_event_from_obj(obj):
+    """Extract an Event instance from an object or return the object itself."""
+    if obj.__class__.__name__ == 'Event':
+        return obj
+    return getattr(obj, 'event', None)
+
+
+def _user_is_event_staff_member(user, event):
+    """Return True if *user* has an EventStaff record for *event*."""
+    return event.staff_members.filter(user=user).exists()
+
+
+def _user_has_administrative_role(user, event):
+    """Return True if *user* has an ADMINISTRATIVE EventRole for *event*."""
+    from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+    return EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+    ).exists()
+
+
+# ---------------------------------------------------------------------------
+# New granular permission classes (replace inline viewset checks)
+# ---------------------------------------------------------------------------
+
+
+class IsEventOwnerOrDjangoStaff(permissions.BasePermission):
+    """
+    Grants access when the request user is:
+      - the event creator, OR
+      - a Django staff / superuser.
+
+    Used for actions that only the event owner (or a platform admin) should
+    control: add/remove staff, soft-delete/restore, availability window writes,
+    resource writes, permission assignment.
+    """
+
+    message = "You must be the event creator or a platform administrator to perform this action."
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return True
+        event = _get_event_from_obj(obj)
+        if event is None:
+            return False
+        return event.created_by == user
+
+
+class IsEventOwnerOrEventStaffOrDjangoStaff(permissions.BasePermission):
+    """
+    Grants access when the request user is:
+      - the event creator, OR
+      - an assigned EventStaff member, OR
+      - a Django staff / superuser.
+
+    Used for collaborative management actions where existing team members
+    should also have write access: staff invite management, ws-token.
+    """
+
+    message = "You must be the event owner, an event staff member, or a platform administrator."
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return True
+        event = _get_event_from_obj(obj)
+        if event is None:
+            return False
+        return event.created_by == user or _user_is_event_staff_member(user, event)
+    
+class StaffInvitePermission(IsEventOwnerOrEventStaffOrDjangoStaff):
+    
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+    
+    def has_object_permission(self, request, view, obj):
+        
+        if obj.target_user == request.user:
+            return True
+
+        return super().has_object_permission(request, view, obj)
+
+class IsEventAdminOrDjangoStaff(permissions.BasePermission):
+    """
+    Grants access when the request user is:
+      - the event creator, OR
+      - a user with an ADMINISTRATIVE EventRole for this event, OR
+      - a Django staff / superuser.
+
+    Used for elevated management actions: approve/reject sponsors,
+    create/modify/delete sponsorship packages.
+    """
+
+    message = "You must be an event administrator or a platform administrator."
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return True
+        event = _get_event_from_obj(obj)
+        if event is None:
+            return False
+        return event.created_by == user or _user_has_administrative_role(user, event)
+
+
+class CanManageSponsorForOrganisation(permissions.BasePermission):
+    """
+    Grants access when the request user can act on behalf of the sponsor's
+    organisation — i.e. is an event admin OR holds an OrganisationControl
+    record for the organisation supplied in the request payload.
+
+    For list-level checks (has_permission) this only verifies authentication;
+    the organisation-specific check happens at the object / action level via
+    has_object_permission, and for create paths the viewset calls
+    ``check_organisation_permission(request, event, organisation)`` directly.
+    """
+
+    message = "You don't have permission to manage a sponsor for this organisation."
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        """obj is an EventSponsor instance."""
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return True
+        event = getattr(obj, 'event', None)
+        if event is None:
+            return False
+        if event.created_by == user or _user_has_administrative_role(user, event):
+            return True
+        # Fall back to org-level control
+        from apps.organisations.models import OrganisationControl
+        return OrganisationControl.objects.filter(
+            user=user,
+            organisation=obj.organisation,
+        ).exists()
+
+    @staticmethod
+    def user_can_manage_for_organisation(user, event, organisation):
+        """
+        Helper callable from viewset action logic for create paths where no
+        object instance exists yet.
+        """
+        if user.is_staff or user.is_superuser:
+            return True
+        if event.created_by == user or _user_has_administrative_role(user, event):
+            return True
+        from apps.organisations.models import OrganisationControl
+        return OrganisationControl.objects.filter(
+            user=user,
+            organisation=organisation,
+        ).exists()
+
+
 class IsEventOwnerOrStaff(permissions.BasePermission):
     """
     Permission: Event owner or Django staff can manage events.

@@ -208,7 +208,7 @@ class EventFormResponseOwnershipTest(FormViewSetTestBase):
         self.client.force_authenticate(user=self.regular_user)
         data = {
             'form': str(self.form.id),
-            'attendee': attendee.id,
+            'attendee': attendee.attendee_id,
             'is_complete': False,
         }
         response = self.client.post('/api/event/form-responses/', data, format='json')
@@ -219,7 +219,7 @@ class EventFormResponseOwnershipTest(FormViewSetTestBase):
         self.client.force_authenticate(user=self.regular_user)
         data = {
             'form': str(self.form.id),
-            'attendee': attendee.id,
+            'attendee': attendee.attendee_id,
             'is_complete': False,
         }
         response = self.client.post('/api/event/form-responses/', data, format='json')

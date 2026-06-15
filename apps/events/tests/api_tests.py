@@ -51,6 +51,7 @@ class BaseEventAPITestCase(TestCase):
             password='testpass123',
             is_staff=True
         )
+
         
         self.organisation = Organisation.objects.create(
             title='Test Organisation',
@@ -182,6 +183,7 @@ class EventAPITest(BaseEventAPITestCase):
             'timezone': 'Europe/London',
             'created_by': self.user.id
         }
+        test_response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/')
         response = self.client.put(f'/api/event/list/{self.event.url_safe_title}/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['title'], 'Updated Conference')

@@ -311,7 +311,9 @@ class EventFormViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             order_map = {item['id']: item['order'] for item in questions_data}
             for q in questions:
-                q.order = order_map[q.id]
+                if str(q.id) not in order_map: # TODO: test this
+                    pass
+                q.order = order_map[str(q.id)]
                 q.save(update_fields=['order'])
 
         _broadcast_form_event(
