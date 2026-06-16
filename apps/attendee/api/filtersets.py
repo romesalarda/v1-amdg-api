@@ -7,7 +7,9 @@ including advanced search by personal information.
 import django_filters
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, F, TimeField, DateField, IntegerField, Value, TextField
+from django.db.models.functions import Cast
+
 from apps.attendee.models import (
     Attendee, AttendeeGuardian, AttendeeAction,
     FamilyGroup, FamilyAttendee, AttendeeMessage,
@@ -19,12 +21,14 @@ from apps.attendee.models import (
     AttendeeRelationship, AttendeeActionChoices,
     AttendeeMessagePriority, HumanRelationshipChoices,
 )
+from django.utils import timezone
+from datetime import date, datetime
+from dateutil.relativedelta import relativedelta
 
 from apps.common.models import VerificationStatus
 from apps.events.models import EventQuestionTypeChoices, EventFormQuestionTypeChoices
 from apps.products.models import OrderStatusChoices, ProductVariant
 from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
-from django.db.models import Value, TextField
 
 try:
     from django.contrib.postgres.search import TrigramSimilarity
@@ -242,6 +246,14 @@ class AttendeeFilterSet(django_filters.FilterSet):
         method='filter_form_answer_date_before',
         label='EventForm date-type answer on or before this date (YYYY-MM-DD)',
     )
+    form_answer_time_after = django_filters.TimeFilter(
+        method='filter_form_answer_time_after',
+        label='EventForm time-type answer on or after this time (HH:MM:SS)',
+    )
+    form_answer_time_before = django_filters.TimeFilter(
+        method='filter_form_answer_time_before',
+        label='EventForm time-type answer on or before this time (HH:MM:SS)',
+    )
 
     class Meta:
         model = Attendee
@@ -250,6 +262,16 @@ class AttendeeFilterSet(django_filters.FilterSet):
             'relationship_to_user': ['exact'],
             'gender': ['exact', 'icontains'],
         }
+
+    # def filter_form_answer_time_after(self, queryset, name, value):
+    #     qs = queryset.filter(
+    #         question_answers__question__question_type=EventFormQuestionTypeChoices.TIME,
+    #         question_answers__answer_text__gte=self._normalise_time(value),
+    #     ).distinct()
+    #     print(qs.query)  # Debug: print the generated SQL query
+    #     return qs
+
+    
 
     def _booking_payment_attendee_ids(self, payment_queryset):
         """Return attendee ids whose booking is targeted by the supplied payments."""
@@ -330,22 +352,16 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     def filter_age_min(self, queryset, name, value):
         """Filter by minimum age."""
-        from datetime import date
-        from dateutil.relativedelta import relativedelta
         max_birth_date = date.today() - relativedelta(years=int(value))
         return queryset.filter(date_of_birth__lte=max_birth_date)
     
     def filter_age_max(self, queryset, name, value):
         """Filter by maximum age."""
-        from datetime import date
-        from dateutil.relativedelta import relativedelta
         min_birth_date = date.today() - relativedelta(years=int(value) + 1)
         return queryset.filter(date_of_birth__gte=min_birth_date)
     
     def filter_is_minor(self, queryset, name, value):
         """Filter by minor status (under 18)."""
-        from datetime import date
-        from dateutil.relativedelta import relativedelta
         eighteen_years_ago = date.today() - relativedelta(years=18)
         if value:
             return queryset.filter(date_of_birth__gt=eighteen_years_ago)
@@ -395,7 +411,6 @@ class AttendeeFilterSet(django_filters.FilterSet):
     
     def filter_is_event_staff(self, queryset, name, value):
         """Filter attendees who are event staff."""
-        from apps.events.models import EventStaff
         if value:
             return queryset.filter(
                 user__isnull=False,
@@ -827,8 +842,6 @@ class AttendeeFilterSet(django_filters.FilterSet):
     def filter_form_numeric_answer_min(self, queryset, name, value):
         """Filter by EventForm slider/rating answers >= value (numeric cast)."""
         from apps.events.models.forms.responses import EventFormResponseAnswer
-        from django.db.models.functions import Cast
-        from django.db.models import IntegerField
 
         range_types = list(EventFormQuestionTypeChoices.range_types())
         matching = (
@@ -846,8 +859,6 @@ class AttendeeFilterSet(django_filters.FilterSet):
     def filter_form_numeric_answer_max(self, queryset, name, value):
         """Filter by EventForm slider/rating answers <= value (numeric cast)."""
         from apps.events.models.forms.responses import EventFormResponseAnswer
-        from django.db.models.functions import Cast
-        from django.db.models import IntegerField
 
         range_types = list(EventFormQuestionTypeChoices.range_types())
         matching = (
@@ -864,10 +875,28 @@ class AttendeeFilterSet(django_filters.FilterSet):
 
     def filter_form_answer_date_after(self, queryset, name, value):
         """Filter by EventForm DATE-type answers on or after the given date."""
-        return queryset.filter(
-            form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
-            form_responses__answers__answer_text__gte=value.isoformat(),
-        ).distinct()
+        # return queryset.filter(
+        #     form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
+        #     form_responses__answers__answer_text__gte=value.isoformat(),
+        # ).distinct()
+        date_str = value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+        qs = (
+            queryset
+            .annotate(
+                answer_date_cast=Cast(
+                    F("form_responses__answers__answer_text"),
+                    output_field=DateField()
+                )
+            )
+            .filter(
+                form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
+                answer_date_cast__gte=date_str
+            )
+            .distinct()
+        )
+
+        return qs
 
     def filter_form_answer_date_before(self, queryset, name, value):
         """Filter by EventForm DATE-type answers on or before the given date."""
@@ -875,7 +904,45 @@ class AttendeeFilterSet(django_filters.FilterSet):
             form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
             form_responses__answers__answer_text__lte=value.isoformat(),
         ).distinct()
+    
+    def filter_form_answer_time_after(self, queryset, name, value):
+        time_value = value.isoformat() if hasattr(value, "isoformat") else str(value)
 
+        qs = (
+            queryset
+            .annotate(
+                answer_time_cast=Cast(
+                    F("form_responses__answers__answer_text"),
+                    output_field=TimeField()
+                )
+            )
+            .filter(
+                form_responses__answers__question__question_type=EventFormQuestionTypeChoices.TIME,
+                answer_time_cast__gte=time_value
+            )
+            .distinct()
+        )
+
+
+        return qs
+    
+    def filter_form_answer_time_before(self, queryset, name, value):
+        time_value = value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+        return (
+            queryset
+            .annotate(
+                answer_time_cast=Cast(
+                    F("form_responses__answers__answer_text"),
+                    output_field=TimeField()
+                )
+            )
+            .filter(
+                form_responses__answers__question__question_type=EventFormQuestionTypeChoices.TIME,
+                answer_time_cast__lte=time_value
+            )
+            .distinct()
+        )
 
 class AttendeeGuardianFilterSet(django_filters.FilterSet):
     """FilterSet for AttendeeGuardian."""

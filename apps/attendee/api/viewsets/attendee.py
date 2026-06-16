@@ -162,7 +162,6 @@ class AttendeeViewSet(viewsets.ModelViewSet):
 
         if user.is_anonymous:
             return queryset.none()
-        
         # Filter out soft-deleted attendees unless explicitly requested
         if not self.request.query_params.get('include_deleted'):
             queryset = queryset.filter(deleted_at__isnull=True)
@@ -170,6 +169,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         # Superusers and staff see all
         if user.is_superuser or user.is_staff:
             return queryset
+        
         
         # Regular users see their own attendees and those they guard
         return queryset.filter(
