@@ -263,16 +263,6 @@ class AttendeeFilterSet(django_filters.FilterSet):
             'gender': ['exact', 'icontains'],
         }
 
-    # def filter_form_answer_time_after(self, queryset, name, value):
-    #     qs = queryset.filter(
-    #         question_answers__question__question_type=EventFormQuestionTypeChoices.TIME,
-    #         question_answers__answer_text__gte=self._normalise_time(value),
-    #     ).distinct()
-    #     print(qs.query)  # Debug: print the generated SQL query
-    #     return qs
-
-    
-
     def _booking_payment_attendee_ids(self, payment_queryset):
         """Return attendee ids whose booking is targeted by the supplied payments."""
         from apps.bookings.models import Booking

@@ -164,7 +164,6 @@ class AttendeeViewSet(viewsets.ModelViewSet):
             return queryset.none()
         # Filter out soft-deleted attendees unless explicitly requested
 
-        print("\n SQL Query: ", self.filter_queryset(queryset).query)  # Debug: Print the raw SQL query for inspection
         if not self.request.query_params.get('include_deleted'):
             queryset = queryset.filter(deleted_at__isnull=True)
         

@@ -989,15 +989,12 @@ class BookingDetailSerializer(BookingListSerializer):
         # Exclude DRAFTING payments — these are inflight/abandoned reservation objects
         # created internally during checkout and are not confirmed payments.
         qs = obj.payments.exclude(status=PaymentStatusChoices.DRAFTING).distinct()
-        print(obj.get_related_orders())
         order_payments = (
             Payment.objects
             .filter(orders__in=obj.get_related_orders())
             .exclude(status=PaymentStatusChoices.DRAFTING)
             .distinct()
         )
-
-        print(order_payments)
 
         qs = qs | order_payments
         for payment in qs:

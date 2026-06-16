@@ -269,6 +269,7 @@ class Command(BaseCommand):
             self._seed_dietary_requirements()
             self._seed_product_categories()
             self._seed_event_roles()
+            self._seed_event_types()
 
             if not is_production:
                 self._seed_dummy_users()
@@ -433,6 +434,11 @@ class Command(BaseCommand):
                 'label': 'Pregnancy',
                 'description': 'Currently pregnant; may require specific accommodations.',
             },
+            {
+                'code': 'OTHER',
+                'label': 'Other Medical Condition',
+                'description': 'Any other medical condition not listed; see personal notes.',
+            }
         ]
 
         for data in conditions:
@@ -505,6 +511,11 @@ class Command(BaseCommand):
                 'code': 'SEATING',
                 'label': 'Seating Preference',
                 'description': 'Requires specific seating (e.g. aisle seat, front row, near exit).',
+            },
+            {
+                'code': 'OTHER',
+                'label': 'Other Accessibility Requirement',
+                'description': 'Any other accessibility requirement not listed; see personal notes.',
             },
         ]
 
@@ -585,7 +596,7 @@ class Command(BaseCommand):
                 'description': 'Requires low-salt meals for medical reasons.',
             },
             {
-                'code': 'OTHER_DIET',
+                'code': 'OTHER',
                 'label': 'Other Dietary Need',
                 'description': 'Other dietary requirement not listed; see personal notes.',
             },
@@ -612,16 +623,36 @@ class Command(BaseCommand):
         self.stdout.write('\nProduct Categories:')
 
         categories = [
-            {'name': 'Tickets',        'description': 'Event registration and entry tickets.'},
-            {'name': 'Merchandise',    'description': 'AMDG branded clothing and merchandise.'},
-            {'name': 'Resources',      'description': 'Books, booklets, and printed materials.'},
-            {'name': 'Media',          'description': 'Audio, video, and digital media products.'},
-            {'name': 'Donations',      'description': 'Charitable donations and fundraising items.'},
-            {'name': 'Workshops',      'description': 'Workshop registration and session tickets.'},
-            {'name': 'Catering',       'description': 'Meals, snacks, and catering packages.'},
-            {'name': 'Accommodation',  'description': 'Overnight stay and accommodation packages.'},
-            {'name': 'Transport',      'description': 'Travel and transport packages.'},
-            {'name': 'Digital Access', 'description': 'Online streaming and digital event access.'},
+            # {'name': 'Tickets',        'description': 'Event registration and entry tickets.'},
+            # {'name': 'Merchandise',    'description': 'AMDG branded clothing and merchandise.'},
+            # {'name': 'Resources',      'description': 'Books, booklets, and printed materials.'},
+            # {'name': 'Media',          'description': 'Audio, video, and digital media products.'},
+            # {'name': 'Donations',      'description': 'Charitable donations and fundraising items.'},
+            # {'name': 'Workshops',      'description': 'Workshop registration and session tickets.'},
+            # {'name': 'Catering',       'description': 'Meals, snacks, and catering packages.'},
+            # {'name': 'Accommodation',  'description': 'Overnight stay and accommodation packages.'},
+            # {'name': 'Transport',      'description': 'Travel and transport packages.'},
+            # {'name': 'Digital Access', 'description': 'Online streaming and digital event access.'},
+            {"name": "T-shirts", "description": "Event branded t-shirts and apparel."},
+            {"name": "Hoodies", "description": "Event branded hoodies and sweatshirts."},
+            {"name": "Accessories", "description": "Event branded accessories such as hats, bags, and mugs."},
+            {"name": "Posters", "description": "Event branded posters and prints."},
+            {"name": "Stickers", "description": "Event branded stickers and decals."},
+            {"name": "Books", "description": "Books and publications related to the event or organisation."},
+            {"name": "Digital Downloads", "description": "Digital products such as e-books, music, or software."},
+            {"name": "Tickets", "description": "Event registration and entry tickets."},
+            {"name": "Shorts", "description": "Event branded shorts and casual wear."},
+            {"name": "Socks", "description": "Event branded socks and footwear accessories."},
+            {"name": "Water Bottles", "description": "Event branded reusable water bottles and drinkware."},
+            {"name": "Trousers", "description": "Event branded trousers and pants."},
+            {"name": "Jackets", "description": "Event branded jackets and outerwear."},
+            {"name": "Sweatshirts", "description": "Event branded sweatshirts and pullovers."},
+            {"name": "Caps", "description": "Event branded caps and headwear."},
+            {"name": "Bags", "description": "Event branded bags, backpacks, and totes."},
+            {"name": "Mugs", "description": "Event branded mugs and drinkware."},
+            {"name": "Keychains", "description": "Event branded keychains and small accessories."},
+            {"name": "Pins", "description": "Event branded pins and badges."},
+            {"name": "Other Merchandise", "description": "Miscellaneous event branded merchandise and items."},
         ]
 
         for data in categories:
@@ -780,6 +811,70 @@ class Command(BaseCommand):
     # -----------------------------------------------------------------------
     # Dummy Users  (staging only)
     # -----------------------------------------------------------------------
+
+    def _seed_event_types(self):
+        from apps.events.models import EventType
+
+        self.stdout.write('\nEvent Types:')
+
+        event_types = [
+            {
+                'code': 'RETREAT',
+                'name': 'Retreat',
+                'description': 'A spiritual retreat event, often involving reflection and prayer.',
+            },
+            {
+                'code': 'CONFERENCE',
+                'name': 'Conference',
+                'description': 'A formal gathering for discussion, learning, and networking.',
+            },
+            {
+                'code': 'WORKSHOP',
+                'name': 'Workshop',
+                'description': 'An interactive session focused on skill-building or learning.',
+            },
+            {
+                'code': 'SEMINAR',
+                'name': 'Seminar',
+                'description': 'An educational session or lecture on a specific topic.',
+            },
+            {
+                'code': 'SOCIAL_EVENT',
+                'name': 'Social Event',
+                'description': "A casual gathering for socialising and community building.",
+            },
+            {
+                'code': 'FUNDRAISER',
+                'name': 'Fundraiser',
+                'description': 'An event organised to raise funds for a cause or organisation.',
+            },
+            {
+                'code': 'PFO',
+                'name': 'Pastoral Formation Order',
+                'description': 'An event focused on pastoral formation and development.',
+            },
+            {
+                'code': 'HOUSEHOLD',
+                'name': 'Household Event',
+                'description': 'An event organised for a specific household or family group.',
+            },
+            {
+                'code': 'FELLOWSHIP',
+                'name': 'Fellowship Gathering',
+                'description': 'A gathering for fellowship, community building, and shared activities.',
+            }
+        ]
+
+        for data in event_types:
+            obj, created = EventType.objects.get_or_create(
+                code=data['code'],
+                defaults={
+                    'name': data['name'],
+                    'description': data['description'],
+                    'active': True,
+                },
+            )
+            self._log('EventType', data['name'], created)
 
     def _seed_dummy_users(self):
         from django.contrib.auth import get_user_model

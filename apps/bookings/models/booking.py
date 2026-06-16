@@ -477,8 +477,6 @@ class Booking(models.Model, PaymentMixin):
         ).exclude(
             package__isnull=True
         ).values_list('attendee_id', flat=True).distinct()
-
-        print("attendee_ids:", list(attendee_ids))  # Debugging output
         
         # Find orders that reference these packages
         return Order.objects.filter(
