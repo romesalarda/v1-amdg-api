@@ -23,11 +23,17 @@ from apps.attendee.api.serializers import (
     AttendeeCreateSerializer, AttendeeUpdateSerializer,
     AttendeePreRemovalSummarySerializer,
 )
+from apps.attendee.api.serializers.filter_serializers import (
+    AttendeeFilterRequestSerializer,
+    AttendeeFilterResponseSerializer,
+)
 from apps.attendee.services.pre_removal import AttendeePreRemovalSummaryService
+from apps.attendee.services.filter_service import AttendeeFilterService
 
 from apps.attendee.api.filtersets import AttendeeFilterSet
 from apps.attendee.api.permissions import IsAttendeeOwnerOrStaff
 from apps.common.pagination import StandardPagination
+from apps.attendee.models import AttendeeRelationship
 
 @extend_schema_view(
     list=extend_schema(
@@ -182,7 +188,6 @@ class AttendeeViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Handle attendee creation with automatic user assignment for SELF relationship."""
-        from apps.attendee.models import AttendeeRelationship
         
         relationship = serializer.validated_data.get('relationship_to_user')
         user_in_data = serializer.validated_data.get('user')
@@ -345,6 +350,39 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         attendee = self.get_object()
         return Response(self._build_pre_removal_summary(attendee), status=status.HTTP_200_OK)
     
+    @extend_schema(
+        summary='Filter Attendees (POST)',
+        description=(
+            'Advanced attendee filtering via a structured JSON body. '
+            'Supports per-question conditions for EventForm responses and registration questions, '
+            'including type-aware filters (text contains, choice options, slider ranges, date/time ranges). '
+            'Returns a paginated response. The GET list endpoint remains available for simple queries.'
+        ),
+        tags=['Attendees'],
+        request=AttendeeFilterRequestSerializer,
+        responses={
+            200: AttendeeFilterResponseSerializer,
+            400: OpenApiResponse(description='Validation error'),
+        },
+    )
+    @action(detail=False, methods=['post'], url_path='filter')
+    def filter_attendees(self, request):
+        """POST-based attendee filter endpoint with structured JSON body and per-question conditions."""
+        serializer = AttendeeFilterRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        service = AttendeeFilterService(request, serializer.validated_data)
+        qs = service.get_queryset()
+        items, meta = service.paginate(qs)
+
+        result_serializer = AttendeeListSerializer(
+            items, many=True, context={'request': request}
+        )
+        return Response({
+            **meta,
+            'results': result_serializer.data,
+        })
+
     @extend_schema(
         summary='Cancel Attendee Registration',
         description=(
