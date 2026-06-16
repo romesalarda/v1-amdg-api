@@ -5,7 +5,7 @@ from django.db.models import Q
 from django.contrib.contenttypes.models import ContentType
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
-
+from djmoney.contrib.django_rest_framework import MoneyField
 from apps.events.models import (
     Event, EventType, EventSettings, EventStatusChoices,
     EventAuthorization,
@@ -674,6 +674,10 @@ class EventMyBookingBookingSerializer(serializers.Serializer):
         read_only=True,
     )
     can_manage_all_attendees = serializers.BooleanField(read_only=True)
+    is_cancelled = serializers.BooleanField(read_only=True)
+    total_amount = MoneyField(
+        max_digits=14, decimal_places=2,
+        read_only=True, help_text='Total amount for the booking, including all attendees and tickets')
 
 
 class EventMyBookingResponseSerializer(serializers.Serializer):

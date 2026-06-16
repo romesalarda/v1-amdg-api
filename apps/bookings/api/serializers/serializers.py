@@ -37,6 +37,7 @@ from apps.bookings.models import (
 from apps.events.models import Event, EventStatusChoices
 from apps.common.models import VerificationStatus
 from apps.common.api.serializers import AvailabilityWindowSerializer
+from apps.payments.models.payments import Payment
 
 User = get_user_model()
 
@@ -835,7 +836,9 @@ class BookingListSerializer(serializers.ModelSerializer):
         model = Booking
         fields = (
             'id', 'booking_reference', 'event', 'event_name',
-            'made_by', 'made_by_name', 'attendee_count', 'booked_at', 'event_url_safe_title', '_links'
+            'made_by', 'made_by_name', 'attendee_count', 'booked_at', 'event_url_safe_title', 
+            'is_cancelled',
+            '_links'
         )
         read_only_fields = ('id', 'booking_reference', 'booked_at')
     
@@ -979,14 +982,25 @@ class BookingDetailSerializer(BookingListSerializer):
         bank-transfer reservations). They must not be surfaced to the booking
         owner as they may expose bank account details and unconfirmed references.
         """
-        from apps.payments.api.serializers import PaymentMethodDetailSerializer
         from apps.payments.models import PaymentStatusChoices
         request = self.context.get('request')
         payments = []
         
         # Exclude DRAFTING payments — these are inflight/abandoned reservation objects
         # created internally during checkout and are not confirmed payments.
-        for payment in obj.payments.exclude(status=PaymentStatusChoices.DRAFTING):
+        qs = obj.payments.exclude(status=PaymentStatusChoices.DRAFTING).distinct()
+        print(obj.get_related_orders())
+        order_payments = (
+            Payment.objects
+            .filter(orders__in=obj.get_related_orders())
+            .exclude(status=PaymentStatusChoices.DRAFTING)
+            .distinct()
+        )
+
+        print(order_payments)
+
+        qs = qs | order_payments
+        for payment in qs:
 
 
             method = payment.method if payment.method else None

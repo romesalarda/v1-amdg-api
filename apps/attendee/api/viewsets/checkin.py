@@ -2,6 +2,7 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
     extend_schema,
@@ -144,7 +145,7 @@ class CheckInViewSet(viewsets.GenericViewSet):
         if data.get('ticket_code'):
             ticket = Ticket.objects.select_related(
                 'attendee', 'attendee__area_from', 'ticket_type'
-            ).filter(ticket_code=data['ticket_code']).first()
+            ).filter(Q(ticket_code=data['ticket_code']) | Q(attendee_alternative_signins__identifier=data['ticket_code'])).first()
             if ticket:
                 attendee = ticket.attendee
 

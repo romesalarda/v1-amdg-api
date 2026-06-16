@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 from django.contrib.auth import get_user_model
 from apps.payments.mixins import PayableModel, PaymentMixin
@@ -7,6 +9,9 @@ from django.conf import settings
 from apps.bookings.models.ticket import TicketType
 from django.utils import timezone
 from apps.events.models import EventStatusChoices
+from django.db.models import F
+
+from djmoney.money import Money
 
 
 import uuid
@@ -365,16 +370,34 @@ class Booking(models.Model, PaymentMixin):
         return f"Booking {self.booking_reference} for event {self.event.title} by {self.made_by} for attendees: {[attendee.full_name for attendee in self.attendees.all()]}"
     
     @property
+    def is_cancelled(self) -> bool:
+        """
+        A booking package is considered cancelled if it is inactive or if its associated ticket type is inactive
+        and all the tickets linked to this package are inactive (i.e., can be deleted).
+        This ensures that a package is only considered cancelled if it is no longer usable for any active
+        """
+        return all(attendee.is_cancelled for attendee in self.attendees.all())
+    
+    @property
     def total_amount(self):
         """
         Calculate total amount for this booking.
         Returns payment total_amount if payment exists (single source of truth),
         otherwise returns zero.
         """
-        from djmoney.money import Money
-        if self.payment:
-            return self.payment.total_amount
-        return Money(0, 'GBP')
+        # if self.payment:
+        #     return self.payment.final_amount + Money(self.get_related_orders().aggregate(total=models.Sum('payment__original_amount'))['total'] or 0, 'GBP')
+        # return Money(0, 'GBP')
+        base = self.payment.final_amount
+
+        agg = self.get_related_orders().aggregate(
+            total=models.Sum('payment__original_amount')
+        )['total']
+
+        # Ensure Decimal
+        total_original = Decimal(agg or 0)
+
+        return base + Money(total_original, 'GBP')
 
     def get_metadata(self, include_ticket_pricing=False, ticket_prices=None):
         """
@@ -449,15 +472,17 @@ class Booking(models.Model, PaymentMixin):
         from apps.products.models import Order
         from apps.bookings.models import Ticket
         # Get all booking packages from tickets belonging to this booking's attendees
-        package_ids = Ticket.objects.filter(
+        attendee_ids = Ticket.objects.filter(
             attendee__booking=self
         ).exclude(
             package__isnull=True
-        ).values_list('package_id', flat=True).distinct()
+        ).values_list('attendee_id', flat=True).distinct()
+
+        print("attendee_ids:", list(attendee_ids))  # Debugging output
         
         # Find orders that reference these packages
         return Order.objects.filter(
-            booking_package_id__in=package_ids
+            attendee_id__in=attendee_ids
         ).select_related('attendee', 'booking_package', 'payment')
     
     class Meta:

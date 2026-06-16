@@ -96,6 +96,8 @@ class EventPaymentActionsMixin:
                     "is_booking_owner": is_owner,
                     "selection_reason": "made_by" if is_owner else "attendee_linked",
                     "can_manage_all_attendees": is_owner,
+                    "is_cancelled": booking.is_cancelled,
+                    "total_amount": booking.total_amount,
                 }
             )
 
