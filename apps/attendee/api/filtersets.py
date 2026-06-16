@@ -7,7 +7,7 @@ including advanced search by personal information.
 import django_filters
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from django.db.models import Q, F, TimeField, DateField, IntegerField, Value, TextField
+from django.db.models import Q, F, TimeField, DateField, IntegerField, Value, TextField, When, Case
 from django.db.models.functions import Cast
 
 from apps.attendee.models import (
@@ -884,14 +884,18 @@ class AttendeeFilterSet(django_filters.FilterSet):
         qs = (
             queryset
             .annotate(
-                answer_date_cast=Cast(
-                    F("form_responses__answers__answer_text"),
-                    output_field=DateField()
+                answer_date_after_cast=Case(
+                    When(
+                        form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
+                        then=Cast(F("form_responses__answers__answer_text"), DateField())
+                    ),
+                    default=Value(None),
+                    output_field=DateField(),
                 )
             )
             .filter(
                 form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
-                answer_date_cast__gte=date_str
+                answer_date_after_cast__gte=date_str
             )
             .distinct()
         )
@@ -900,25 +904,47 @@ class AttendeeFilterSet(django_filters.FilterSet):
 
     def filter_form_answer_date_before(self, queryset, name, value):
         """Filter by EventForm DATE-type answers on or before the given date."""
-        return queryset.filter(
-            form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
-            form_responses__answers__answer_text__lte=value.isoformat(),
-        ).distinct()
-    
+        date_str = value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+        qs = (
+            queryset
+            .annotate(
+                answer_date_before_cast=Case(
+                    When(
+                        form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
+                        then=Cast(F("form_responses__answers__answer_text"), DateField())
+                    ),
+                    default=Value(None),
+                    output_field=DateField(),
+                )
+            )
+            .filter(
+                form_responses__answers__question__question_type=EventFormQuestionTypeChoices.DATE,
+                answer_date_before_cast__lte=date_str
+            )
+            .distinct()
+        )
+
+        return qs
+
     def filter_form_answer_time_after(self, queryset, name, value):
         time_value = value.isoformat() if hasattr(value, "isoformat") else str(value)
 
         qs = (
             queryset
             .annotate(
-                answer_time_cast=Cast(
-                    F("form_responses__answers__answer_text"),
-                    output_field=TimeField()
+                answer_time_after_cast=Case(
+                    When(
+                        form_responses__answers__question__question_type=EventFormQuestionTypeChoices.TIME,
+                        then=Cast(F("form_responses__answers__answer_text"), TimeField())
+                    ),
+                    default=Value(None),
+                    output_field=TimeField(),
                 )
             )
             .filter(
                 form_responses__answers__question__question_type=EventFormQuestionTypeChoices.TIME,
-                answer_time_cast__gte=time_value
+                answer_time_after_cast__gte=time_value
             )
             .distinct()
         )
@@ -932,14 +958,18 @@ class AttendeeFilterSet(django_filters.FilterSet):
         return (
             queryset
             .annotate(
-                answer_time_cast=Cast(
-                    F("form_responses__answers__answer_text"),
-                    output_field=TimeField()
+                answer_time_before_cast=Case(
+                    When(
+                        form_responses__answers__question__question_type=EventFormQuestionTypeChoices.TIME,
+                        then=Cast(F("form_responses__answers__answer_text"), TimeField())
+                    ),
+                    default=Value(None),
+                    output_field=TimeField(),
                 )
             )
             .filter(
                 form_responses__answers__question__question_type=EventFormQuestionTypeChoices.TIME,
-                answer_time_cast__lte=time_value
+                answer_time_before_cast__lte=time_value
             )
             .distinct()
         )
