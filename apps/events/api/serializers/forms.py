@@ -424,7 +424,7 @@ class EventFormResponseSerializer(serializers.ModelSerializer):
     @extend_schema_field({'type': 'string', 'nullable': True})
     def get_attendee_display(self, obj):
         try:
-            return getattr(obj.attendee, 'attendee_display_id', None) or str(obj.attendee_id)
+            return getattr(obj.attendee, 'full_name', None)
         except Exception:
             return None
 
