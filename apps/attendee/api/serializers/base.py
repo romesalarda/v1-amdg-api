@@ -192,6 +192,10 @@ class AttendeeCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'date_of_birth': "Date of birth cannot be in the future."
                 })
+            
+        if self.instance:
+            if self.instance.is_cancelled:
+                raise serializers.ValidationError("Cannot modify a cancelled attendee.")
         
         return attrs
     

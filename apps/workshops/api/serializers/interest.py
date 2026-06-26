@@ -99,6 +99,16 @@ class WorkshopInterestSubmissionCreateSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(
                         {'ranks': f"Workshop '{workshop.title}' does not belong to the selected event."}
                     )
+        if getattr(attrs.get('attendee'), 'is_cancelled', False):
+            raise serializers.ValidationError({'attendee': "Cannot create or modify a submission for a cancelled attendee."})
+        
+        if self.instance:
+            if self.attendee.is_cancelled:
+                raise serializers.ValidationError({'attendee': "Cannot modify a submission for a cancelled attendee."})
+
+            if self.instance.is_finalised:
+                raise serializers.ValidationError({'submission': "Cannot modify a finalised submission."})        
+        
         return attrs
 
     def create(self, validated_data):

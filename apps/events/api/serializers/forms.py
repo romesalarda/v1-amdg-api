@@ -423,11 +423,8 @@ class EventFormResponseSerializer(serializers.ModelSerializer):
 
     @extend_schema_field({'type': 'string', 'nullable': True})
     def get_attendee_display(self, obj):
-        try:
-            return getattr(obj.attendee, 'full_name', None)
-        except Exception:
-            return None
-
+        return getattr(obj.attendee, 'full_name', None)
+   
     @extend_schema_field({'type': 'object'})
     def get__links(self, obj):
         request = self.context.get('request')
@@ -437,6 +434,42 @@ class EventFormResponseSerializer(serializers.ModelSerializer):
             'self': request.build_absolute_uri(f"/api/event/form-responses/{obj.id}/"),
             'form': request.build_absolute_uri(f"/api/event/forms/{obj.form_id}/"),
         }
+    
+    def validate(self, data: dict) -> dict:
+
+        form = data.get('form', getattr(self.instance, 'form', None))
+        attendee = data.get('attendee', getattr(self.instance, 'attendee', None))
+        if not form or not attendee:
+            return data
+
+        if form.status != EventFormStatusChoices.PUBLISHED:
+            raise serializers.ValidationError(
+                {'form': "Responses can only be submitted to published forms."}
+            )
+
+        if EventFormResponse.objects.filter(form=form, attendee=attendee).exclude(id=getattr(self.instance, 'id', None)).exists():
+            raise serializers.ValidationError(
+                {'attendee': "This attendee has already submitted a response for this form."}
+            )
+        
+        if getattr(attendee, 'is_cancelled', False):
+            raise serializers.ValidationError(
+                {'attendee': "Responses cannot be submitted for cancelled attendees."}
+            )
+        
+        if self.instance:
+            if attendee.is_cancelled:
+                raise serializers.ValidationError(
+                    {'attendee': "Responses cannot be submitted for cancelled attendees."}
+                )
+            
+            if self.instance.is_complete and not data.get('is_complete', self.instance.is_complete):
+                raise serializers.ValidationError(
+                    {'is_complete': "Completed responses cannot be modified."}
+                )
+           
+
+        return data
 
 
 # ── Delegate Token Serializers ─────────────────────────────────────────────────

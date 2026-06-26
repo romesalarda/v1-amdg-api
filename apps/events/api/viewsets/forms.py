@@ -9,6 +9,8 @@ Broadcasting pattern mirrors apps/events/api/viewsets/questions.py.
 """
 import json
 import logging
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 
 from django.db import transaction
 from django.db.models import Count
@@ -19,6 +21,7 @@ from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
+from rest_framework.request import Request
 
 from django_filters.rest_framework import DjangoFilterBackend
 
@@ -53,7 +56,10 @@ from apps.events.services.notifications import create_notification, Notification
 logger = logging.getLogger(__name__)
 
 
-def _get_actor(request):
+def _get_actor(request: Request) -> dict | None:
+    """
+    Get actor information from the request user for broadcasting events.
+    """
     if request.user and request.user.is_authenticated:
         return {
             'id': request.user.id,
@@ -63,10 +69,15 @@ def _get_actor(request):
     return None
 
 
-def _broadcast_form_event(event_id: str, event_type: str, data: dict, actor=None):
-    """Broadcast a form mutation event to the event_{event_id}_forms channel group."""
-    from channels.layers import get_channel_layer
-    from asgiref.sync import async_to_sync
+def _broadcast_form_event(event_id: str, event_type: str, data: dict, actor: dict | None = None):
+    """
+    Broadcast a form mutation event to the event_{event_id}_forms channel group.
+    Args:
+        event_id (str): The ID of the event.
+        event_type (str): The type of the event (e.g., 'form.created').
+        data (dict): The payload data to broadcast.
+        actor (dict, optional): Information about the actor performing the action.
+    """
 
     channel_layer = get_channel_layer()
     if channel_layer is None:
@@ -89,11 +100,16 @@ def _broadcast_form_event(event_id: str, event_type: str, data: dict, actor=None
         logger.error(f"[forms] Failed to broadcast {event_type} to {group_name}: {exc}", exc_info=True)
 
 
-def _broadcast_form_response_event(event_id: str, event_type: str, data: dict, actor=None):
-    """Broadcast a response submission event to the event_{event_id}_form_responses channel group."""
-    from channels.layers import get_channel_layer
-    from asgiref.sync import async_to_sync
-
+def _broadcast_form_response_event(event_id: str, event_type: str, data: dict, actor: dict | None = None):
+    """
+    Broadcast a response submission event to the event_{event_id}_form_responses channel group.
+    Args:
+        event_id (str): The ID of the event.
+        event_type (str): The type of the event (e.g., 'response.created').
+        data (dict): The payload data to broadcast.
+        actor (dict, optional): Information about the actor performing the action.
+    
+    """
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return
