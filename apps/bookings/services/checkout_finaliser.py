@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import typing   
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.contrib.auth.models import User
 from django.utils import timezone
 from djmoney.money import Money
 
@@ -26,8 +28,6 @@ from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice, E
 from apps.payments.models import Payment, PaymentMethodTypeChoices, PaymentStatusChoices
 from apps.products.models import Order, OrderStatusChoices
 from apps.products.models.product import ProductVariant
-from core.utils.display import generate_human_readable_id
-
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,22 @@ class CheckoutFinalizationError(Exception):
     pass
 
 
-class BookingCheckoutFinalizer:
-    """Create booking artifacts from frozen checkout metadata after payment confirmation."""
+class BookingCheckoutFinaliser:
+    """
+    Create booking artifacts from frozen checkout metadata after payment confirmation.
+    """
 
     @classmethod
-    def finalize_from_payment(cls, payment: Payment, actor=None) -> dict:
+    def finalize_from_payment(cls, payment: Payment, actor: typing.Optional[User] = None) -> dict:
+        '''
+        Finalise the booking process based on the payment method and status.
+
+        Args:   
+            payment (Payment): The Payment instance to finalize.
+            actor (User, optional): The user performing the finalization. Defaults to None.
+        Returns:
+            dict: A dictionary containing the finalized booking, orders, and ticket creation status.
+        '''
         method_type = payment.method.method_type if payment.method else None
         if method_type == PaymentMethodTypeChoices.STRIPE:
             return cls.finalize_for_stripe(payment, actor=actor)
@@ -50,15 +61,40 @@ class BookingCheckoutFinalizer:
         return cls.finalize_for_bank_transfer(payment, actor=actor)
 
     @classmethod
-    def finalize_for_stripe(cls, payment: Payment, actor=None) -> dict:
+    def finalize_for_stripe(cls, payment: Payment, actor: typing.Optional[User] = None) -> dict:
+        '''
+        Proxy method to finalize the booking process for Stripe payments. This method creates tickets immediately after finalization.
+        Args:
+            payment (Payment): The Payment instance to finalize.
+            actor (User, optional): The user performing the finalization. Defaults to None.
+        Returns:    
+            dict: A dictionary containing the finalized booking, orders, and ticket creation status.
+        '''
         return cls._finalize_internal(payment, actor=actor, create_tickets=True)
 
     @classmethod
-    def finalize_for_bank_transfer(cls, payment: Payment, actor=None) -> dict:
+    def finalize_for_bank_transfer(cls, payment: Payment, actor: typing.Optional[User] = None) -> dict:
+        '''
+        Proxy method to finalize the booking process for bank transfer payments. This method does not create tickets immediately after finalization, as ticket creation is deferred until payment confirmation.
+        Args:
+            payment (Payment): The Payment instance to finalize.
+            actor (User, optional): The user performing the finalization. Defaults to None.
+        Returns:
+            dict: A dictionary containing the finalized booking, orders, and ticket creation status.
+        '''
         return cls._finalize_internal(payment, actor=actor, create_tickets=False)
 
     @classmethod
-    def _finalize_internal(cls, payment: Payment, actor=None, create_tickets: bool = True) -> dict:
+    def _finalize_internal(cls, payment: Payment, actor: typing.Optional[User] = None, create_tickets: bool = True) -> typing.Dict[str, typing.Any]:
+        '''
+        Main internal method to finalize the booking process based on the provided payment and actor. This method handles the creation of bookings, attendees, orders, and tickets based on the payment metadata and status.
+        Args:
+            payment (Payment): The Payment instance to finalize.
+            actor (User, optional): The user performing the finalization. Defaults to None.
+            create_tickets (bool): Flag indicating whether to create tickets immediately after finalization. Defaults to True.
+        Returns:
+            typing.Dict[str, typing.Any]: A dictionary containing the finalized booking, orders, and ticket creation status.
+        '''
         with transaction.atomic():
             # Lock only the payment row; joined nullable relations can break FOR UPDATE on PostgreSQL.
             payment = Payment.objects.select_for_update().get(pk=payment.pk)
@@ -285,7 +321,20 @@ class BookingCheckoutFinalizer:
             }
 
     @staticmethod
-    def _resolve_or_create_attendee(selection: dict, payment: Payment, intent: BookingIntent, booking: Booking, actor=None) -> Attendee:
+    def _resolve_or_create_attendee(selection: dict, payment: Payment, intent: BookingIntent, booking: Booking, actor: typing.Optional[User] =None) -> Attendee:
+        '''
+        Resolve an existing attendee by UUID or create a new attendee based on the provided selection data. This method handles the creation of attendees, their personal information, and associated requirements.
+        Attendee is linked to the booking and saved to the database. If an attendee with the provided UUID does not exist, a new attendee is created with the provided draft information.
+
+        Args:
+            selection (dict): The attendee selection data from the checkout metadata.
+            payment (Payment): The Payment instance associated with the booking.
+            intent (BookingIntent): The BookingIntent instance associated with the booking.
+            booking (Booking): The Booking instance to which the attendee will be linked.
+            actor (User, optional): The user performing the finalization. Defaults to None. 
+        Returns:
+            Attendee: The resolved or newly created Attendee instance.
+        '''
         attendee_uuid = selection.get("attendee_id")
         if attendee_uuid:
             attendee = Attendee.objects.filter(attendee_id=attendee_uuid, event=intent.event).first()
@@ -299,19 +348,26 @@ class BookingCheckoutFinalizer:
         relationship = draft.get("relationship_to_user")
         attendee_user = payment.user if relationship == AttendeeRelationship.SELF else None
 
+        def get_draft_attribute(attr_name: str, default=None):
+            result = draft.get(attr_name, default)
+            if default is None and result is None:
+                raise CheckoutFinalizationError(f"Missing required attendee draft attribute: {attr_name}")
+            
+            return result
+
         attendee = Attendee.objects.create(
             event=intent.event,
             booking=booking,
             user=attendee_user,
             defined_by=actor or payment.user,
-            first_name=draft.get("first_name"),
-            last_name=draft.get("last_name"),
-            email=draft.get("email") or None,
-            phone_number=draft.get("phone_number") or None,
-            date_of_birth=draft.get("date_of_birth"),
-            gender=draft.get("gender") or None,
+            first_name=get_draft_attribute("first_name"),
+            last_name=get_draft_attribute("last_name"),
+            email=get_draft_attribute("email"),
+            phone_number=get_draft_attribute("phone_number"),
+            date_of_birth=get_draft_attribute("date_of_birth"),
+            gender=get_draft_attribute("gender"),
             relationship_to_user=relationship,
-            area_from_id=draft.get("area_from"),
+            area_from_id=get_draft_attribute("area_from"),
             status=AttendeeStatus.PENDING_PAYMENT,
         )
 

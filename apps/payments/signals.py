@@ -21,7 +21,7 @@ from django.dispatch import receiver
 from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 from apps.bookings.services import (
     TicketCreatorService,
-    BookingCheckoutFinalizer,
+    BookingCheckoutFinaliser,
     CheckoutFinalizationError,
 )
 
@@ -72,7 +72,7 @@ def _process_completed_payment(payment_pk: int) -> None:
 
     Fetching fresh avoids stale GenericForeignKey descriptor caches and ensures
     we see the fully committed state (including any target set by
-    BookingCheckoutFinalizer).
+    BookingCheckoutFinaliser).
     """
     try:
         payment = Payment.objects.select_related('method').get(pk=payment_pk)
@@ -97,7 +97,7 @@ def _process_completed_payment(payment_pk: int) -> None:
     # ------------------------------------------------------------------
     if payment.target is None and (payment.metadata or {}).get('checkout_intent_id'):
         try:
-            result = BookingCheckoutFinalizer.finalize_from_payment(payment)
+            result = BookingCheckoutFinaliser.finalize_from_payment(payment)
             booking = result.get('booking')
             if booking:
                 # Re-fetch to get the updated target after finalization.

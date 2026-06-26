@@ -24,7 +24,7 @@ from apps.bookings.models import (
     TicketType,
     TicketScopeChoices,
 )
-from apps.bookings.services.checkout_finalizer import BookingCheckoutFinalizer
+from apps.bookings.services.checkout_finaliser import BookingCheckoutFinaliser
 from apps.common.models.availability import AvailabilityTypeChoices, AvailabilityWindow
 from apps.events.models import (
     Event,
@@ -184,7 +184,7 @@ class CheckoutIntegrityModelTest(TestCase):
             },
         )
 
-        result = BookingCheckoutFinalizer.finalize_for_bank_transfer(payment, actor=self.user)
+        result = BookingCheckoutFinaliser.finalize_for_bank_transfer(payment, actor=self.user)
 
         self.assertIn("booking", result)
         booking = result["booking"]

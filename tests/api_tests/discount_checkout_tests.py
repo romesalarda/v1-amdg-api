@@ -12,6 +12,7 @@ Tests discount code validation endpoint and discount application at checkout/pre
 """
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase
@@ -525,9 +526,7 @@ class CheckoutWithDiscountCodeMetadataTests(DiscountCheckoutTestCase):
         """Helper: run a full checkout with the given code and return the payment."""
         intent = self._create_booking_intent()
 
-        from unittest.mock import patch
-
-        with patch('apps.bookings.services.checkout_finalizer.BookingCheckoutFinalizer.finalize_for_bank_transfer') as mock_finalize:
+        with patch('apps.bookings.services.checkout_finaliser.BookingCheckoutFinaliser.finalize_for_bank_transfer') as mock_finalize:
             mock_finalize.return_value = {'booking': None}
             with patch('apps.payments.models.payments.Payment.transition_to'):
                 response = self.client.post(
