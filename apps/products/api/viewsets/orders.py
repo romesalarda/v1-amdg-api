@@ -3,12 +3,16 @@ from rest_framework import viewsets, status, permissions, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.request import Request
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.db import transaction
+from django.contrib.auth.models import User 
+
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -18,6 +22,10 @@ from drf_spectacular.utils import (
     inline_serializer,
 )
 from drf_spectacular.types import OpenApiTypes
+from djmoney.money import Money
+
+import decimal
+import typing
 
 from apps.products.models import (
     Product, ProductVariant,
@@ -30,20 +38,26 @@ from apps.products.api.serializers import (
 )
 from apps.products.api.filtersets import OrderFilterSet
 from apps.products.api.permissions import IsAdministrativeStaffOnly, IsOrderOwnerOrAdministrative
-from apps.payments.services.evaluator import discount_applies as _discount_applies
-from apps.payments.models.discounts import DiscountType as _DiscountType
+from apps.payments.services.evaluator import discount_applies
+from apps.payments.models.discounts import DiscountType, DiscountRuleTypeChoices
+from apps.payments.models import DiscountRule
+
 from apps.common.pagination import StandardPagination
-from djmoney.money import Money
+
 
 from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
 from apps.products.tasks import send_order_pending_bank_transfer_email
+from apps.events.models import Event
 
+from apps.products.api.serializers import OrderCheckoutSerializer
+from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices, PaymentMethod
+from apps.payments.services.stripe.payment_intents import PaymentIntentService
+from apps.attendee.models import Attendee
 from django.db import transaction
+from djmoney.money import Money
+
 import logging
-
-import decimal
-
-User = get_user_model()
+logger = logging.getLogger(__name__)
 
 @extend_schema_view(
     list=extend_schema(
@@ -136,7 +150,6 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Filter queryset based on user permissions."""
 
-        from apps.events.models import Event
         user = self.request.user
         queryset = super().get_queryset()
         
@@ -177,7 +190,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         serializer.context['request'] = self.request  # Pass request to serializer for validation
         return super().perform_create(serializer)
 
-    def _assert_attendee_access(self, attendee, user):
+    def _assert_attendee_access(self, attendee: 'Attendee', user: 'User'):
+        '''
+        Assert that the given user has access to the attendee's pricing context. Raises PermissionDenied if not.
+        '''
         if user.is_superuser or user.is_staff:
             return
 
@@ -225,7 +241,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         tags=["Orders"],
     )
     @action(detail=True, methods=['post'])
-    def submit(self, request, order_id=None):
+    def submit(self, request: Request, order_id: typing.Optional[str]=None):
         """Submit the order (draft → pending)."""
         order = self.get_object()
         
@@ -279,7 +295,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         tags=["Orders"],
     )
     @action(detail=True, methods=['post'])
-    def cancel(self, request, order_id=None):
+    def cancel(self, request: Request, order_id: typing.Optional[str]=None):
         """Cancel the order."""
         order = self.get_object()
         
@@ -333,7 +349,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         tags=["Orders"],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsAdministrativeStaffOnly])
-    def complete(self, request, order_id=None):
+    def complete(self, request: Request, order_id: typing.Optional[str]=None):
         """Complete the order (processing → completed). Staff only."""
         order = self.get_object()
         
@@ -396,7 +412,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         tags=["Orders"],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative], url_path='add-item')
-    def add_item(self, request, order_id=None):
+    def add_item(self, request: Request, order_id: typing.Optional[str]=None):
         """Add an item to the order."""
         order = self.get_object()
         
@@ -443,9 +459,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         tags=['Orders'],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative], url_path='update-item')
-    def update_item(self, request, order_id=None):
+    def update_item(self, request: Request, order_id: typing.Optional[str]=None):
         """Update quantity for an order item in a draft order."""
-        from django.db import transaction
 
         order = self.get_object()
         if order.status != OrderStatusChoices.DRAFT:
@@ -531,7 +546,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         tags=['Orders'],
     )
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative], url_path='remove-item')
-    def remove_item(self, request, order_id=None):
+    def remove_item(self, request: Request, order_id: typing.Optional[str]=None):
         """Remove an item from a draft order."""
         from django.db import transaction
 
@@ -613,10 +628,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         tags=['Orders'],
     )
     @action(detail=False, methods=['post'], url_path='preview-pricing')
-    def preview_pricing(self, request):
-        from apps.attendee.models import Attendee
-        from apps.payments.services.evaluator import discount_applies
-        from apps.payments.models.discounts import DiscountType
+    def preview_pricing(self, request: Request):
+
 
         attendee_id = request.data.get('attendee_id')
         items = request.data.get('items') or []
@@ -761,7 +774,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         operation_id="products_orders_reserve_bank_transfer_payment",
     )
     @action(detail=True, methods=['post'], url_path='reserve-bank-transfer-payment')
-    def reserve_bank_transfer_payment(self, request, order_id=None):
+    def reserve_bank_transfer_payment(self, request: Request, order_id: typing.Optional[str]=None):
         # procedure
         # 1. Validate input and permissions
         # 2. Lock order row for update to prevent concurrent modifications
@@ -770,9 +783,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         # 5. Check for existing draft payment with matching method and order metadata to
         #   reuse if already reserved, otherwise create new draft payment with bank transfer reference
         # 6. Return payment details including bank transfer reference for customer to use during checkout
-        from apps.payments.models import Payment, PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
-        from django.db import transaction
-        from djmoney.money import Money
+
 
         payment_method_id = request.data.get('payment_method_id')
         if not payment_method_id:
@@ -971,7 +982,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         tags=["Orders"],
     )
     @action(detail=True, methods=['post'])
-    def checkout(self, request, order_id=None):
+    def checkout(self, request: Request, order_id: typing.Optional[str]=None):
         """
         Checkout order with payment.
         
@@ -981,11 +992,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         - CASH: Marks as pending (approved at venue)
         - FREE: Skips payment if order total is £0
         """
-        from apps.products.api.serializers import OrderCheckoutSerializer
-        from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices
-        from apps.payments.services.stripe.payment_intents import PaymentIntentService
+
         
-        logger = logging.getLogger(__name__)
 
         with transaction.atomic():
             # Use a minimal queryset for row locking to avoid FOR UPDATE on nullable outer joins.
@@ -1086,9 +1094,9 @@ class OrderViewSet(viewsets.ModelViewSet):
                 # Build per-item discount breakdown for metadata snapshot.
                 item_discount_breakdown = []
                 for disc in variant.product.discounts:
-                    if not _discount_applies(disc, attendee_context):
+                    if not discount_applies(disc, attendee_context):
                         continue
-                    if disc.discount_type == _DiscountType.PERCENTAGE:
+                    if disc.discount_type == DiscountType.PERCENTAGE:
                         disc_amount = variant.modified_amount * (disc.percentage / decimal.Decimal('100'))
                         disc_value = str(disc.percentage)
                     else:
@@ -1341,13 +1349,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         url_path='validate-code',
         permission_classes=[permissions.IsAuthenticated],
     )
-    def validate_code(self, request):
+    def validate_code(self, request: Request):
         """
         Validate a discount code against the products in a specific order.
         Returns only {"valid": bool} — no detail to prevent code enumeration.
         """
-        from apps.payments.models.discounts import DiscountRuleTypeChoices
-        from apps.payments.models import DiscountRule
 
         code = request.data.get('code')
         order_id = request.data.get('order_id')

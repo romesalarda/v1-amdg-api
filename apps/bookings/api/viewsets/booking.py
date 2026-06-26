@@ -505,7 +505,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         user = request.user
         idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
         
-        def serialize_checkout_attendees(selections: typing.List[typing.Dict[typing.Str, typing.Any]]) -> typing.List[typing.Dict[typing.Str, typing.Any]]:
+        def serialize_checkout_attendees(selections: typing.List[typing.Dict[str, typing.Any]]) -> typing.List[typing.Dict[str, typing.Any]]:
             """
             Serialize attendee selections for checkout.
             """
@@ -599,9 +599,9 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         def calculate_total_and_validate(
             intent_obj: BookingIntent, 
-            selections: typing.List[typing.Dict[typing.Str, typing.Any]], 
+            selections: typing.List[typing.Dict[str, typing.Any]], 
             code: typing.Optional[str] = None
-            ) -> typing.Tuple[Money, typing.List[typing.Dict[typing.Str, typing.Any]]]:
+            ) -> typing.Tuple[Money, typing.List[typing.Dict[str, typing.Any]]]:
             '''
             Calculate the total amount for the booking and validate attendee selections.
             Args:
