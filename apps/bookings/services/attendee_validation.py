@@ -1,12 +1,27 @@
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from django.db.models import Q
+from django.contrib.auth.models import User  
 
 from apps.attendee.models import Attendee, AttendeeRelationship, AttendeeStatus
+from apps.events.models import Event
 
+def normalise_text(value: Optional[str]) -> str:
+    '''
+    Normalise a text value by stripping whitespace and converting to lowercase.
+    '''
+    return str(value or "").strip().lower()
 
+def normalise_phone(value: Optional[str]) -> str:
+    '''
+    Normalise a phone number by removing all non-digit characters except for the leading '+'.   
+    '''
+    raw = str(value or "")
+    return "".join(ch for ch in raw if ch.isdigit() or ch == "+")
 class AttendeePrecheckValidationService:
-    """Centralized attendee precheck/guardrail validation for bookings."""
+    """
+    Centralised attendee precheck/guardrail validation for bookings.
+    """
 
     DUPLICATE_EMAIL = "DUPLICATE_EMAIL"
     DUPLICATE_PHONE = "DUPLICATE_PHONE"
@@ -28,24 +43,27 @@ class AttendeePrecheckValidationService:
         AttendeeStatus.CHECKED_IN,
     }
 
-    @staticmethod
-    def _normalize_text(value: Optional[str]) -> str:
-        return str(value or "").strip().lower()
-
-    @staticmethod
-    def _normalize_phone(value: Optional[str]) -> str:
-        raw = str(value or "")
-        return "".join(ch for ch in raw if ch.isdigit() or ch == "+")
-
     @classmethod
     def _attendee_payload_signature(cls, attendee_data: Dict[str, Any]) -> Tuple[str, str, str]:
-        first_name = cls._normalize_text(attendee_data.get("first_name"))
-        last_name = cls._normalize_text(attendee_data.get("last_name"))
+        '''
+        Args:
+            attendee_data (dict): A dictionary containing attendee information.
+        Returns:
+            tuple[str, str, str]: A tuple containing the normalized first name, last name, and date of birth.   
+        '''
+        first_name = normalise_text(attendee_data.get("first_name"))
+        last_name = normalise_text(attendee_data.get("last_name"))
         date_of_birth = str(attendee_data.get("date_of_birth") or "").strip()
         return first_name, last_name, date_of_birth
 
     @classmethod
     def _extract_attendee_data(cls, selection: Dict[str, Any]) -> Dict[str, Any]:
+        '''
+        Args:
+            selection (dict): A dictionary representing an attendee selection, which may contain either an "_attendee" object or an "_attendee_draft" dictionary.
+        Returns:
+            dict: A dictionary containing the extracted attendee data, including first name, last name, email, phone number, date of birth, and relationship to user. If neither an "_attendee" object nor an "_attendee_draft" is present, returns an empty dictionary.
+        '''
         attendee_obj = selection.get("_attendee")
         if attendee_obj:
             return {
@@ -59,10 +77,16 @@ class AttendeePrecheckValidationService:
         return selection.get("_attendee_draft") or {}
 
     @classmethod
-    def validate(cls, *, event, user, attendee_selections: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def validate(cls, *, event: Event, user: User, attendee_selections: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Validate attendee selections against duplicate and event limit policies.
         Returns structured payload suitable for API response and serializer errors.
+        Args:
+            event: The event instance for which the validation is being performed.
+            user: The user instance for which the validation is being performed.
+            attendee_selections: A list of dictionaries representing attendee selections.
+        Returns:
+            dict: A dictionary containing booking and attendee errors, if any.
         """
         settings = getattr(event, "settings", None)
         max_per_booking = getattr(settings, "max_attendees_per_booking", None)
@@ -114,8 +138,8 @@ class AttendeePrecheckValidationService:
             row_codes: List[str] = []
             row_messages: List[str] = []
 
-            email_norm = cls._normalize_text(payload.get("email"))
-            phone_norm = cls._normalize_phone(payload.get("phone_number"))
+            email_norm = normalise_text(payload.get("email"))
+            phone_norm = normalise_phone(payload.get("phone_number"))
             identity_signature = cls._attendee_payload_signature(payload)
 
             if email_norm and email_norm in seen_emails:
@@ -164,15 +188,15 @@ class AttendeePrecheckValidationService:
                         row_codes.append(cls.DUPLICATE_EMAIL)
                         row_messages.append("An attendee with this email is already registered for this event.")
                     if phone_norm and duplicate_match.phone_number:
-                        if cls._normalize_phone(duplicate_match.phone_number) == phone_norm:
+                        if normalise_phone(duplicate_match.phone_number) == phone_norm:
                             row_codes.append(cls.DUPLICATE_PHONE)
                             row_messages.append("An attendee with this phone number is already registered for this event.")
                     if (
                         duplicate_match.first_name
                         and duplicate_match.last_name
                         and duplicate_match.date_of_birth
-                        and cls._normalize_text(duplicate_match.first_name) == first_name
-                        and cls._normalize_text(duplicate_match.last_name) == last_name
+                        and normalise_text(duplicate_match.first_name) == first_name
+                        and normalise_text(duplicate_match.last_name) == last_name
                         and str(duplicate_match.date_of_birth) == dob
                     ):
                         row_codes.append(cls.DUPLICATE_IDENTITY)
