@@ -21,17 +21,17 @@ import json
 import re
 
 from rest_framework import serializers
-from drf_spectacular.utils import extend_schema_field, OpenApiParameter, OpenApiExample
-from drf_spectacular.types import OpenApiTypes
-from django.core.exceptions import ValidationError as DjangoValidationError
 
 from apps.bookings.models import (
     BookingIntent, BookingPackage, PackageProduct
 )
-from apps.attendee.models import Attendee, AttendeeRelationship
-from apps.events.models import EventQuestion, EventQuestionTypeChoices
+from apps.attendee.models import Attendee
 from apps.payments.models import BankTransferEvidence
 from apps.bookings.services import AttendeePrecheckValidationService
+from apps.locations.models import AreaLocation
+from apps.bookings.services.checkout_validation import CheckoutValidationService
+from apps.payments.models import PaymentMethodTypeChoices
+from apps.payments.models import PaymentMethod
 
 
 # ============================================================================
@@ -68,7 +68,7 @@ class ProductSelectionSerializer(serializers.Serializer):
         help_text="Quantity to order (must not exceed package_product.quantity_per_attendee)"
     )
     
-    def validate(self, attrs):
+    def validate(self, attrs: dict) -> dict:
         """Validate that quantity doesn't exceed package limits."""
         from apps.products.models import ProductVariant
         
@@ -384,7 +384,7 @@ class EventQuestionAnswerDraftSerializer(serializers.Serializer):
         )
     )
 
-    def validate(self, attrs):
+    def validate(self, attrs: dict) -> dict :
         answer_text = attrs.get('answer_text')
         selected_option_ids = attrs.get('selected_option_ids', [])
         upload_resource_id = attrs.get('upload_resource_id')
@@ -502,9 +502,6 @@ class AttendeeDraftSerializer(serializers.Serializer):
         """Ensure area_from points to an active AreaLocation."""
         if value in (None, ''):
             return None
-
-        from apps.locations.models import AreaLocation
-
         try:
             area = AreaLocation.objects.get(id=value, active=True)
         except AreaLocation.DoesNotExist:
@@ -564,8 +561,6 @@ class AttendeeCheckoutSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         """Validate attendee and package compatibility."""
-        from apps.attendee.models import Attendee
-        from apps.bookings.models import BookingPackage
 
         attendee_id = attrs.get('attendee_id')
         attendee_draft = attrs.get('attendee')
@@ -652,7 +647,6 @@ class AttendeePrecheckItemSerializer(serializers.Serializer):
 
         return attrs
 
-
 class BookingAttendeePrecheckSerializer(serializers.Serializer):
     """Validate attendee payload for duplicate and limit guardrails before checkout."""
 
@@ -672,7 +666,7 @@ class BookingAttendeePrecheckSerializer(serializers.Serializer):
 
         return value
 
-    def validate(self, attrs):
+    def validate(self, attrs: dict) -> dict:
         intent = BookingIntent.objects.get(booking_intent_id=attrs['booking_intent_id'])
         attendees = attrs.get('attendees', [])
         request = self.context.get('request')
@@ -829,7 +823,11 @@ class CheckoutSerializer(serializers.Serializer):
         content_type = str(getattr(request, 'content_type', '') or '')
         return content_type.startswith('multipart/form-data')
 
-    def _normalize_input_data(self, data):
+    def _normalize_input_data(self, data: dict) -> dict:
+        '''
+        Normalize input data for multipart requests.
+        '''
+
         if not self._is_multipart_request():
             return data
 
@@ -857,7 +855,10 @@ class CheckoutSerializer(serializers.Serializer):
 
         return mutable_data
 
-    def _bind_multipart_question_uploads(self, attrs):
+    def _bind_multipart_question_uploads(self, attrs: dict) -> None:
+        '''
+        Bind uploaded files from multipart request to the corresponding question answers in attendee drafts.
+        '''
         if not self._is_multipart_request():
             return
 
@@ -909,13 +910,13 @@ class CheckoutSerializer(serializers.Serializer):
 
                 answer['_upload_file'] = upload_file
 
-    def to_internal_value(self, data):
+    def to_internal_value(self, data: dict) -> dict:
         normalized_data = self._normalize_input_data(data)
         attrs = super().to_internal_value(normalized_data)
         self._bind_multipart_question_uploads(attrs)
         return attrs
 
-    def validate_booking_intent_id(self, value):
+    def validate_booking_intent_id(self, value: str) -> str:
         """Validate booking intent exists and is active."""
         request = self.context.get('request')
         idempotency_key = None
@@ -950,10 +951,7 @@ class CheckoutSerializer(serializers.Serializer):
         """Validate payment method exists and is active."""
         # Support legacy/free-checkout placeholders from clients.
         if value in (None, 0) or value < 0:
-            return None
-
-        from apps.payments.models import PaymentMethod
-        
+            return None        
         try:
             method = PaymentMethod.objects.get(id=value)
         except PaymentMethod.DoesNotExist:
@@ -968,7 +966,7 @@ class CheckoutSerializer(serializers.Serializer):
         
         return value
     
-    def validate(self, attrs):
+    def validate(self, attrs: dict) -> dict:
         """
         Comprehensive cross-field validation.
         
@@ -978,8 +976,6 @@ class CheckoutSerializer(serializers.Serializer):
         - All attendee data
         - Questions, consents, personal info
         """
-        from apps.bookings.services.checkout_validation import CheckoutValidationService
-        from apps.payments.models import PaymentMethodTypeChoices
         
         intent_id = attrs.get('booking_intent_id')
         method_id = attrs.get('payment_method_id')
