@@ -1,9 +1,11 @@
 import typing
+import uuid
 
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.db.models import F
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User as DjangoUser
+from django.db.models import Sum
 
 from rest_framework import exceptions
 
@@ -15,7 +17,8 @@ from apps.products.mixins import ProductMixin
 from core.utils.display import try_generate_unique_display_code
 
 from colorfield.fields import ColorField
-import uuid
+
+User = get_user_model()
 
 class ProductMetaClass(PayableModel, ProductMixin):
     '''
@@ -244,7 +247,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         new_quantity: int,
         change_amount: int,
         reason: str,
-        actor: typing.Optional[User] = None,
+        actor: typing.Optional[DjangoUser] = None,
         order_id: typing.Optional[str] = None,
         payment_id: typing.Optional[str] = None,
         order_item_id: typing.Optional[str] = None,
@@ -272,7 +275,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         amount: int,
         *,
         reason: str = 'manual_adjustment',
-        actor: typing.Optional[User] = None,
+        actor: typing.Optional[DjangoUser] = None,
         order_id: typing.Optional[str] = None,
         payment_id: typing.Optional[str] = None,
         order_item_id: typing.Optional[str] = None,
@@ -282,9 +285,17 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         '''
         Atomically increments the stock quantity of the product variant.
         
-        :param self: The ProductVariant instance.
-        :param amount: Amount to increment stock by
-        :type amount: int
+        Args:
+            amount (int): The amount to increment the stock by. Must be positive.
+            reason (str): The reason for the stock change.
+            actor (User, optional): The user responsible for the change.
+            order_id (str, optional): The associated order ID, if applicable.
+            payment_id (str, optional): The associated payment ID, if applicable.
+            order_item_id (str, optional): The associated order item ID, if applicable.
+            webhook_event_id (str, optional): The associated webhook event ID, if applicable.
+            notes (str, optional): Additional notes regarding the stock change.
+        Raises:
+            ValidationError: If the amount is not positive. 
         '''
         if amount <= 0:
             raise exceptions.ValidationError("Increment amount must be positive.")
@@ -328,7 +339,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         amount: int,
         *,
         reason: str = 'manual_adjustment',
-        actor: typing.Optional[User] = None,
+        actor: typing.Optional[DjangoUser] = None,
         order_id: typing.Optional[str] = None,
         payment_id: typing.Optional[str] = None,
         order_item_id: typing.Optional[str] = None,
@@ -338,9 +349,17 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         '''
         Atomically decrements the stock quantity of the product variant.
         
-        :param self: The ProductVariant instance.
-        :param amount: Amount to decrement stock by
-        :type amount: int
+        Args:
+            amount (int): Amount to decrement stock by.
+            reason (str): Reason for the stock change.
+            actor (User, optional): User who initiated the change.
+            order_id (str, optional): Associated order ID.
+            payment_id (str, optional): Associated payment ID.
+            order_item_id (str, optional): Associated order item ID.
+            webhook_event_id (str, optional): Associated webhook event ID.
+            notes (str, optional): Additional notes for the stock change.
+        Raises:
+            ValidationError: If the decrement amount is not positive, if the product variant is not found, or if there is insufficient stock for the decrement.
         '''
         if amount <= 0:
             raise exceptions.ValidationError("Decrement amount must be positive.")
@@ -385,6 +404,11 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         """
         Advisory check for stock availability.
         NOT safe for enforcing business rules.
+
+        args:
+            amount (int): The amount to check for decrementing stock.
+        returns:
+            bool: True if the stock can be decremented by the specified amount, False otherwise.
         """
         if amount <= 0:
             return False
@@ -395,8 +419,11 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         Returns the total quantity of this product variant purchased by the given attendee.
         Uses database aggregation for optimal performance.
 
-        @param attendee: The Attendee instance whose purchases to check.
-        @return: Total quantity purchased by the attendee.
+        Args:
+            attendee (Attendee): The attendee for whom to calculate the purchase quantity.
+        
+        Returns:
+            int: The total quantity of this product variant purchased by the attendee.
         '''
         from apps.attendee.models.attendee import Attendee
         from apps.products.models.orders import OrderItem
@@ -417,10 +444,14 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
     def get_attendee_product_purchase_quantity(self, attendee):
         '''
         Returns the total quantity of all variants of this product purchased by the attendee.
+
+        Args:
+            attendee (Attendee): The attendee for whom to calculate the purchase quantity.
+        Returns:
+            int: The total quantity of all variants of this product purchased by the attendee.
         '''
         from apps.attendee.models.attendee import Attendee
         from apps.products.models.orders import OrderItem
-        from django.db.models import Sum
 
         if not isinstance(attendee, Attendee):
             raise exceptions.ValidationError("The provided attendee is not a valid Attendee instance.")
@@ -446,8 +477,18 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
     def can_attendee_purchase(self, attendee) -> bool:
         '''
         Checks if the given attendee can purchase this product variant.
+        Args:
+            attendee (Attendee): The attendee to check.
+        Returns:
+            bool: True if the attendee can purchase, False otherwise.
+
+        1. Product/variant must be active and available.
+        2. Attendee must meet any purchase rules.
+        3. Attendee's booking must not be cancelled.
+
         '''
         from apps.attendee.models.attendee import Attendee
+
         if not isinstance(attendee, Attendee):
             raise exceptions.ValidationError("The provided attendee is not a valid Attendee instance.")
         
@@ -465,9 +506,20 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         '''
         Checks if the given attendee can purchase the desired quantity of this product variant.
 
-        @param attendee: The Attendee instance attempting the purchase.
-        @param desired_quantity: The desired quantity to purchase.
-        @return: True if the attendee can purchase the desired quantity, False otherwise.
+        Args:
+            attendee (Attendee): The attendee to check.
+            desired_quantity (int): The desired quantity to purchase.
+            raise_exception (bool): If True, raises a ValidationError with details if the purchase is not allowed.
+        Returns:
+            bool: True if the attendee can purchase the desired quantity, False otherwise.
+
+        1. Product/variant must be active and available.
+        2. Attendee must meet any purchase rules.
+        3. Desired quantity must not exceed the effective max purchase quantity per attendee.   
+        4. Desired quantity must not exceed available stock.
+        5. Attendee's booking must not be cancelled.
+        6. If raise_exception is True, raises a ValidationError with details if any of the above checks fail.
+
         '''
         from apps.attendee.models.attendee import Attendee
         if not isinstance(attendee, Attendee):
@@ -499,8 +551,10 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         '''
         Calculates the final price for the given attendee after applying any discounts or modifiers.
 
-        @param attendee: The Attendee instance for whom to calculate the final price.
-        @return: The final price as a Money instance.
+        Args:
+            attendee (Attendee): The Attendee instance for whom to calculate the final price.
+        Returns:
+            Money: The final price as a Money instance.
         '''
         from apps.attendee.models.attendee import Attendee
         if not isinstance(attendee, Attendee):
