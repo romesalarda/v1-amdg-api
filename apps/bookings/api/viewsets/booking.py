@@ -54,6 +54,8 @@ from apps.payments.services.stripe.payment_intents import PaymentIntentService
 from apps.bookings.api.pagination import StandardPagination
 
 from apps.payments.models import DiscountType, BankTransferEvidence
+from apps.payments.mixins import PaymentMixin
+
 from apps.payments.services.evaluator import discount_applies
 
 from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
@@ -1376,7 +1378,9 @@ class BookingViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['post'], url_path='checkout-preview')
     def checkout_preview(self, request: Request) -> Response:
-        """Preview booking checkout totals and discounts without persisting booking/payment data."""
+        """
+        Preview booking checkout totals and discounts without persisting booking/payment data.
+        """
 
         serializer = CheckoutPreviewSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
@@ -1385,7 +1389,19 @@ class BookingViewSet(viewsets.ModelViewSet):
         attendee_selections = serializer.validated_data['attendees']
         discount_code = serializer.validated_data.get('discount_code') or None
 
-        def applied_discount_breakdown(payable, discount_base, context):
+        def applied_discount_breakdown(payable: 'PaymentMixin', discount_base: Money, context: dict) -> typing.Tuple[typing.List[typing.Dict[str, typing.Any]], Money]:
+            """
+            Applies eligible discounts to a given payable item (package or product) and calculates the total discount amount.
+
+            Args:
+                payable (PaymentMixin): The item to which discounts are applied.
+                discount_base (Money): The base amount before discounts.
+                context (dict): Context for evaluating discount eligibility.
+            
+            Returns:
+                tuple: A tuple containing a list of applied discounts and the total discount amount.
+
+            """
             percentage_total = Decimal('0.00')
             fixed_total = Money(0, discount_base.currency)
             applied_discounts = []
