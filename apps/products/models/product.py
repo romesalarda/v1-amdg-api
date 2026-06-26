@@ -1,16 +1,14 @@
-from django.db import models
-from django.core import validators
-from rest_framework import exceptions
-from django.contrib.auth import get_user_model
+import typing
 
+from django.db import models
+from django.contrib.auth import get_user_model
 from django.db.models import F
-from django.db import transaction
+from django.contrib.auth.models import User
+
+from rest_framework import exceptions
+
 
 from djmoney.money import Money
-
-from datetime import datetime
-
-from django.conf import settings
 
 from apps.payments.mixins import PayableModel
 from apps.products.mixins import ProductMixin
@@ -18,8 +16,6 @@ from core.utils.display import try_generate_unique_display_code
 
 from colorfield.fields import ColorField
 import uuid
-
-User = get_user_model()
 
 class ProductMetaClass(PayableModel, ProductMixin):
     '''
@@ -248,12 +244,12 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         new_quantity: int,
         change_amount: int,
         reason: str,
-        actor=None,
-        order_id=None,
-        payment_id=None,
-        order_item_id=None,
-        webhook_event_id=None,
-        notes=None,
+        actor: typing.Optional[User] = None,
+        order_id: typing.Optional[str] = None,
+        payment_id: typing.Optional[str] = None,
+        order_item_id: typing.Optional[str] = None,
+        webhook_event_id: typing.Optional[str] = None,
+        notes: typing.Optional[str] = None,
     ):
         from apps.products.models.audit import StockAuditLog
 
@@ -276,12 +272,12 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         amount: int,
         *,
         reason: str = 'manual_adjustment',
-        actor=None,
-        order_id=None,
-        payment_id=None,
-        order_item_id=None,
-        webhook_event_id=None,
-        notes=None,
+        actor: typing.Optional[User] = None,
+        order_id: typing.Optional[str] = None,
+        payment_id: typing.Optional[str] = None,
+        order_item_id: typing.Optional[str] = None,
+        webhook_event_id: typing.Optional[str] = None,
+        notes: typing.Optional[str] = None,
     ):
         '''
         Atomically increments the stock quantity of the product variant.
@@ -332,12 +328,12 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         amount: int,
         *,
         reason: str = 'manual_adjustment',
-        actor=None,
-        order_id=None,
-        payment_id=None,
-        order_item_id=None,
-        webhook_event_id=None,
-        notes=None,
+        actor: typing.Optional[User] = None,
+        order_id: typing.Optional[str] = None,
+        payment_id: typing.Optional[str] = None,
+        order_item_id: typing.Optional[str] = None,
+        webhook_event_id: typing.Optional[str] = None,
+        notes: typing.Optional[str] = None,
     ):
         '''
         Atomically decrements the stock quantity of the product variant.
@@ -461,6 +457,8 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
             context=attendee.get_base_context(),
         ):
             return False
+        if attendee.booking.is_cancelled: # 3. attendee's booking is cancelled
+            return False
         return True
     
     def can_attendee_purchase_quantity(self, attendee, desired_quantity: int, raise_exception=False) -> bool:
@@ -488,6 +486,11 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
         if not self.can_decrement_stock(desired_quantity):
             if raise_exception:
                 raise exceptions.ValidationError({"message": "Insufficient stock for the selected product variant.", "code": "insufficient_stock"})
+            return False
+        
+        if attendee.booking.is_cancelled:
+            if raise_exception:
+                raise exceptions.ValidationError({"message": "Cannot purchase: Attendee's booking is cancelled.", "code": "booking_cancelled"})
             return False
         
         return True
