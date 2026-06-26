@@ -1,23 +1,46 @@
 """Services for attendee pre-removal validation and blocker summaries."""
 
 from collections import OrderedDict
+import typing
 
 from django.core.paginator import Paginator
 from django.db.models import Q
+from django.contrib.contenttypes.models import ContentType
+from django.db import models
+
+from rest_framework.request import Request
 
 from apps.attendee.api.serializers import AttendeePreRemovalSummarySerializer
 from apps.bookings.models import Ticket, TicketStatusChoices
 from apps.payments.models import PaymentStatusChoices
 from apps.products.models import Order, OrderStatusChoices
+from apps.attendee.models import Attendee	
+from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+from apps.payments.models import Payment
 
+PAYMENT_STATUS_LITERAL = typing.Literal['in_flight', 'outstanding', 'settled', 'refund_pending', 'refunded', 'partially_refunded', 'cancelled', 'failed', 'unknown']
 class AttendeePreRemovalSummaryService:
-	"""Build and validate attendee pre-removal summaries."""
+	"""
+	Build and validate attendee pre-removal summaries.
+	"""
 
-	def __init__(self, *, request=None):
+	def __init__(self, *, request: typing.Optional[Request] = None):
+		'''
+		Args:
+			request (Request, optional): The HTTP request object, used for pagination and user context.
+		'''
 		self.request = request
 
-	def build_summary(self, attendee):
-		"""Build a validated pre-removal summary payload."""
+	def build_summary(self, attendee: Attendee) -> dict:
+		'''
+		Build a validated pre-removal summary payload.
+
+		Args:
+			attendee (Attendee): The attendee instance for which to build the summary.
+
+		Returns:
+			dict: A dictionary containing the pre-removal summary.
+		'''
 		
 		blockers = []
 		summary_counts = {
@@ -164,12 +187,28 @@ class AttendeePreRemovalSummaryService:
 		}
 		return self._validate_summary(payload)
 
-	def is_payment_linked_to_attendee(self, attendee, payment):
+	def is_payment_linked_to_attendee(self, attendee: Attendee, payment: Payment) -> bool:
+		'''
+		Check if a payment is linked to a specific attendee.
+
+		Args:
+			attendee (Attendee): The attendee instance.
+			payment (Payment): The payment instance.
+
+		Returns:
+			bool: True if the payment is linked to the attendee, False otherwise.
+		'''
 		return self.get_linked_payments(attendee).filter(id=payment.id).exists()
 
-	def get_linked_payments(self, attendee):
-		"""Get payments linked to attendee via booking, tickets, or orders."""
-		from django.contrib.contenttypes.models import ContentType
+	def get_linked_payments(self, attendee: Attendee) -> models.QuerySet:
+		'''
+		Retrieve all payments linked to the attendee through bookings, tickets, or orders.
+		Args:
+			attendee (Attendee): The attendee instance.
+		Returns:
+			QuerySet: A queryset of Payment instances linked to the attendee.	
+		'''
+
 		from apps.bookings.models import Booking
 		from apps.payments.models import Payment
 
@@ -190,13 +229,31 @@ class AttendeePreRemovalSummaryService:
 			| Q(id__in=order_payment_ids)
 		).select_related('event', 'user').distinct()
 
-	def _build_payment_item(self, payment):
+	def _build_payment_item(self, payment: Payment) -> OrderedDict:
+		'''
+		Build a dictionary representation of a payment item.
+
+		Args:
+			payment (Payment): The payment instance.
+
+		Returns:
+			OrderedDict: A dictionary containing payment details.
+		'''
 		item = OrderedDict()
 		item['type'] = 'payment'
 		item.update(self._payment_context(payment))
 		return item
 
-	def _build_ticket_item(self, ticket):
+	def _build_ticket_item(self, ticket) -> OrderedDict:
+		'''
+		Build a dictionary representation of a ticket item.
+
+		Args:
+			ticket (Ticket): The ticket instance.
+
+		Returns:
+			OrderedDict: A dictionary containing ticket details.
+		'''
 		item = OrderedDict()
 		item['type'] = 'ticket'
 		item['ticket_id'] = str(ticket.ticket_id)
@@ -208,7 +265,16 @@ class AttendeePreRemovalSummaryService:
 			item.update(self._payment_context(ticket.payment))
 		return item
 
-	def _build_order_item(self, order):
+	def _build_order_item(self, order) -> OrderedDict:
+		'''
+		Build a dictionary representation of an order item.
+
+		Args:
+			order (Order): The order instance.
+
+		Returns:
+			OrderedDict: A dictionary containing order details.
+		'''
 		item = OrderedDict()
 		item['type'] = 'order'
 		item['order_id'] = str(order.order_id)
@@ -221,7 +287,15 @@ class AttendeePreRemovalSummaryService:
 			item.update(self._payment_context(order.payment))
 		return item
 
-	def _payment_context(self, payment):
+	def _payment_context(self, payment: Payment) -> OrderedDict:
+		'''
+		Prepare a context dictionary for a payment, including type, status, and refund eligibility.
+		Args:
+			payment (Payment): The payment instance.
+
+		Returns:
+			OrderedDict: A dictionary containing payment context details.	
+		'''
 		payment_type = self._get_payment_type(payment)
 		can_request_refund, refund_block_reason = self._can_request_attendee_refund(payment)
 
@@ -268,7 +342,16 @@ class AttendeePreRemovalSummaryService:
 		page_size = min(max(page_size, 1), max_size)
 		return page, page_size
 
-	def _paginate_items(self, items):
+	def _paginate_items(self, items: list) -> typing.Tuple[typing.List[OrderedDict], typing.Dict[str, typing.Any]]:
+		'''
+		Paginate a list of items based on the current request's page and page size.
+
+		Args:
+			items (list): The list of items to paginate.
+
+		Returns:
+			tuple[list, dict]: A tuple containing the paginated items and pagination metadata.
+		'''
 		page, page_size = self._get_page_and_page_size()
 		paginator = Paginator(items, page_size)
 		page_obj = paginator.get_page(page)
@@ -283,12 +366,30 @@ class AttendeePreRemovalSummaryService:
 			'previous_page': page_obj.previous_page_number() if page_obj.has_previous() else None,
 		}
 
-	def _validate_summary(self, payload):
+	def _validate_summary(self, payload: dict) -> dict:
+		'''
+		Validate the summary payload using the AttendeePreRemovalSummarySerializer.
+
+		Args:
+			payload (dict): The summary payload to validate.
+
+		Returns:
+			dict: The validated summary data.
+		'''
 		serializer = AttendeePreRemovalSummarySerializer(data=payload)
 		serializer.is_valid(raise_exception=True)
 		return serializer.validated_data
 
-	def _build_suggested_actions(self, blockers):
+	def _build_suggested_actions(self, blockers: list) -> list:
+		'''
+		Build a list of suggested actions based on the provided blockers.
+
+		Args:
+			blockers (list): A list of blocker dictionaries.
+
+		Returns:
+			list: A list of suggested action dictionaries.
+		'''
 		suggestions = []
 		blocker_codes = {blocker['code'] for blocker in blockers}
 
@@ -357,7 +458,9 @@ class AttendeePreRemovalSummaryService:
 			'sponsorship': 'Sponsorship Payment',
 		}.get(payment_type, 'Payment')
 
-	def _get_payment_status_bucket(self, status):
+	def _get_payment_status_bucket(self, 
+			status: typing.Literal['DRAFTING', 'PENDING', 'COMPLETED', 'PENDING_REFUND', 'REFUNDED', 'PARTIALLY_REFUNDED', 'CANCELLED', 'FAILED']
+		) -> PAYMENT_STATUS_LITERAL:
 		return {
 			'DRAFTING': 'in_flight',
 			'PENDING': 'outstanding',
@@ -369,9 +472,13 @@ class AttendeePreRemovalSummaryService:
 			'FAILED': 'failed',
 		}.get(status, 'unknown')
 
-	def _can_request_attendee_refund(self, payment):
-		from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
-		from apps.payments.models import PaymentStatusChoices
+	def _can_request_attendee_refund(self, payment: Payment) -> typing.Tuple[bool, typing.Optional[str]]:
+		'''
+		Args:
+			payment (Payment): The payment instance to check for refund eligibility.
+		Returns:	
+			tuple[bool, str or None]: A tuple where the first element indicates if a refund can be requested, and the second element provides a reason if it cannot be requested.
+		'''
 
 		user = getattr(self.request, 'user', None)
 		if not user or user.is_anonymous:

@@ -12,8 +12,8 @@ Functions are designed to be:
 """
 import uuid
 
-from django.db.models import Count, Q, Avg, F, Value, CharField, Case, When, IntegerField
-from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, ExtractYear
+from django.db.models import Count
+from django.db.models.functions import TruncDate, TruncWeek, TruncMonth
 from django.utils import timezone
 from datetime import date, timedelta
 from typing import Optional, Dict, List, Any

@@ -11,11 +11,14 @@ unchanged, and the POST endpoint has a clean, independently tested code path.
 import math
 from datetime import date
 
+import typing    
+
 from dateutil.relativedelta import relativedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models import Q, F, IntegerField, DateField, TimeField, Value, Case, When
 from django.db.models.functions import Cast
+from rest_framework.request import Request
 
 from apps.attendee.models import (
     Attendee,
@@ -30,18 +33,33 @@ from apps.common.models import VerificationStatus
 
 # ── Payment-scoped helpers (mirrors FilterSet helpers) ────────────────────────
 
-def _booking_payment_attendee_ids(payment_queryset):
-    """Return attendee PKs whose booking is targeted by the supplied payments."""
+def _booking_payment_attendee_ids(payment_queryset: models.QuerySet) -> models.QuerySet:
+    """
+    Return attendee PKs whose booking is targeted by the supplied payments.
+    Args:
+        payment_queryset: A queryset of Payment objects, filtered to the relevant
+            event and any other criteria (status, method, etc.)
+    Returns:
+        A queryset of Attendee PKs whose booking is targeted by the supplied payments.
+    """
     from apps.bookings.models import Booking
-    from apps.products.models import ProductVariant
 
     booking_ct = ContentType.objects.get_for_model(Booking)
     booking_ids = payment_queryset.filter(target_type=booking_ct).values_list('target_id', flat=True)
     return Attendee.objects.filter(booking_id__in=list(booking_ids)).values_list('id', flat=True)
 
 
-def _filter_attendees_by_payment_queryset(queryset, payment_queryset, targets=None):
-    """Filter attendees by payment queryset across booking, order, and ticket payment paths."""
+def _filter_attendees_by_payment_queryset(queryset: models.QuerySet, payment_queryset: models.QuerySet, targets=None) -> models.QuerySet:
+    '''
+    Filter attendees by payment queryset across booking, order, and ticket payment paths.
+    Args:
+        queryset: A queryset of Attendee objects to filter.
+        payment_queryset: A queryset of Payment objects, filtered to the relevant
+            event and any other criteria (status, method, etc.)
+        targets: An optional set of targets to filter by ('booking', 'order', 'ticket').
+    Returns:
+        A queryset of Attendee objects filtered by the payment queryset.
+    '''
     selected_targets = set(targets or {'booking', 'order', 'ticket'})
     attendee_event_ids = queryset.values_list('event_id', flat=True).distinct()
     if attendee_event_ids.exists():
@@ -61,8 +79,16 @@ def _filter_attendees_by_payment_queryset(queryset, payment_queryset, targets=No
     return queryset.filter(criteria).distinct()
 
 
-def _filter_attendees_by_discount_queryset(queryset, discount_queryset):
-    """Filter attendees by discounts linked to booking package or product variant transactions."""
+def _filter_attendees_by_discount_queryset(queryset: models.QuerySet, discount_queryset: models.QuerySet) -> models.QuerySet:
+    '''
+    Filter attendees by discount queryset across booking packages and product variants.
+    Args:
+        queryset: A queryset of Attendee objects to filter.
+        discount_queryset: A queryset of Discount objects, filtered to the relevant
+            event and any other criteria (name, ID, etc.)
+    Returns:
+        A queryset of Attendee objects filtered by the discount queryset.
+    '''
     from apps.bookings.models import BookingPackage
     from apps.products.models import ProductVariant
 
@@ -90,14 +116,24 @@ class AttendeeFilterService:
     AttendeeFilterRequestSerializer, then call get_queryset().
     """
 
-    def __init__(self, request, validated_data: dict):
+    def __init__(self, request: Request, validated_data: dict):
+        '''
+        Args:
+            request: The Django request object, used for permission scoping.
+            validated_data: The validated data from AttendeeFilterRequestSerializer.
+        '''
         self.request = request
         self.data = validated_data
         self.filter_data = validated_data.get('filters') or {}
 
     # ── Base queryset ─────────────────────────────────────────────────────────
 
-    def _base_queryset(self):
+    def _base_queryset(self) -> models.QuerySet:
+        '''
+        Returns:
+            A base queryset of Attendee objects for the specified event, with
+            permission scoping applied based on the request user.
+        '''
         user = self.request.user
         event_slug = self.data['event']
 
@@ -130,7 +166,17 @@ class AttendeeFilterService:
 
     # ── Search ────────────────────────────────────────────────────────────────
 
-    def _apply_search(self, qs):
+    def _apply_search(self, qs: models.QuerySet) -> models.QuerySet: # TODO: in future replace with postgres full-text search for better performance and ranking
+        '''
+        Applies a search filter to the queryset based on the search term provided
+        in the request data.
+
+        Args:
+            qs: The initial queryset to apply the search filter on.
+
+        Returns:
+            The queryset filtered by the search term.
+        '''
         search = self.data.get('search')
         if not search:
             return qs
@@ -144,13 +190,22 @@ class AttendeeFilterService:
 
     # ── Ordering ──────────────────────────────────────────────────────────────
 
-    def _apply_ordering(self, qs):
+    def _apply_ordering(self, qs: models.QuerySet) -> models.QuerySet:
         ordering = self.data.get('ordering') or '-created_at'
         return qs.order_by(ordering)
 
     # ── Demographics ──────────────────────────────────────────────────────────
 
-    def _apply_demographics(self, qs):
+    def _apply_demographics(self, qs: models.QuerySet) -> models.QuerySet:
+        '''
+        Applies demographic filters to the queryset based on the demographics data  
+
+        Args:
+            qs: The initial queryset to apply the demographic filters on.
+
+        Returns:
+            The queryset filtered by the demographic data.
+        '''
         d = self.filter_data.get('demographics') or {}
 
         gender = d.get('gender')
@@ -857,7 +912,7 @@ class AttendeeFilterService:
 
     # ── Pagination helper ────────────────────────────────────────────────────
 
-    def paginate(self, qs):
+    def paginate(self, qs: models.QuerySet) -> typing.Tuple[models.QuerySet, typing.Dict[str, typing.Any]]:
         """Return (items, pagination_meta) for the current page."""
         page = int(self.data.get('page') or 1)
         page_size = int(self.data.get('page_size') or 25)
