@@ -1,26 +1,5 @@
 import json
 import uuid
-
-from rest_framework import viewsets, status, permissions, filters
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
-from rest_framework.exceptions import PermissionDenied
-from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
-
-from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q
-from django.core.serializers.json import DjangoJSONEncoder
-from django.contrib.contenttypes.models import ContentType
-# Import models
-from django.db import transaction
-from apps.products.models import Order
-from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices, PaymentMethod
-from djmoney.money import Money
-from decimal import Decimal
-from apps.attendee.models import Attendee, AttendeeRelationship
-from apps.common.models import Resource, ResourceTypeChoices
-from apps.bookings.models.ticket import Ticket
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -28,10 +7,38 @@ from drf_spectacular.utils import (
     OpenApiResponse,
 )
 from drf_spectacular.types import OpenApiTypes
+import typing
+from djmoney.money import Money
+from decimal import Decimal
+
+from rest_framework import viewsets, status, permissions, filters
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
+from rest_framework.request import Request
+
+from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Q
+from django.core.serializers.json import DjangoJSONEncoder
+from django.contrib.contenttypes.models import ContentType
+from django.db import transaction
+from django.utils import timezone
+from django.contrib.auth.models import User
+
+from apps.products.models import Order
+from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices, PaymentMethod
+
+from apps.attendee.models import Attendee, AttendeeRelationship
+from apps.common.models import Resource, ResourceTypeChoices
+from apps.bookings.models.ticket import Ticket
 
 from apps.bookings.models import (
     Booking, BookingIntent, BookingIntentStatusChoices,Ticket,EventAlternativeSigninIdentifier,
 )
+from apps.events.models import Event
+
 from apps.bookings.api.serializers import (
     BookingListSerializer, BookingDetailSerializer, BookingCreateSerializer, BookingUpdateSerializer,
     TicketListSerializer, 
@@ -40,12 +47,17 @@ from apps.bookings.api.serializers import (
 )
 from apps.bookings.api.filtersets import BookingFilterSet
 from apps.bookings.api.permissions import IsBookingOwnerOrAdministrative
-from django.utils import timezone
+from apps.attendee.api.serializers import AttendeeListSerializer
+
 from apps.bookings.services import BookingCheckoutFinaliser
 from apps.payments.services.stripe.payment_intents import PaymentIntentService
 from apps.bookings.api.pagination import StandardPagination
 
+from apps.payments.models import DiscountType, BankTransferEvidence
+from apps.payments.services.evaluator import discount_applies
+
 from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
+from apps.bookings.services import AttendeePrecheckValidationService
 
 import logging
 logger = logging.getLogger(__name__)
@@ -176,7 +188,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 pass
         return context
     
-    def perform_create(self, serializer):
+    def perform_create(self, serializer: BookingCreateSerializer):
         """
         Create booking with intent validation.
         
@@ -290,10 +302,9 @@ class BookingViewSet(viewsets.ModelViewSet):
         operation_id="bookings_booking_attendees_list",
     )
     @action(detail=True, methods=['get'], url_path='attendees')
-    def attendees(self, request, pk=None):
+    def attendees(self, request: Request, pk: typing.Optional[int] = None):
         """Return all attendees for this booking."""
         booking = self.get_object()
-        from apps.attendee.api.serializers import AttendeeListSerializer
         
         attendees = booking.attendees.all()
         serializer = AttendeeListSerializer(attendees, many=True, context={'request': request})
@@ -307,7 +318,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         operation_id="bookings_booking_tickets_list",
     )
     @action(detail=True, methods=['get'], url_path='tickets')
-    def tickets(self, request, pk=None):
+    def tickets(self, request: Request, pk: typing.Optional[int] = None):
         """Return all tickets for all attendees in this booking."""
         booking = self.get_object()
         
@@ -334,9 +345,8 @@ class BookingViewSet(viewsets.ModelViewSet):
         operation_id="bookings_attendee_precheck",
     )
     @action(detail=False, methods=['post'], url_path='attendee-precheck')
-    def attendee_precheck(self, request):
+    def attendee_precheck(self, request: Request):
         """Validate attendee constraints before checkout submission."""
-        from apps.bookings.services import AttendeePrecheckValidationService
 
         serializer = BookingAttendeePrecheckSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
@@ -377,7 +387,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         operation_id="bookings_checkout_alternative_signins",
     )
     @action(detail=False, methods=['get'], url_path='checkout-alternative-signins')
-    def checkout_alternative_signins(self, request):
+    def checkout_alternative_signins(self, request: Request):
         """List active event alternative sign-in definitions for checkout."""
         booking_intent_id = request.query_params.get('booking_intent_id')
         if not booking_intent_id:
@@ -471,7 +481,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         url_path='checkout',
         parser_classes=[JSONParser, FormParser, MultiPartParser]
     )
-    def checkout(self, request):
+    def checkout(self, request: Request):
         """
         Complete booking checkout with payment.
         
@@ -493,7 +503,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         user = request.user
         idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
         
-        def serialize_checkout_attendees(selections):
+        def serialize_checkout_attendees(selections: typing.List[typing.Dict[typing.Str, typing.Any]]) -> typing.List[typing.Dict[typing.Str, typing.Any]]:
+            """
+            Serialize attendee selections for checkout.
+            """
             serialized = []
             for selection in selections:
                 attendee = selection.get('_attendee')
@@ -539,7 +552,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 })
             return serialized
 
-        def materialize_multipart_question_uploads(selections, event, actor):
+        def materialize_multipart_question_uploads(selections: list, event: Event, actor: User) -> None:
+            '''
+            Materialize any multipart question uploads into Resource objects and attach their IDs and URLs to the attendee draft answers.
+            Args:
+                selections (list): List of attendee selections with potential multipart uploads.
+                event (Event): The event for which the booking is being made.
+                actor (User): The user performing the checkout action.
+            '''
             content_type = ContentType.objects.get_for_model(event.__class__)
 
             for selection in selections:
@@ -575,10 +595,21 @@ class BookingViewSet(viewsets.ModelViewSet):
                     if not answer.get('answer_text'):
                         answer['answer_text'] = resource.resource_url or ''
 
-        def calculate_total_and_validate(intent_obj, selections, code=None):
-            from apps.payments.models import DiscountType
-            from apps.payments.services.evaluator import discount_applies
-
+        def calculate_total_and_validate(
+            intent_obj: BookingIntent, 
+            selections: typing.List[typing.Dict[typing.Str, typing.Any]], 
+            code: typing.Optional[str] = None
+            ) -> typing.Tuple[Money, typing.List[typing.Dict[typing.Str, typing.Any]]]:
+            '''
+            Calculate the total amount for the booking and validate attendee selections.
+            Args:
+                intent_obj: The BookingIntent object associated with the checkout.
+                selections: List of attendee selections including packages and product selections.
+                code: Optional discount code to apply.
+            Returns:
+                total_amount (Money): The total amount for the booking after discounts.
+                applied_discounts_snapshot (list): A snapshot of applied discounts for each attendee.
+            '''
             total_amount = Money(0, 'GBP')
             applied_discounts_snapshot = []
             preview_savepoint = transaction.savepoint()
@@ -694,7 +725,27 @@ class BookingViewSet(viewsets.ModelViewSet):
 
             return total_amount, applied_discounts_snapshot
 
-        def build_response(payment_obj, status_label, message, booking=None, stripe_client_secret=None, bank_transfer_evidence=None):
+        def build_response(
+                payment_obj: 'Payment', 
+                status_label: str, 
+                message: str , 
+                booking: typing.Optional['Booking'] = None, 
+                stripe_client_secret: typing.Optional[str] = None, 
+                bank_transfer_evidence: typing.Optional['BankTransferEvidence'] =None
+                ) -> typing.Dict[str, typing.Any]:
+            '''
+            Build a structured response for the checkout endpoint.
+            Args:
+                payment_obj: The Payment object associated with the checkout.
+                status_label: A string indicating the status of the checkout (e.g., 'confirmed', 'pending_payment').
+                message: A human-readable message describing the checkout result.
+                booking: Optional Booking object if a booking was created.
+                stripe_client_secret: Optional client secret for Stripe payments.
+                bank_transfer_evidence: Optional BankTransferEvidence object if applicable.
+            Returns:
+                A dictionary containing the checkout response data.
+            '''
+
             response_data = {
                 'booking_id': str(booking.id) if booking else None,
                 'booking_reference': booking.booking_reference if booking else None,
@@ -1128,7 +1179,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         operation_id="bookings_reserve_bank_transfer_payment",
     )
     @action(detail=False, methods=['post'], url_path='reserve-bank-transfer-payment')
-    def reserve_bank_transfer_payment(self, request):
+    def reserve_bank_transfer_payment(self, request: Request) -> Response:
         user = request.user
         intent_id = request.data.get('booking_intent_id')
         payment_method_id = request.data.get('payment_method_id')
@@ -1238,7 +1289,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         operation_id="bookings_upload_bank_transfer_evidence",
     )
     @action(detail=False, methods=['post'], url_path='upload-bank-transfer-evidence')
-    def upload_bank_transfer_evidence(self, request):
+    def upload_bank_transfer_evidence(self, request: Request) -> Response:
         user = request.user
         intent_id = request.data.get('booking_intent_id')
         if not intent_id:
@@ -1324,14 +1375,9 @@ class BookingViewSet(viewsets.ModelViewSet):
         operation_id="bookings_checkout_preview",
     )
     @action(detail=False, methods=['post'], url_path='checkout-preview')
-    def checkout_preview(self, request):
+    def checkout_preview(self, request: Request) -> Response:
         """Preview booking checkout totals and discounts without persisting booking/payment data."""
-        import logging
-        from django.utils import timezone
-        from apps.payments.models import DiscountType
-        from apps.payments.services.evaluator import discount_applies
 
-        logger = logging.getLogger(__name__)
         serializer = CheckoutPreviewSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         user = request.user
@@ -1585,13 +1631,11 @@ class BookingViewSet(viewsets.ModelViewSet):
         ],
     )
     @action(detail=False, methods=['get'], url_path='ping-intent')
-    def ping_booking_intent(self, request):
+    def ping_booking_intent(self, request: Request) -> Response:
         """
         Internal endpoint to ping a booking intent and extend its expiry.
         Used by frontend to keep intent alive during checkout.
         """
-        from django.utils import timezone
-
         try:
             booking_intent_id = request.query_params.get('intent')
             if not booking_intent_id:
