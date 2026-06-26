@@ -12,9 +12,13 @@ from django.db import transaction
 from apps.bookings.tasks import (
     send_booking_confirmation_email,
 )
+from apps.bookings.models import Booking
+from apps.payments.models import Payment
+from apps.events.models import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
+
+from apps.bookings.services.ticket_creator import TicketCreatorService, TicketCreationError
 
 logger = logging.getLogger(__name__)
-
 
 class BookingPaymentProcessor:
     """
@@ -30,7 +34,7 @@ class BookingPaymentProcessor:
     """
 
     @classmethod
-    def process(cls, payment, booking) -> None:
+    def process(cls, payment: Payment, booking: Booking) -> None:
         """
         Execute all post-payment actions for a booking payment.
 
@@ -64,9 +68,19 @@ class BookingPaymentProcessor:
     # ------------------------------------------------------------------
 
     @classmethod
-    def _create_tickets(cls, payment, booking) -> None:
-        from apps.bookings.services.ticket_creator import TicketCreatorService, TicketCreationError
+    def _create_tickets(cls, payment: Payment, booking: Booking) -> None:
+        '''
+        Create tickets for all attendees in the booking via TicketCreatorService.
 
+        Args:
+            payment: Completed Payment instance.
+            booking: Booking instance that is the payment target.
+
+        Raises:
+            TicketCreationError: If ticket creation fails (propagated so the
+                atomic block in the caller can roll back).
+            Exception: Any unexpected error is re-raised after logging.
+        '''
         try:
             tickets = TicketCreatorService.create_tickets_for_payment(payment)
             logger.info(
@@ -85,9 +99,15 @@ class BookingPaymentProcessor:
             raise
 
     @classmethod
-    def _handle_related_orders(cls, payment, booking) -> None:
+    def _handle_related_orders(cls, payment: Payment, booking: Booking) -> None:
+        '''
+        Handle related orders for a booking after payment is completed.
+
+        Args:
+            payment: Completed Payment instance.
+            booking: Booking instance that is the payment target.
+        '''
         from apps.products.models import Order, OrderStatusChoices
-        from apps.events.models import EventNotification, NotificationTypeChoices, NotificationPriorityChoices
 
         related_orders = booking.get_related_orders()
         if not related_orders.exists():
