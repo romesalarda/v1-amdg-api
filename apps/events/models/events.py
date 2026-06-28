@@ -191,6 +191,11 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         if self.display_identifier is None or self.display_identifier == '':
             self.display_identifier = str(str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]).upper()
 
+        if self.status == EventStatusChoices.OPEN and self.last_opened is None:
+            self.last_opened = timezone.now()
+        elif self.status in closed_statuses and self.last_closed is None:
+            self.last_closed = timezone.now()
+
         super().save(*args, **kwargs)
         
     def __str__(self):
@@ -251,12 +256,12 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     def uptime(self) -> str:
         # return the number of days, hours, minute this event has been open for registration, or time until registration opens if in the future
         now = timezone.now().astimezone(self.timezone)
-        if self.start_datetime.astimezone(self.timezone) > now:
+        if self.last_opened is None: # if last opened is None, return message that event has not yet been opened for registration
+            return "Event has not yet been opened for registration."
+        # if last opened and NOT past start date, return how long the event has been open for registration
+        elif self.last_opened and self.start_datetime.astimezone(self.timezone) > now:
             delta = self.start_datetime.astimezone(self.timezone) - now
-            return f"Registration opens in {delta.days} days, {delta.seconds // 3600} hours"
-        elif self.end_datetime.astimezone(self.timezone) < now:
-            delta = now - self.end_datetime.astimezone(self.timezone)
-            return f"Event ended {delta.days} days, {delta.seconds // 3600} hours ago"
+            return f"Event has been open for registration for {delta.days} days, {delta.seconds // 3600} hours"
         else:
             delta = now - self.start_datetime.astimezone(self.timezone)
             return f"Event has been ongoing for {delta.days} days, {delta.seconds // 3600} hours"
@@ -480,13 +485,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         '''
         if new_status not in allowed_transitions[self.status]:
             raise ValidationError(f"Invalid status transition from {self.status} to {new_status}.")
-        old_status = self.status
-
-        if old_status == EventStatusChoices.OPEN and new_status in closed_statuses:
-            self.last_closed = timezone.now()
-        elif new_status == EventStatusChoices.OPEN:
-            self.last_opened = timezone.now()
-
         self.status = new_status
         self.save()
 

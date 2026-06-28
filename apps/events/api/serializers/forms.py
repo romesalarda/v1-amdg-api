@@ -227,6 +227,7 @@ class EventFormListSerializer(serializers.ModelSerializer):
             'id', 'event', 'event_title', 'title', 'status', 'status_display',
             'required', 'allow_response_editing', 'question_count',
             'deadline', 'opens_at', 'pre_opens_message', 'deadline_message',
+            'landing_image',
             'created_at', 'updated_at', '_links',
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
@@ -257,6 +258,7 @@ class EventFormSerializer(serializers.ModelSerializer):
             'id', 'event', 'event_title', 'title', 'description',
             'status', 'status_display', 'required', 'allow_response_editing',
             'question_count', 'questions', 'created_at', 'updated_at', '_links',
+            'landing_image',    
             'deadline', 'deadline_message', 'opens_at', 'pre_opens_message',
         )
         read_only_fields = ('id', 'created_at', 'updated_at')

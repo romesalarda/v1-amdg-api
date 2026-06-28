@@ -63,6 +63,17 @@ class ProductModelTest(TestCase):
             status=EventStatusChoices.OPEN,
             organisation=self.organisation
         )
+
+    def test_cannot_create_product_with_invalid_UUID(self):
+        """Test that creating a product with an invalid UUID raises ValidationError"""
+        with self.assertRaises(ValidationError):
+            Product.objects.create(
+                title='Invalid Product',
+                event=self.event,
+                base_amount=Money(10, 'GBP'),
+                added_by=self.user,
+                product_id='inventory'  # Invalid UUID
+            )
         
     def test_product_creation_with_valid_data(self):
         """Test creating a product with valid data"""

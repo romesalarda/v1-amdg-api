@@ -61,6 +61,14 @@ class EventForm(models.Model):
         blank=True,
         help_text='Optional message to display before the form opens.',
     )
+    
+    landing_image = models.ImageField(
+        upload_to='event_forms/landing_images/',
+        null=True,
+        blank=True,
+        help_text='Optional image to display on the form landing page.',
+    )
+
     class Meta:
         ordering = ['-created_at']
 

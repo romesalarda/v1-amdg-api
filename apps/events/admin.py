@@ -97,7 +97,7 @@ class EventAdmin(admin.ModelAdmin):
             'fields': ('start_datetime', 'end_datetime')
         }),
         ('Metadata', {
-            'fields': ('created_by', 'created_at', 'updated_at'),
+            'fields': ('created_by', 'created_at', 'updated_at', 'last_opened', 'last_closed'),
             'classes': ('collapse',)
         }),
         ('Soft Delete', {
