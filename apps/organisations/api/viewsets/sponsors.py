@@ -36,7 +36,7 @@ from apps.organisations.api.filtersets import (
     EventSponsorFilterSet, EventSponsorPackageFilterSet,
     EventSponsorInviteFilterSet,
 )
-from apps.organisations.api.permissions import IsOrganisationControllerOrEventAdmin
+from apps.organisations.api.permissions import IsOrganisationControllerOrEventAdmin, HasMonetaryAccessPermission
 
 from apps.common.pagination import StandardPagination
 
@@ -86,6 +86,12 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'added_at']
     ordering = ['-added_at']
     lookup_field = 'sponsor_id'
+
+    def get_permissions(self):
+        """Safe methods allow leaders with ALLOW_MONETARY_ACCESS; writes need controller/event-admin."""
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated(), HasMonetaryAccessPermission()]
+        return [permissions.IsAuthenticated(), IsOrganisationControllerOrEventAdmin()]
 
     def _get_organisation_for_sponsor_lists(self, request):
         organisation_id = request.query_params.get('organisation_id') or request.query_params.get('organisation')
@@ -654,6 +660,12 @@ class EventSponsorPackageViewSet(viewsets.ModelViewSet):
     ordering_fields = ['package_name', 'added_at', 'base_amount']
     ordering = ['-added_at']
     lookup_field = 'package_id'
+
+    def get_permissions(self):
+        """Safe methods allow leaders with ALLOW_MONETARY_ACCESS; writes need controller/event-admin."""
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated(), HasMonetaryAccessPermission()]
+        return [permissions.IsAuthenticated(), IsOrganisationControllerOrEventAdmin()]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -683,6 +695,12 @@ class EventSponsorInviteViewSet(viewsets.ModelViewSet):
     ordering_fields = ['sent_at', 'responded_at']
     ordering = ['-sent_at']
     lookup_field = 'invite_id'
+
+    def get_permissions(self):
+        """Safe methods allow leaders with ALLOW_MONETARY_ACCESS; writes need controller/event-admin."""
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated(), HasMonetaryAccessPermission()]
+        return [permissions.IsAuthenticated(), IsOrganisationControllerOrEventAdmin()]
 
     def get_serializer_class(self):
         if self.action == 'list':

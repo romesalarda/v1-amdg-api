@@ -4,7 +4,8 @@ from .event import InvolvedEventOrganisationViewSet
 from .sponsors import (
     EventSponsorViewSet, EventSponsorPackageViewSet, EventSponsorInviteViewSet,
 )
-from .leaders import LeaderViewSet, LocationLeaderInviteViewSet
+from .leaders import LeaderViewSet, LocationLeaderInviteViewSet, LeaderPermissionViewSet
+from .policy import OrganisationEventTypePolicyRestrictionViewSet
 
 __all__ = [
     'OrganisationViewSet',
@@ -19,4 +20,6 @@ __all__ = [
     'EventSponsorInviteViewSet',
     'LeaderViewSet',
     'LocationLeaderInviteViewSet',
+    'LeaderPermissionViewSet',
+    'OrganisationEventTypePolicyRestrictionViewSet',
 ]

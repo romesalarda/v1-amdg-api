@@ -18,15 +18,20 @@ from drf_spectacular.utils import (
 from drf_spectacular.types import OpenApiTypes
 
 from apps.organisations.models import (
-    OrganisationControl,UserOrganisationMembership,Leader, LocationLeaderInvite
+    OrganisationControl, UserOrganisationMembership, Leader, LocationLeaderInvite,
+    LeaderPermission,
 )
 from apps.utils.querying import get_organisation_or_url_safe_title, get_object_or_url_safe_title
 from apps.organisations.api.serializers import (
     LeaderListSerializer, LeaderDetailSerializer, LeaderCreateUpdateSerializer,
-    LocationLeaderInviteListSerializer, LocationLeaderInviteDetailSerializer, LocationLeaderInviteCreateUpdateSerializer
+    LocationLeaderInviteListSerializer, LocationLeaderInviteDetailSerializer, LocationLeaderInviteCreateUpdateSerializer,
+    LeaderPermissionSerializer, LeaderPermissionCreateUpdateSerializer,
 )
-from apps.organisations.api.filtersets import (LeaderFilterSet, LocationLeaderInviteFilterSet)
-from apps.organisations.api.permissions import IsOrganisationController
+from apps.organisations.api.filtersets import (LeaderFilterSet, LocationLeaderInviteFilterSet, LeaderPermissionFilterSet)
+from apps.organisations.api.permissions import (
+    IsOrganisationController, WriteRequiresOrganisationController,
+    HasManageLeadersPermission,
+)
 
 from apps.common.pagination import StandardPagination
 
@@ -87,6 +92,12 @@ class LeaderViewSet(viewsets.ModelViewSet):
     search_fields = ['user__email', 'user__first_name', 'user__last_name', 'organisation__title']
     ordering_fields = ['added_at', 'updated_at']
     ordering = ['-added_at']
+
+    def get_permissions(self):
+        """Safe methods allow leaders with ALLOW_MANAGE_LEADERS; writes remain controller-only."""
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated(), HasManageLeadersPermission()]
+        return [permissions.IsAuthenticated(), IsOrganisationController()]
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -225,6 +236,12 @@ class LocationLeaderInviteViewSet(viewsets.ModelViewSet):
     ordering_fields = ['added_at', 'expires_at', 'accepted_at']
     ordering = ['-added_at']
 
+    def get_permissions(self):
+        """Safe methods allow leaders with ALLOW_MANAGE_LEADERS; writes remain controller-only."""
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated(), HasManageLeadersPermission()]
+        return [permissions.IsAuthenticated(), IsOrganisationController()]
+
     def get_serializer_class(self):
         if self.action == 'list':
             return LocationLeaderInviteListSerializer
@@ -276,3 +293,92 @@ class LocationLeaderInviteViewSet(viewsets.ModelViewSet):
 
         serializer = LocationLeaderInviteDetailSerializer(invite, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ============================================================================
+# LEADER PERMISSION VIEWSET
+# ============================================================================
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="List Leader Permissions",
+        description=(
+            "Retrieve leader permissions. Non-controller users see only their own permissions. "
+            "Organisation controllers see all permissions and can filter by user or organisation."
+        ),
+        tags=["Leader Permissions"],
+        parameters=[
+            OpenApiParameter(name='leader', type=OpenApiTypes.INT, description='Filter by leader ID'),
+            OpenApiParameter(name='user', type=OpenApiTypes.INT, description='Filter by user ID'),
+            OpenApiParameter(name='organisation', type=OpenApiTypes.STR, description='Filter by organisation id or url_safe_title'),
+            OpenApiParameter(name='permission_code', type=OpenApiTypes.STR, description='Filter by permission code'),
+        ],
+    ),
+    retrieve=extend_schema(
+        summary="Retrieve Leader Permission",
+        description="Retrieve details of a leader permission. Non-controllers can only access their own.",
+        tags=["Leader Permissions"],
+    ),
+    create=extend_schema(
+        summary="Create Leader Permission",
+        description="Assign a permission code to a leader. Only organisation controllers can create leader permissions.",
+        tags=["Leader Permissions"],
+    ),
+    update=extend_schema(
+        summary="Update Leader Permission",
+        description="Update a leader permission. Only organisation controllers can update.",
+        tags=["Leader Permissions"],
+    ),
+    partial_update=extend_schema(
+        summary="Partially Update Leader Permission",
+        description="Partially update a leader permission. Only organisation controllers can update.",
+        tags=["Leader Permissions"],
+    ),
+    destroy=extend_schema(
+        summary="Delete Leader Permission",
+        description="Remove a permission from a leader. Only organisation controllers can delete.",
+        tags=["Leader Permissions"],
+    ),
+)
+class LeaderPermissionViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for LeaderPermission records.
+
+    Read access:
+      - Any authenticated user can list/retrieve their own leader permissions.
+      - Organisation controllers (and Django staff/superusers) can access all records.
+
+    Write access (create, update, delete):
+      - Restricted to organisation controllers and Django staff/superusers.
+    """
+
+    serializer_class = LeaderPermissionSerializer
+    permission_classes = [permissions.IsAuthenticated, WriteRequiresOrganisationController]
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = LeaderPermissionFilterSet
+    search_fields = ['permission_code', 'description']
+    ordering_fields = ['created_at', 'permission_code']
+    ordering = ['permission_code']
+
+    def get_queryset(self):
+        """
+        Non-controllers see only their own LeaderPermission records.
+        Controllers and staff/superusers see all records.
+        """
+        user = self.request.user
+        base_qs = LeaderPermission.objects.select_related(
+            'leader__user', 'leader__organisation'
+        )
+        if user.is_superuser or user.is_staff:
+            return base_qs
+        if OrganisationControl.objects.filter(user=user).exists():
+            return base_qs
+        # Regular leaders — scope to own records only
+        return base_qs.filter(leader__user=user)
+
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return LeaderPermissionCreateUpdateSerializer
+        return LeaderPermissionSerializer

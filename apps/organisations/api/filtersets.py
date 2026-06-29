@@ -30,7 +30,8 @@ from apps.organisations.models import (
     UserOrganisationMembership, OrganisationAcceptanceCode, OrganisationInvite,
     InvolvedEventOrganisation, InvolvedOrganisationRoleChoices,
     EventSponsor, EventSponsorPackage, EventSponsorInvite,
-    Leader, LeaderLocationType, LocationLeaderInvite
+    Leader, LeaderLocationType, LocationLeaderInvite,
+    LeaderPermission, OrganisationEventTypePolicyRestriction,
 )
 
 from apps.common.models.verification import VerificationStatus as OrganisationSponsorVerificationStatus
@@ -897,4 +898,101 @@ class LocationLeaderInviteFilterSet(filters.FilterSet):
         return queryset.exclude(valid_filter)
 
     def filter_organisation(self, queryset, name, value):
+        return _filter_by_organisation_identifier(queryset, 'organisation', value)
+
+
+# ============================================================================
+# LEADER PERMISSION FILTERSET
+# ============================================================================
+
+
+class LeaderPermissionFilterSet(filters.FilterSet):
+    """
+    Filterset for LeaderPermission.
+
+    Filter params (no double-underscore in param names):
+        - leader        : integer PK of the Leader record
+        - user          : integer PK of the user the leader belongs to
+        - organisation  : integer PK, or url_safe_title of the organisation the leader belongs to
+        - permission_code: exact match on permission_code
+    """
+
+    leader = filters.NumberFilter(
+        field_name='leader_id',
+        help_text="Filter by leader ID (integer PK)"
+    )
+
+    user = filters.NumberFilter(
+        method='filter_by_user',
+        help_text="Filter by the user ID that the leader record belongs to"
+    )
+
+    organisation = filters.CharFilter(
+        method='filter_by_organisation',
+        help_text="Filter by organisation id or url_safe_title"
+    )
+
+    permission_code = filters.CharFilter(
+        field_name='permission_code',
+        lookup_expr='exact',
+        help_text="Filter by exact permission code"
+    )
+
+    class Meta:
+        model = LeaderPermission
+        fields = ['leader', 'user', 'organisation', 'permission_code']
+
+    def filter_by_user(self, queryset, name, value):
+        if not value:
+            return queryset
+        return queryset.filter(leader__user__id=value)
+
+    def filter_by_organisation(self, queryset, name, value):
+        organisation = _resolve_organisation_identifier(value)
+        if not organisation:
+            return queryset.none()
+        return queryset.filter(leader__organisation=organisation)
+
+
+# ============================================================================
+# ORGANISATION EVENT TYPE POLICY RESTRICTION FILTERSET
+# ============================================================================
+
+
+class OrganisationEventTypePolicyRestrictionFilterSet(filters.FilterSet):
+    """
+    Filterset for OrganisationEventTypePolicyRestriction.
+
+    Filter params (no double-underscore in param names):
+        - organisation    : integer PK, or url_safe_title
+        - event_type      : integer PK of the EventType (EventType has no UUID field)
+        - is_allowed      : boolean
+        - requires_approval: boolean
+    """
+
+    organisation = filters.CharFilter(
+        method='filter_by_organisation',
+        help_text="Filter by organisation id or url_safe_title"
+    )
+
+    event_type = filters.NumberFilter(
+        field_name='event_type_id',
+        help_text="Filter by EventType ID (integer PK)"
+    )
+
+    is_allowed = filters.BooleanFilter(
+        field_name='is_allowed',
+        help_text="Filter by whether the event type is allowed"
+    )
+
+    requires_approval = filters.BooleanFilter(
+        field_name='requires_approval',
+        help_text="Filter by whether approval is required"
+    )
+
+    class Meta:
+        model = OrganisationEventTypePolicyRestriction
+        fields = ['organisation', 'event_type', 'is_allowed', 'requires_approval']
+
+    def filter_by_organisation(self, queryset, name, value):
         return _filter_by_organisation_identifier(queryset, 'organisation', value)

@@ -22,6 +22,8 @@ from apps.organisations.api.viewsets import (
     EventSponsorInviteViewSet,
     LeaderViewSet,
     LocationLeaderInviteViewSet,
+    LeaderPermissionViewSet,
+    OrganisationEventTypePolicyRestrictionViewSet,
 )
 from apps.organisations.api.statistics_viewsets import OrganisationStatisticsViewSet
 
@@ -43,6 +45,8 @@ router.register(r'sponsor-packages', EventSponsorPackageViewSet, basename='spons
 router.register(r'sponsor-invites', EventSponsorInviteViewSet, basename='eventsponsorinvite')
 router.register(r'leaders', LeaderViewSet, basename='leader')
 router.register(r'leader-invites', LocationLeaderInviteViewSet, basename='locationleaderinvite')
+router.register(r'leader-permissions', LeaderPermissionViewSet, basename='leaderpermission')
+router.register(r'event-type-restrictions', OrganisationEventTypePolicyRestrictionViewSet, basename='eventtyperestriction')
 router.register(r'statistics', OrganisationStatisticsViewSet, basename='organisationstatistics')
 
 urlpatterns = [

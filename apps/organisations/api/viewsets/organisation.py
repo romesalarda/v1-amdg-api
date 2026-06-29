@@ -10,6 +10,7 @@ from drf_spectacular.utils import (
 
 from apps.organisations.models import (
     Organisation, OrganisationContact, OrganisationControl,
+    OrganisationEventPolicy,
 )
 from apps.utils.querying import get_object_or_url_safe_title
 from apps.organisations.api.serializers import (
@@ -17,14 +18,14 @@ from apps.organisations.api.serializers import (
     OrganisationContactSerializer, OrganisationContactCreateUpdateSerializer,
     OrganisationControlSerializer, OrganisationControlCreateUpdateSerializer,
     UserOrganisationMembershipListSerializer,
-
+    OrganisationEventPolicySerializer,
 )
 from apps.organisations.api.filtersets import (
     OrganisationFilterSet, OrganisationContactFilterSet, OrganisationControlFilterSet,
 )
 from apps.organisations.api.permissions import (
     IsOrganisationController, IsOrganisationControllerOrEventAdmin,
-    IsReadOnly
+    IsReadOnly, WriteRequiresControllerOrPolicyManager,
 )
 
 from apps.common.pagination import StandardPagination
@@ -123,27 +124,120 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @extend_schema(
-        summary="List organisation controllers",
-        description="Get all controllers for a specific organisation.",
+        summary="My permissions for this organisation",
+        description=(
+            "Returns the requesting user's permission summary for this organisation, including "
+            "controller status, membership status, leader status, and all leader permission codes "
+            "with their CRUD flags. Designed to power frontend community permission middleware."
+        ),
         responses={200: {
-            "type": "object",
-            "properties": {
-                "organisation" : {"type": "string"},
-                "organisation_url_safe_title" : {"type": "string"},
-                "can_view": {"type": "boolean"},
-            }
+            'type': 'object',
+            'properties': {
+                'organisation': {'type': 'string'},
+                'organisation_url_safe_title': {'type': 'string'},
+                'is_staff': {'type': 'boolean'},
+                'is_controller': {'type': 'boolean'},
+                'is_member': {'type': 'boolean'},
+                'is_leader': {'type': 'boolean'},
+                'leader_permissions': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'permission_code': {'type': 'string'},
+                            'allow_create': {'type': 'boolean'},
+                            'allow_read': {'type': 'boolean'},
+                            'allow_update': {'type': 'boolean'},
+                            'allow_delete': {'type': 'boolean'},
+                        },
+                    },
+                },
+            },
         }},
         tags=["Organisations"],
     )
     @action(detail=True, methods=["GET"], url_path="my-permissions")
     def my_permissions(self, request, url_safe_title):
+        from apps.organisations.models import (
+            UserOrganisationMembership, Leader, LeaderPermission,
+        )
         obj = self.get_object()
-        permissions = {
-            "organisation": obj.title,
-            "organisation_url_safe_title": obj.url_safe_title,
-            "can_view": IsOrganisationControllerOrEventAdmin().has_permission(request, self),
-        }
-        return Response(permissions)
+        user = request.user
+        is_controller = (
+            user.is_superuser
+            or user.is_staff
+            or OrganisationControl.objects.filter(organisation=obj, user=user).exists()
+        )
+        is_member = UserOrganisationMembership.objects.filter(
+            organisation=obj, user=user
+        ).exists()
+        is_leader = Leader.objects.filter(organisation=obj, user=user).exists()
+        leader_permissions = []
+        if is_leader:
+            leader_permissions = list(
+                LeaderPermission.objects.filter(
+                    leader__organisation=obj, leader__user=user
+                ).values(
+                    'permission_code', 'allow_create', 'allow_read',
+                    'allow_update', 'allow_delete',
+                )
+            )
+        return Response({
+            'organisation': obj.title,
+            'organisation_url_safe_title': obj.url_safe_title,
+            'is_staff': user.is_superuser or user.is_staff,
+            'is_controller': is_controller,
+            'is_member': is_member,
+            'is_leader': is_leader,
+            'leader_permissions': leader_permissions,
+        })
+
+    @extend_schema(
+        summary="Get or update organisation event policy",
+        description=(
+            "GET: Retrieve the event policy for this organisation (created automatically on first access). "
+            "PATCH: Update policy fields. Requires controller access or a leader with "
+            "ALLOW_POLICY_MANAGEMENT permission."
+        ),
+        request=OrganisationEventPolicySerializer,
+        responses={200: OrganisationEventPolicySerializer},
+        tags=["Organisation Policy"],
+    )
+    @action(
+        detail=True,
+        methods=['get', 'patch'],
+        url_path='policy',
+        permission_classes=[
+            permissions.IsAuthenticated,
+            WriteRequiresControllerOrPolicyManager,
+        ],
+    )
+    def policy(self, request, url_safe_title=None):
+        organisation = self.get_object()
+        event_policy, _ = OrganisationEventPolicy.objects.get_or_create(
+            organisation=organisation,
+            defaults={'created_by': request.user},
+        )
+        if request.method == 'PATCH':
+            # Check write permission manually since the action uses a custom permission list
+            # and the organisation object has already been fetched above.
+            write_perm = WriteRequiresControllerOrPolicyManager()
+            if not write_perm.has_object_permission(request, self, organisation):
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(write_perm.message)
+            serializer = OrganisationEventPolicySerializer(
+                event_policy,
+                data=request.data,
+                partial=True,
+                context={'request': request},
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+        serializer = OrganisationEventPolicySerializer(
+            event_policy, context={'request': request}
+        )
+        return Response(serializer.data)
 
 # ============================================================================
 # ORGANISATION CONTACT VIEWSETS

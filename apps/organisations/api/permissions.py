@@ -9,6 +9,12 @@ Permission Classes:
     - IsOrganisationControllerOrEventAdmin: Combined permission for organisation operations
     - IsOrganisationMember: Checks if user is a member of the organisation
     - IsOrganisationRelated: Checks if user has any relation to the organisation
+    - HasLeaderPermissionCode: Base class for leader permission code checks
+    - HasMembershipAccess: Checks ALLOW_MEMBERSHIP_ACCESS leader permission
+    - HasManageLeadersPermission: Checks ALLOW_MANAGE_LEADERS leader permission
+    - HasPolicyManagementPermission: Checks ALLOW_POLICY_MANAGEMENT leader permission
+    - HasReviewAccessPermission: Checks ALLOW_REVIEW_ACCESS leader permission
+    - HasMonetaryAccessPermission: Checks ALLOW_MONETARY_ACCESS leader permission
 
 Author: AMDG Platform Team
 Version: 1.0.0
@@ -362,3 +368,242 @@ class IsReadOnly(permissions.BasePermission):
     
     def has_object_permission(self, request, view, obj) -> bool:
         return request.method in permissions.SAFE_METHODS
+
+
+# ============================================================================
+# LEADER PERMISSION CODE CLASSES
+# ============================================================================
+
+
+def _method_to_crud_flag(method: str) -> str:
+    """Map an HTTP method to the corresponding LeaderPermission CRUD flag name."""
+    if method in permissions.SAFE_METHODS:
+        return 'allow_read'
+    if method == 'POST':
+        return 'allow_create'
+    if method in ('PUT', 'PATCH'):
+        return 'allow_update'
+    if method == 'DELETE':
+        return 'allow_delete'
+    return 'allow_read'
+
+
+class HasLeaderPermissionCode(permissions.BasePermission):
+    """
+    Base permission class for checking leader-specific permission codes.
+
+    Subclasses must set `required_code` to a value from LeaderPermissionCode.
+    Access is granted if the requesting user:
+      1. Is a Django superuser or staff member, OR
+      2. Has an OrganisationControl record (is a controller), OR
+      3. Has a LeaderPermission record with the required_code and the CRUD
+         flag corresponding to the HTTP method is True (allow_read for GET,
+         allow_create for POST, allow_update for PUT/PATCH, allow_delete for DELETE).
+
+    Object-level checks additionally verify the leader's organisation matches
+    the object's organisation to prevent cross-organisation access.
+    """
+
+    required_code: str | None = None
+    message = "You do not have the required leader permission for this action."
+
+    def _get_crud_flag(self, request) -> str:
+        return _method_to_crud_flag(request.method)
+
+    def _user_has_leader_permission(self, user, crud_flag: str) -> bool:
+        from apps.organisations.models import LeaderPermission
+        if self.required_code is None:
+            return False
+        return LeaderPermission.objects.filter(
+            leader__user=user,
+            permission_code=self.required_code,
+            **{crud_flag: True},
+        ).exists()
+
+    def has_permission(self, request, view) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        if OrganisationControl.objects.filter(user=request.user).exists():
+            return True
+        crud_flag = self._get_crud_flag(request)
+        return self._user_has_leader_permission(request.user, crud_flag)
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+
+        # Derive organisation from the object for scoped checks
+        organisation = self._get_organisation_from_object(obj)
+
+        if organisation:
+            # Controller of this specific organisation always passes
+            if OrganisationControl.objects.filter(
+                organisation=organisation, user=request.user
+            ).exists():
+                return True
+            # Leader permission must be scoped to this organisation
+            from apps.organisations.models import LeaderPermission
+            if self.required_code is None:
+                return False
+            crud_flag = self._get_crud_flag(request)
+            return LeaderPermission.objects.filter(
+                leader__user=request.user,
+                leader__organisation=organisation,
+                permission_code=self.required_code,
+                **{crud_flag: True},
+            ).exists()
+
+        # Fall back to unscoped check when organisation cannot be derived
+        if OrganisationControl.objects.filter(user=request.user).exists():
+            return True
+        crud_flag = self._get_crud_flag(request)
+        return self._user_has_leader_permission(request.user, crud_flag)
+
+    def _get_organisation_from_object(self, obj) -> Any:
+        """Extract the organisation from common object shapes."""
+        from apps.organisations.models import Organisation
+        if isinstance(obj, Organisation):
+            return obj
+        if hasattr(obj, 'organisation'):
+            return obj.organisation
+        return None
+
+
+class HasMembershipAccess(HasLeaderPermissionCode):
+    """Grants access to leaders with ALLOW_MEMBERSHIP_ACCESS permission code."""
+    required_code = 'allow_membership_access'
+    message = "You need the membership access leader permission for this action."
+
+
+class HasManageLeadersPermission(HasLeaderPermissionCode):
+    """Grants access to leaders with ALLOW_MANAGE_LEADERS permission code."""
+    required_code = 'allow_manage_leaders'
+    message = "You need the manage leaders permission for this action."
+
+
+class HasPolicyManagementPermission(HasLeaderPermissionCode):
+    """Grants access to leaders with ALLOW_POLICY_MANAGEMENT permission code."""
+    required_code = 'allow_policy_management'
+    message = "You need the policy management leader permission for this action."
+
+
+class HasReviewAccessPermission(HasLeaderPermissionCode):
+    """Grants access to leaders with ALLOW_REVIEW_ACCESS permission code."""
+    required_code = 'allow_review_access'
+    message = "You need the review access leader permission for this action."
+
+
+class HasMonetaryAccessPermission(HasLeaderPermissionCode):
+    """Grants access to leaders with ALLOW_MONETARY_ACCESS permission code."""
+    required_code = 'allow_monetary_access'
+    message = "You need the monetary access leader permission for this action."
+
+
+# ============================================================================
+# COMPOSITE PERMISSIONS
+# ============================================================================
+
+
+class WriteRequiresOrganisationController(permissions.BasePermission):
+    """
+    Read-only access for any authenticated user; write access requires the user
+    to be a Django superuser/staff or hold an OrganisationControl record.
+
+    Intended for use in viewsets where list/retrieve are safe-readable but
+    create/update/delete must be gated to controllers.
+    """
+
+    message = "You must be an organisation controller to perform write operations."
+
+    def has_permission(self, request, view) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        return OrganisationControl.objects.filter(user=request.user).exists()
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        organisation = self._get_organisation_from_object(obj)
+        if organisation:
+            return OrganisationControl.objects.filter(
+                organisation=organisation, user=request.user
+            ).exists()
+        return OrganisationControl.objects.filter(user=request.user).exists()
+
+    def _get_organisation_from_object(self, obj) -> Any:
+        from apps.organisations.models import Organisation
+        if isinstance(obj, Organisation):
+            return obj
+        if hasattr(obj, 'organisation'):
+            return obj.organisation
+        if hasattr(obj, 'leader') and hasattr(obj.leader, 'organisation'):
+            return obj.leader.organisation
+        return None
+
+
+class WriteRequiresControllerOrPolicyManager(permissions.BasePermission):
+    """
+    Read-only access for any authenticated user; write access requires the user
+    to be a controller OR a leader with ALLOW_POLICY_MANAGEMENT permission.
+    """
+
+    message = "You must be an organisation controller or policy manager to perform write operations."
+
+    def has_permission(self, request, view) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        if OrganisationControl.objects.filter(user=request.user).exists():
+            return True
+        from apps.organisations.models import LeaderPermission
+        return LeaderPermission.objects.filter(
+            leader__user=request.user,
+            permission_code='allow_policy_management',
+            allow_update=True,
+        ).exists()
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        organisation = self._get_organisation_from_object(obj)
+        if organisation:
+            if OrganisationControl.objects.filter(
+                organisation=organisation, user=request.user
+            ).exists():
+                return True
+            from apps.organisations.models import LeaderPermission
+            return LeaderPermission.objects.filter(
+                leader__user=request.user,
+                leader__organisation=organisation,
+                permission_code='allow_policy_management',
+                allow_update=True,
+            ).exists()
+        # Fallback to unscoped check
+        return self.has_permission(request, view)
+
+    def _get_organisation_from_object(self, obj) -> Any:
+        from apps.organisations.models import Organisation
+        if isinstance(obj, Organisation):
+            return obj
+        if hasattr(obj, 'organisation'):
+            return obj.organisation
+        return None

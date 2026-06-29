@@ -19,7 +19,7 @@ from apps.organisations.api.serializers import (
 from apps.organisations.api.filtersets import (
     UserOrganisationMembershipFilterSet, OrganisationAcceptanceCodeFilterSet, OrganisationInviteFilterSet,
 )
-from apps.organisations.api.permissions import IsOrganisationController
+from apps.organisations.api.permissions import IsOrganisationController, HasMembershipAccess
 
 from apps.common.pagination import StandardPagination
 
@@ -59,6 +59,12 @@ class UserOrganisationMembershipViewSet(viewsets.ModelViewSet):
     ordering_fields = ['added_at', 'verified_at']
     ordering = ['-added_at']
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_permissions(self):
+        """Safe methods allow leaders with ALLOW_MEMBERSHIP_ACCESS; writes remain controller-only."""
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated(), HasMembershipAccess()]
+        return [permissions.IsAuthenticated(), IsOrganisationController()]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""

@@ -35,7 +35,8 @@ from apps.organisations.models import (
     UserOrganisationMembership, OrganisationAcceptanceCode, OrganisationInvite,
     InvolvedEventOrganisation, InvolvedOrganisationRoleChoices,
     EventSponsor, EventSponsorPackage, EventSponsorInvite,
-    Leader, LeaderLocationType, LocationLeaderInvite
+    Leader, LeaderLocationType, LocationLeaderInvite,
+    LeaderPermission, OrganisationEventPolicy, OrganisationEventTypePolicyRestriction,
 )
 from apps.locations.models import (
     CountryLocation, ClusterLocation, ChapterLocation, AreaLocation,
@@ -106,12 +107,16 @@ class OrganisationDetailSerializer(OrganisationListSerializer):
     controllers_count = serializers.SerializerMethodField(help_text="Number of controllers")
     logo_url = serializers.SerializerMethodField(help_text="Logo image URL")
     landing_image_url = serializers.SerializerMethodField(help_text="Landing image URL")
-    
+    user_permissions = serializers.SerializerMethodField(
+        help_text="Requesting user's permissions for this organisation (controller, member, leader status and codes)"
+    )
+
     class Meta(OrganisationListSerializer.Meta):
         fields = OrganisationListSerializer.Meta.fields + (
             'logo', 'logo_url', 'logo_uploaded_at',
             'landing_image', 'landing_image_url', 'landing_image_uploaded_at',
-            'contacts', 'memberships_count', 'controllers_count'
+            'contacts', 'memberships_count', 'controllers_count',
+            'user_permissions',
         )
     
     @extend_schema_field(OpenApiTypes.STR)
@@ -151,6 +156,67 @@ class OrganisationDetailSerializer(OrganisationListSerializer):
     @extend_schema_field(OpenApiTypes.INT)
     def get_controllers_count(self, obj) -> int:
         return obj.controllers.count()
+
+    @extend_schema_field({
+        'type': 'object',
+        'properties': {
+            'is_staff': {'type': 'boolean'},
+            'is_controller': {'type': 'boolean'},
+            'is_member': {'type': 'boolean'},
+            'is_leader': {'type': 'boolean'},
+            'leader_permissions': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'permission_code': {'type': 'string'},
+                        'allow_create': {'type': 'boolean'},
+                        'allow_read': {'type': 'boolean'},
+                        'allow_update': {'type': 'boolean'},
+                        'allow_delete': {'type': 'boolean'},
+                    },
+                },
+            },
+        },
+    })
+    def get_user_permissions(self, obj) -> dict:
+        """Return the requesting user's permission summary for this organisation."""
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return {
+                'is_staff': False,
+                'is_controller': False,
+                'is_member': False,
+                'is_leader': False,
+                'leader_permissions': [],
+            }
+        user = request.user
+        is_controller = (
+            user.is_superuser
+            or user.is_staff
+            or OrganisationControl.objects.filter(organisation=obj, user=user).exists()
+        )
+        is_member = UserOrganisationMembership.objects.filter(
+            organisation=obj, user=user
+        ).exists()
+        leader_qs = Leader.objects.filter(organisation=obj, user=user)
+        is_leader = leader_qs.exists()
+        leader_permissions = []
+        if is_leader:
+            leader_perms = LeaderPermission.objects.filter(
+                leader__organisation=obj, leader__user=user
+            ).values(
+                'permission_code', 'allow_create', 'allow_read',
+                'allow_update', 'allow_delete',
+            )
+            leader_permissions = list(leader_perms)
+        return {
+            'is_staff': user.is_superuser or user.is_staff,
+            'is_controller': is_controller,
+            'is_member': is_member,
+            'is_leader': is_leader,
+            'leader_permissions': leader_permissions,
+        }
 
 
 class OrganisationCreateUpdateSerializer(serializers.ModelSerializer):
@@ -1575,3 +1641,175 @@ class LocationLeaderInviteCreateUpdateSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             validated_data['invited_by'] = request.user
         return super().create(validated_data)
+
+
+# ============================================================================
+# LEADER PERMISSION SERIALIZERS
+# ============================================================================
+
+
+class LeaderPermissionSerializer(serializers.ModelSerializer):
+    """Read serializer for LeaderPermission with nested leader context."""
+
+    leader_user = serializers.CharField(source='leader.user.username', read_only=True)
+    leader_user_id = serializers.IntegerField(source='leader.user.id', read_only=True)
+    organisation = serializers.CharField(source='leader.organisation.title', read_only=True, allow_null=True)
+    organisation_url_safe_title = serializers.CharField(
+        source='leader.organisation.url_safe_title', read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = LeaderPermission
+        fields = (
+            'id',
+            'leader',
+            'leader_user',
+            'leader_user_id',
+            'organisation',
+            'organisation_url_safe_title',
+            'permission_code',
+            'description',
+            'allow_create',
+            'allow_read',
+            'allow_update',
+            'allow_delete',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+
+class LeaderPermissionCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/update serializer for LeaderPermission."""
+
+    class Meta:
+        model = LeaderPermission
+        fields = (
+            'leader',
+            'permission_code',
+            'description',
+            'allow_create',
+            'allow_read',
+            'allow_update',
+            'allow_delete',
+        )
+
+    def validate(self, attrs):
+        leader = attrs.get('leader', getattr(self.instance, 'leader', None))
+        permission_code = attrs.get('permission_code', getattr(self.instance, 'permission_code', None))
+        qs = LeaderPermission.objects.filter(leader=leader, permission_code=permission_code)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                {'permission_code': 'This permission code is already assigned to this leader.'}
+            )
+        return attrs
+
+
+# ============================================================================
+# ORGANISATION EVENT POLICY SERIALIZERS
+# ============================================================================
+
+
+class OrganisationEventPolicySerializer(serializers.ModelSerializer):
+    """Serializer for OrganisationEventPolicy — used for both read and update."""
+
+    organisation_title = serializers.CharField(source='organisation.title', read_only=True)
+    organisation_url_safe_title = serializers.CharField(
+        source='organisation.url_safe_title', read_only=True
+    )
+
+    class Meta:
+        model = OrganisationEventPolicy
+        fields = (
+            'id',
+            'organisation',
+            'organisation_title',
+            'organisation_url_safe_title',
+            'allow_external_events',
+            'allow_attendee_deletions',
+            'allow_workshops',
+            'allow_product_releases',
+            'allow_sponsors',
+            'require_long_description',
+            'require_short_description',
+            'require_landing_image',
+            'product_release_must_be_approved_by_organisation',
+            'must_be_approved_by_organisation',
+            'max_attendees_per_event',
+            'max_events_per_organiser',
+            'card_payments_are_allowed',
+            'bank_transfers_are_allowed',
+            'max_package_price',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'organisation', 'organisation_title', 'organisation_url_safe_title', 'created_at', 'updated_at')
+
+
+# ============================================================================
+# ORGANISATION EVENT TYPE POLICY RESTRICTION SERIALIZERS
+# ============================================================================
+
+
+class OrganisationEventTypePolicyRestrictionListSerializer(serializers.ModelSerializer):
+    """List serializer for OrganisationEventTypePolicyRestriction."""
+
+    organisation_title = serializers.CharField(source='organisation.title', read_only=True)
+    organisation_url_safe_title = serializers.CharField(
+        source='organisation.url_safe_title', read_only=True
+    )
+    event_type_name = serializers.CharField(source='event_type.name', read_only=True)
+
+    class Meta:
+        model = OrganisationEventTypePolicyRestriction
+        fields = (
+            'id',
+            'organisation',
+            'organisation_title',
+            'organisation_url_safe_title',
+            'event_type',
+            'event_type_name',
+            'is_allowed',
+            'requires_approval',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+
+class OrganisationEventTypePolicyRestrictionDetailSerializer(
+    OrganisationEventTypePolicyRestrictionListSerializer
+):
+    """Detail serializer for OrganisationEventTypePolicyRestriction — identical to list."""
+
+    class Meta(OrganisationEventTypePolicyRestrictionListSerializer.Meta):
+        pass
+
+
+class OrganisationEventTypePolicyRestrictionCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/update serializer for OrganisationEventTypePolicyRestriction."""
+
+    class Meta:
+        model = OrganisationEventTypePolicyRestriction
+        fields = (
+            'organisation',
+            'event_type',
+            'is_allowed',
+            'requires_approval',
+        )
+
+    def validate(self, attrs):
+        organisation = attrs.get('organisation', getattr(self.instance, 'organisation', None))
+        event_type = attrs.get('event_type', getattr(self.instance, 'event_type', None))
+        qs = OrganisationEventTypePolicyRestriction.objects.filter(
+            organisation=organisation, event_type=event_type
+        )
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                {'event_type': 'A restriction for this event type already exists for this organisation.'}
+            )
+        return attrs

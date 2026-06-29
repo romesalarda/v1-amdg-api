@@ -4,7 +4,8 @@ from .models import (
     Organisation, OrganisationContact, OrganisationControl, Leader,
     InvolvedEventOrganisation, EventSponsor, EventSponsorPackage,
     UserOrganisationMembership, OrganisationInvite, OrganisationAcceptanceCode,
-    LocationLeaderInvite,
+    LocationLeaderInvite, LeaderPermission,
+    OrganisationEventPolicy, OrganisationEventTypePolicyRestriction,
 )
 
 
@@ -21,13 +22,46 @@ class OrganisationControlInline(admin.TabularInline):
     autocomplete_fields = ('user',)
 
 
+class OrganisationEventPolicyInline(admin.StackedInline):
+    model = OrganisationEventPolicy
+    extra = 0
+    can_delete = False
+    readonly_fields = ('created_at', 'updated_at')
+    fieldsets = (
+        ('Event Defaults', {
+            'fields': (
+                'allow_external_events', 'allow_attendee_deletions', 'allow_workshops',
+                'allow_product_releases', 'allow_sponsors',
+            )
+        }),
+        ('Requirements', {
+            'fields': (
+                'require_long_description', 'require_short_description', 'require_landing_image',
+                'product_release_must_be_approved_by_organisation', 'must_be_approved_by_organisation',
+            )
+        }),
+        ('Limits', {
+            'fields': (
+                'max_attendees_per_event', 'max_events_per_organiser', 'max_package_price',
+            )
+        }),
+        ('Payments', {
+            'fields': ('card_payments_are_allowed', 'bank_transfers_are_allowed'),
+        }),
+        ('Metadata', {
+            'fields': ('created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+
 @admin.register(Organisation)
 class OrganisationAdmin(admin.ModelAdmin):
     list_display = ('title', 'external_website', 'required_acceptance_code', 'requires_manual_verification', 'created_by', 'added_at')
     list_filter = ('required_acceptance_code', 'requires_manual_verification', 'added_at', 'updated_at')
     search_fields = ('title', 'url_safe_title', 'description')
     readonly_fields = ('added_at', 'updated_at', 'landing_image_uploaded_at', 'logo_uploaded_at', 'landing_image_preview', 'logo_preview')
-    inlines = [OrganisationContactInline, OrganisationControlInline]
+    inlines = [OrganisationContactInline, OrganisationControlInline, OrganisationEventPolicyInline]
     autocomplete_fields = ('created_by',)
     
     fieldsets = (
@@ -96,6 +130,13 @@ class OrganisationControlAdmin(admin.ModelAdmin):
     )
 
 
+class LeaderPermissionInline(admin.TabularInline):
+    model = LeaderPermission
+    extra = 0
+    readonly_fields = ('created_at', 'updated_at')
+    fields = ('permission_code', 'description', 'allow_create', 'allow_read', 'allow_update', 'allow_delete')
+
+
 @admin.register(Leader)
 class LeaderAdmin(admin.ModelAdmin):
     list_display = ('user', 'organisation', 'location_type_display', 'location_id_display', 'get_location_object', 'added_by', 'added_at')
@@ -104,6 +145,7 @@ class LeaderAdmin(admin.ModelAdmin):
     readonly_fields = ('added_at', 'updated_at', 'location_type_display', 'location_id_display')
     autocomplete_fields = ('user', 'organisation', 'added_by')
     list_select_related = ('user', 'organisation', 'added_by', 'target_type')
+    inlines = [LeaderPermissionInline]
 
     fieldsets = (
         ('Leadership Information', {
@@ -316,3 +358,108 @@ class LocationLeaderInviteAdmin(admin.ModelAdmin):
         return obj.is_valid
     is_valid_status.short_description = 'Is Valid'
     is_valid_status.boolean = True
+
+
+# ============================================================================
+# LEADER PERMISSION ADMIN
+# ============================================================================
+
+
+@admin.register(LeaderPermission)
+class LeaderPermissionAdmin(admin.ModelAdmin):
+    list_display = (
+        'leader', 'permission_code', 'allow_create', 'allow_read',
+        'allow_update', 'allow_delete', 'created_at',
+    )
+    list_filter = ('permission_code', 'allow_create', 'allow_read', 'allow_update', 'allow_delete')
+    search_fields = (
+        'leader__user__email', 'leader__user__first_name', 'leader__user__last_name',
+        'leader__organisation__title', 'permission_code',
+    )
+    readonly_fields = ('created_at', 'updated_at')
+    autocomplete_fields = ('leader',)
+
+    fieldsets = (
+        ('Permission Assignment', {
+            'fields': ('leader', 'permission_code', 'description'),
+        }),
+        ('CRUD Flags', {
+            'fields': ('allow_create', 'allow_read', 'allow_update', 'allow_delete'),
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+
+# ============================================================================
+# ORGANISATION EVENT POLICY ADMIN
+# ============================================================================
+
+
+@admin.register(OrganisationEventPolicy)
+class OrganisationEventPolicyAdmin(admin.ModelAdmin):
+    list_display = (
+        'organisation', 'allow_external_events', 'allow_workshops',
+        'must_be_approved_by_organisation', 'max_attendees_per_event',
+        'card_payments_are_allowed', 'bank_transfers_are_allowed',
+    )
+    list_filter = (
+        'allow_external_events', 'allow_workshops', 'allow_product_releases',
+        'allow_sponsors', 'must_be_approved_by_organisation',
+        'card_payments_are_allowed', 'bank_transfers_are_allowed',
+    )
+    search_fields = ('organisation__title',)
+    readonly_fields = ('created_at', 'updated_at')
+    autocomplete_fields = ('organisation', 'created_by')
+
+    fieldsets = (
+        ('Organisation', {
+            'fields': ('organisation', 'created_by'),
+        }),
+        ('Event Defaults', {
+            'fields': (
+                'allow_external_events', 'allow_attendee_deletions', 'allow_workshops',
+                'allow_product_releases', 'allow_sponsors',
+            ),
+        }),
+        ('Requirements', {
+            'fields': (
+                'require_long_description', 'require_short_description', 'require_landing_image',
+                'product_release_must_be_approved_by_organisation', 'must_be_approved_by_organisation',
+            ),
+        }),
+        ('Limits', {
+            'fields': ('max_attendees_per_event', 'max_events_per_organiser', 'max_package_price'),
+        }),
+        ('Payments', {
+            'fields': ('card_payments_are_allowed', 'bank_transfers_are_allowed'),
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+
+@admin.register(OrganisationEventTypePolicyRestriction)
+class OrganisationEventTypePolicyRestrictionAdmin(admin.ModelAdmin):
+    list_display = (
+        'organisation', 'event_type', 'is_allowed', 'requires_approval', 'created_at',
+    )
+    list_filter = ('is_allowed', 'requires_approval', 'created_at')
+    search_fields = ('organisation__title', 'event_type__title', 'event_type__code')
+    readonly_fields = ('created_at', 'updated_at')
+    raw_id_fields = ('event_type',)
+    autocomplete_fields = ('organisation', 'created_by')
+
+    fieldsets = (
+        ('Restriction', {
+            'fields': ('organisation', 'event_type', 'is_allowed', 'requires_approval'),
+        }),
+        ('Metadata', {
+            'fields': ('created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
