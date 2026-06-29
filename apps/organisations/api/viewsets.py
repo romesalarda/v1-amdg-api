@@ -342,7 +342,7 @@ class UserOrganisationMembershipViewSet(viewsets.ModelViewSet):
     queryset = UserOrganisationMembership.objects.select_related(
         'organisation', 'user', 'added_by'
     )
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganisationController]
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = UserOrganisationMembershipFilterSet

@@ -19,6 +19,7 @@ from typing import Any
 
 from apps.organisations.models import OrganisationControl, UserOrganisationMembership
 from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+from apps.utils.querying import get_organisation_or_url_safe_title
 
 User = get_user_model()
 
@@ -47,8 +48,19 @@ class IsOrganisationController(permissions.BasePermission):
         if request.user.is_superuser or request.user.is_staff:
             return True
         
-        # For object-specific checks, allow through to object-level permission
-        return True
+        if request.query_params.get("organisation"): # refuse access if no organisation is specified in query params
+            org_id = request.query_params.get("organisation")
+            try:
+                organisation = get_organisation_or_url_safe_title(org_id)
+                if not (request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
+                    organisation=organisation,
+                    user=request.user,
+                ).exists()):
+                    return False
+            except Exception:
+                return False
+        
+        return False
     
     def has_object_permission(self, request, view, obj) -> bool:
         """Check if user has control over the organisation."""
@@ -72,10 +84,7 @@ class IsOrganisationController(permissions.BasePermission):
     def _get_organisation_from_object(self, obj) -> Any:
         """Extract the organisation from various object types."""
         from apps.organisations.models import (
-            Organisation, OrganisationContact, OrganisationControl,
-            UserOrganisationMembership, OrganisationAcceptanceCode,
-            OrganisationInvite, InvolvedEventOrganisation,
-            EventSponsor, EventSponsorPackage, Leader
+            Organisation, Leader
         )
         
         if isinstance(obj, Organisation):
