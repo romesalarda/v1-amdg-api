@@ -46,6 +46,9 @@ class IsOrganisationController(permissions.BasePermission):
     message = "You must be a controller of this organisation to perform this action."
     
     def has_permission(self, request, view) -> bool:
+
+        from apps.organisations.models import Organisation
+
         """Check if user has permission at the request level."""
         if not request.user or not request.user.is_authenticated:
             return False
@@ -54,19 +57,42 @@ class IsOrganisationController(permissions.BasePermission):
         if request.user.is_superuser or request.user.is_staff:
             return True
         
-        if request.query_params.get("organisation"): # refuse access if no organisation is specified in query params
+        # if request.query_params.get("organisation"): # refuse access if no organisation is specified in query params
+        #     org_id = request.query_params.get("organisation")
+        #     try:
+        #         organisation = get_organisation_or_url_safe_title(org_id)
+        #         if not (request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
+        #             organisation=organisation,
+        #             user=request.user,
+        #         ).exists()):
+        #             print(f"User {request.user} does not have control over organisation {organisation}.")
+        #             return False
+        #         return True
+        #     except Organisation.DoesNotExist:
+        #         print(f"Organisation with ID {org_id} does not exist.")
+        #         return False
+        # print(f"User {request.user} has no permission to access the view {view}.")
+        # return False
+        org_id = view.kwargs.get("organisation") or view.kwargs.get("org_id")
+
+        # 2. Fallback to query param
+        if not org_id:
             org_id = request.query_params.get("organisation")
-            try:
-                organisation = get_organisation_or_url_safe_title(org_id)
-                if not (request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
-                    organisation=organisation,
-                    user=request.user,
-                ).exists()):
-                    return False
-            except Exception:
-                return False
-        
-        return False
+
+        if not org_id:
+            # No organisation provided anywhere → deny
+            return False
+
+        try:
+            organisation = get_organisation_or_url_safe_title(org_id)
+        except Organisation.DoesNotExist:
+            return False
+
+        # 3. Check control
+        return OrganisationControl.objects.filter(
+            organisation=organisation,
+            user=request.user
+        ).exists()
     
     def has_object_permission(self, request, view, obj) -> bool:
         """Check if user has control over the organisation."""

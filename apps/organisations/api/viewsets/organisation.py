@@ -68,6 +68,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     queryset = Organisation.objects.select_related('created_by').prefetch_related(
         'contacts', 'memberships', 'controllers'
     ).filter(verified=True)
+    
     lookup_field = 'url_safe_title'
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOrganisationControllerOrEventAdmin | IsReadOnly]
     pagination_class = StandardPagination
@@ -79,8 +80,11 @@ class OrganisationViewSet(viewsets.ModelViewSet):
 
     def get_object(self):
         lookup_value = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
+        print(f"Looking up organisation with {self.lookup_field}={lookup_value}")  # Debugging line
         organisation = get_object_or_url_safe_title(self.get_queryset(), lookup_value)
+        print(f"Found organisation: {organisation}")  # Debugging line
         self.check_object_permissions(self.request, organisation)
+        print(f"Permissions checked for organisation: {organisation}")  # Debugging line
         return organisation
     
     def get_serializer_class(self):

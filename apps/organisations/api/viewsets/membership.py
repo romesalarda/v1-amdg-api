@@ -62,8 +62,8 @@ class UserOrganisationMembershipViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         """Safe methods allow leaders with ALLOW_MEMBERSHIP_ACCESS; writes remain controller-only."""
-        if self.request.method in permissions.SAFE_METHODS:
-            return [permissions.IsAuthenticated(), HasMembershipAccess()]
+        if self.request.method in permissions.SAFE_METHODS or self.request.method == 'POST':
+            return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsOrganisationController()]
     
     def get_serializer_class(self):

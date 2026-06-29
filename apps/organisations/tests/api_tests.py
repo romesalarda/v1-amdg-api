@@ -17,7 +17,10 @@ Tests cover the complete API workflow for organisation management:
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.contrib.contenttypes.models import ContentType
+
 from django.urls import reverse
+from urllib.parse import urlencode
 from rest_framework.test import APIClient
 from rest_framework import status
 from datetime import timedelta
@@ -60,7 +63,8 @@ class OrganisationAPITest(TestCase):
         self.organisation = Organisation.objects.create(
             title='St. Mary\'s Parish',
             description='Catholic community',
-            created_by=self.admin_user
+            created_by=self.admin_user,
+            verified=True,
         )
         self.organisation_slug = self.organisation.url_safe_title
         
@@ -164,8 +168,7 @@ class OrganisationAPITest(TestCase):
         """Test deleting organisation as controller."""
         self.client.force_authenticate(user=self.controller_user)
         url = reverse('organisations:organisation-detail', kwargs={'url_safe_title': self.organisation_slug})
-        response = self.client.delete(url)
-        
+        response = self.client.delete(url)        
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertEqual(Organisation.objects.count(), 0)
     
@@ -332,7 +335,7 @@ class OrganisationControlAPITest(TestCase):
     def test_list_controls(self):
         """Test listing organisation controls."""
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisationcontrol-list')
+        url = add_organisation_id_to_url(reverse('organisations:organisationcontrol-list'), self.organisation.id)
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -340,7 +343,7 @@ class OrganisationControlAPITest(TestCase):
     def test_create_control_as_controller(self):
         """Test adding new controller."""
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisationcontrol-list')
+        url = add_organisation_id_to_url(reverse('organisations:organisationcontrol-list'), self.organisation.id)
         data = {
             'organisation': self.organisation.id,
             'user': self.new_controller.id
@@ -353,7 +356,7 @@ class OrganisationControlAPITest(TestCase):
     def test_create_duplicate_control_fails(self):
         """Test creating duplicate control fails."""
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisationcontrol-list')
+        url = add_organisation_id_to_url(reverse('organisations:organisationcontrol-list'), self.organisation.id)
         data = {
             'organisation': self.organisation.id,
             'user': self.controller_user.id  # Already a controller
@@ -365,7 +368,7 @@ class OrganisationControlAPITest(TestCase):
     def test_delete_control(self):
         """Test removing controller."""
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisationcontrol-detail', kwargs={'pk': self.control.id})
+        url = add_organisation_id_to_url(reverse('organisations:organisationcontrol-detail', kwargs={'pk': self.control.id}), self.organisation.id)
         response = self.client.delete(url)
         
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -408,7 +411,7 @@ class UserOrganisationMembershipAPITest(TestCase):
     def test_list_memberships(self):
         """Test listing memberships."""
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisationmembership-list')
+        url = add_organisation_id_to_url(reverse('organisations:organisationmembership-list'), self.organisation.id)
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -416,7 +419,7 @@ class UserOrganisationMembershipAPITest(TestCase):
     def test_create_membership(self):
         """Test creating membership."""
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisationmembership-list')
+        url = add_organisation_id_to_url(reverse('organisations:organisationmembership-list'), self.organisation.id)
         data = {
             'organisation': self.organisation.id,
             'user': self.member_user.id,
@@ -446,7 +449,7 @@ class UserOrganisationMembershipAPITest(TestCase):
         
         # Verify with code
         self.client.force_authenticate(user=self.member_user)
-        url = reverse('organisations:organisationmembership-verify-with-code', kwargs={'pk': membership.id})
+        url = add_organisation_id_to_url(reverse('organisations:organisationmembership-verify-with-code', kwargs={'pk': membership.id}), self.organisation.id)
         data = {'code': 'TESTCODE123'}
         response = self.client.post(url, data, format='json')
         
@@ -465,7 +468,7 @@ class UserOrganisationMembershipAPITest(TestCase):
         )
         
         self.client.force_authenticate(user=self.member_user)
-        url = reverse('organisations:organisationmembership-verify-with-code', kwargs={'pk': membership.id})
+        url = add_organisation_id_to_url(reverse('organisations:organisationmembership-verify-with-code', kwargs={'pk': membership.id}), self.organisation.id)
         data = {'code': 'WRONGCODE'}
         response = self.client.post(url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -482,7 +485,7 @@ class UserOrganisationMembershipAPITest(TestCase):
         )
         
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisationmembership-verify-manually', kwargs={'pk': membership.id})
+        url = add_organisation_id_to_url(reverse('organisations:organisationmembership-verify-manually', kwargs={'pk': membership.id}), self.organisation.id)
         response = self.client.post(url, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -541,7 +544,7 @@ class UserOrganisationMembershipAPITest(TestCase):
         )
 
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:organisationmembership-list')
+        url = add_organisation_id_to_url(reverse('organisations:organisationmembership-list'), self.organisation.id)
 
         response = self.client.get(url, {
             'organisation': str(self.organisation.id),
@@ -950,6 +953,13 @@ class EventSponsorPackageAPITest(TestCase):
         self.assertIn('has_payment', response.data)
         self.assertFalse(response.data['has_payment'])
 
+def add_organisation_id_to_url(url, organisation_id):
+    """Helper function to add organisation_id as a query parameter to a URL."""
+    encoded = urlencode({'organisation': organisation_id})
+    if '?' in url:  
+        return f"{url}&{encoded}"
+    else:
+        return f"{url}?{encoded}"
 
 class EventSponsorInviteAndCheckoutAPITest(TestCase):
     """Test sponsor invite token actions and sponsor checkout flow."""
@@ -1030,8 +1040,9 @@ class EventSponsorInviteAndCheckoutAPITest(TestCase):
 
     def test_accept_sponsor_invite_by_token(self):
         url = reverse('organisations:eventsponsorinvite-accept-by-token')
+        url = add_organisation_id_to_url(url, self.sponsor_org.id)
+        self.client.force_authenticate(user=self.controller_user)
         response = self.client.post(url, {'token': str(self.invite.token)}, format='json')
-
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.invite.refresh_from_db()
         self.assertTrue(self.invite.accepted)
@@ -1039,6 +1050,7 @@ class EventSponsorInviteAndCheckoutAPITest(TestCase):
         self.assertIsNotNone(self.invite.responded_at)
 
     def test_decline_sponsor_invite_by_token(self):
+        self.client.force_authenticate(user=self.controller_user)
         url = reverse('organisations:eventsponsorinvite-decline-by-token')
         response = self.client.post(url, {'token': str(self.invite.token)}, format='json')
 
@@ -1124,7 +1136,7 @@ class LeaderAPITest(TestCase):
     
     def test_create_duplicate_leader_fails(self):
         """Test creating duplicate leader fails."""
-        from django.contrib.contenttypes.models import ContentType
+
         org_ct = ContentType.objects.get_for_model(Organisation)
         
         Leader.objects.create(
@@ -1135,7 +1147,7 @@ class LeaderAPITest(TestCase):
         )
         
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:leader-list')
+        url = add_organisation_id_to_url(reverse('organisations:leader-list'), self.organisation.id)
         data = {
             'user': self.leader_user.id,
             'organisation': self.organisation.id
@@ -1146,7 +1158,6 @@ class LeaderAPITest(TestCase):
     
     def test_update_leader_notes(self):
         """Test updating leader notes."""
-        from django.contrib.contenttypes.models import ContentType
         org_ct = ContentType.objects.get_for_model(Organisation)
         
         leader = Leader.objects.create(
@@ -1158,7 +1169,7 @@ class LeaderAPITest(TestCase):
         )
 
         self.client.force_authenticate(user=self.controller_user)
-        url = reverse('organisations:leader-detail', kwargs={'pk': leader.id})
+        url = add_organisation_id_to_url(reverse('organisations:leader-detail', kwargs={'pk': leader.id}), self.organisation.id)
         data = {'notes': 'Updated responsibilities', 'organisation': self.organisation.id, 'user': self.leader_user.id}
         response = self.client.patch(url, data, format='json')
         
@@ -1168,7 +1179,6 @@ class LeaderAPITest(TestCase):
     
     def test_filter_leaders_by_organisation(self):
         """Test filtering leaders by organisation."""
-        from django.contrib.contenttypes.models import ContentType
         org_ct = ContentType.objects.get_for_model(Organisation)
         
         Leader.objects.create(
