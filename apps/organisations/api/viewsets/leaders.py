@@ -30,7 +30,7 @@ from apps.organisations.api.serializers import (
 from apps.organisations.api.filtersets import (LeaderFilterSet, LocationLeaderInviteFilterSet, LeaderPermissionFilterSet)
 from apps.organisations.api.permissions import (
     IsOrganisationController, WriteRequiresOrganisationController,
-    HasManageLeadersPermission,
+    HasManageLeadersPermission, IsOrganisationMember
 )
 
 from apps.common.pagination import StandardPagination
@@ -239,8 +239,8 @@ class LocationLeaderInviteViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         """Safe methods allow leaders with ALLOW_MANAGE_LEADERS; writes remain controller-only."""
         if self.request.method in permissions.SAFE_METHODS:
-            return [permissions.IsAuthenticated(), HasManageLeadersPermission()]
-        return [permissions.IsAuthenticated(), IsOrganisationController()]
+            return [permissions.IsAuthenticated(), IsOrganisationMember()]
+        return [permissions.IsAuthenticated(), IsOrganisationMember()]
 
     def get_serializer_class(self):
         if self.action == 'list':
