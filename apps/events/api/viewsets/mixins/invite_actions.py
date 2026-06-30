@@ -201,7 +201,7 @@ class EventInviteActionsMixin:
     @action(
         detail=True,
         methods=["get", "put", "patch", "delete"],
-        url_path=r"staff-invites/(?P<invite_id>[^/.]+)",
+        url_path=r"staff-invites/(?P<invite_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
         permission_classes=[IsAuthenticated],
     )
     def manage_staff_invite(self, request, url_safe_title=None, invite_id=None):
@@ -298,7 +298,7 @@ class EventInviteActionsMixin:
     @action(
         detail=True,
         methods=["post"],
-        url_path=r"staff-invites/(?P<invite_id>[^/.]+)/accept",
+        url_path=r"staff-invites/(?P<invite_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/accept",
         permission_classes=[IsAuthenticated],
     )
     def accept_invite(self, request, url_safe_title=None, invite_id=None):

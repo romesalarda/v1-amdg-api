@@ -367,6 +367,8 @@ class LeaderPermissionViewSet(viewsets.ModelViewSet):
         Non-controllers see only their own LeaderPermission records.
         Controllers and staff/superusers see all records.
         """
+        if getattr(self, 'swagger_fake_view', False):
+            return LeaderPermission.objects.none()
         user = self.request.user
         base_qs = LeaderPermission.objects.select_related(
             'leader__user', 'leader__organisation'
