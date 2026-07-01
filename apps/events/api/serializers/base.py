@@ -1025,24 +1025,6 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
                 assigned_by=self.context['request'].user,
             )
 
-            # try:
-            #     role = EventRole.objects.get(category=EventRoleCategoryChoices.ADMINISTRATIVE)
-            #     EventRoleAssignment.objects.create(
-            #         event=instance,
-            #         user=self.context['request'].user,
-            #         role=role,
-            #         assigned_at=timezone.now(),
-            #         assigned_by=self.context['request'].user,
-            #     )
-
-            # except EventRole.DoesNotExist:
-            #     role = EventRole.objects.create(
-            #         name=EventRoleCategoryChoices.ADMINISTRATIVE,
-            #         code='ADMIN',
-            #         category=EventRoleCategoryChoices.ADMINISTRATIVE,
-            #         description='Administrative role with full access'
-            #     )
-
             return instance
         except Exception as e:
             raise serializers.ValidationError(f"Error creating event: {str(e)}")
@@ -1054,6 +1036,7 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
                 setattr(instance, attr, value)
             if timezone_str:
                 instance.timezone = timezone_str
+
             instance.save()
             return instance
         except Exception as e:

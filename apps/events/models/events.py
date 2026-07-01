@@ -103,6 +103,9 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     
     '''
 
+    CLOSED_STATUSES = closed_statuses
+    OPEN_STATUSES = open_statuses
+
     # identifier fields
     event_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True) # uuid for URLS
     display_code = models.CharField(max_length=10, unique=True, validators=[
@@ -191,9 +194,9 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         if self.display_identifier is None or self.display_identifier == '':
             self.display_identifier = str(str(self.display_code) + str(self.event_type.code) + str(uuid.uuid4())[:6]).upper()
 
-        if self.status == EventStatusChoices.OPEN and self.last_opened is None:
+        if self.status in self.OPEN_STATUSES:
             self.last_opened = timezone.now()
-        elif self.status in closed_statuses and self.last_closed is None:
+        elif self.status in self.CLOSED_STATUSES:
             self.last_closed = timezone.now()
 
         super().save(*args, **kwargs)
@@ -221,7 +224,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         Forcefully transition the event to a closed status, regardless of current status or allowed transitions.
         This is intended for use in admin actions where an override of normal status rules is necessary.
         '''
-        if self.status in open_statuses:
+        if self.status in self.OPEN_STATUSES:
             self.last_closed = timezone.now()
         self.status = EventStatusChoices.CLOSED
         if reason:
@@ -256,16 +259,20 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     def uptime(self) -> str:
         # return the number of days, hours, minute this event has been open for registration, or time until registration opens if in the future
         now = timezone.now().astimezone(self.timezone)
-        if self.last_opened is None: # if last opened is None, return message that event has not yet been opened for registration
+        if self.last_opened is None or not self.is_open: # if last opened is None, return message that event has not yet been opened for registration
             return "Event has not yet been opened for registration."
         # if last opened and NOT past start date, return how long the event has been open for registration
-        elif self.last_opened and self.start_datetime.astimezone(self.timezone) > now:
-            delta = self.start_datetime.astimezone(self.timezone) - now
+        elif self.last_opened and self.start_datetime.astimezone(self.timezone) > now and self.is_open:
+            delta = now - self.last_opened.astimezone(self.timezone)
             return f"Event has been open for registration for {delta.days} days, {delta.seconds // 3600} hours"
         else:
             delta = now - self.start_datetime.astimezone(self.timezone)
             return f"Event has been ongoing for {delta.days} days, {delta.seconds // 3600} hours"
-            
+    
+    @property
+    def is_open(self):
+        return self.status == EventStatusChoices.OPEN
+
     @property
     def start_date_tzaware(self):
         # timezone-aware date
@@ -487,6 +494,22 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
             raise ValidationError(f"Invalid status transition from {self.status} to {new_status}.")
         self.status = new_status
         self.save()
+
+    def is_transition_open_to_closed(self, new_status):
+        '''
+        Check if the transition from an open status to a closed status is valid.
+        :param new_status: The new status to transition to
+        :return: True if the transition is valid, False otherwise
+        '''
+        return self.status in self.OPEN_STATUSES and new_status in self.CLOSED_STATUSES
+    
+    def is_transition_closed_to_open(self, new_status):
+        '''
+        Check if the transition from a closed status to an open status is valid.
+        :param new_status: The new status to transition to
+        :return: True if the transition is valid, False otherwise
+        '''
+        return self.status in self.CLOSED_STATUSES and new_status in self.OPEN_STATUSES
 
     def is_staff(self, user):
         '''

@@ -86,3 +86,17 @@ class EventAuthorizationViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(reviewed_by=self.request.user)
+
+    def perform_update(self, serializer):
+        previous_status = serializer.instance.status
+        new_status = serializer.validated_data.get('status', previous_status)
+
+        serializer.save(reviewed_by=self.request.user)
+
+        if (
+            previous_status != new_status and 
+            previous_status in EventAuthorization.OPEN_STATUS_CHOICES and
+            new_status in EventAuthorization.CLOSED_STATUS_CHOICES
+        ):
+            serializer.instance.event.force_close()
+            

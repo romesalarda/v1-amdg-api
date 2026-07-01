@@ -13,7 +13,18 @@ class EventAuthorizationStatusChoices(models.TextChoices):
     CANCELLED = 'CANCELLED', 'Cancelled'
 
 class EventAuthorization(models.Model):
+
+    OPEN_STATUS_CHOICES = [
+        EventAuthorizationStatusChoices.APPROVED,
+    ]
     
+    CLOSED_STATUS_CHOICES = [
+        EventAuthorizationStatusChoices.REJECTED,
+        EventAuthorizationStatusChoices.POSTPONED,
+        EventAuthorizationStatusChoices.CANCELLED,
+        EventAuthorizationStatusChoices.PENDING,
+    ]
+
     review_id = models.UUIDField(default=uuid.uuid4, editable=False) # url usage
     review_code = models.CharField(max_length=30, unique=True, blank=True, null=True) # used for reference
     event = models.ForeignKey('events.Event', on_delete=models.CASCADE, related_name='authorizations')
