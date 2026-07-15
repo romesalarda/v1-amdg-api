@@ -46,12 +46,16 @@ from apps.events.api.serializers import (
     EventFormResponseSerializer, EventFormResponseAnswerSerializer,
     EventFormDelegateTokenSerializer, EventFormDelegateTokenValidateSerializer,
 )
+
+from apps.events.api.serializers.form_response_filter import FormResponseFilterRequestSerializer
+
 from apps.events.api.filtersets import (
     EventFormFilterSet, EventFormQuestionFilterSet,
     EventFormResponseFilterSet, EventFormResponseAnswerFilterSet,
 )
 from apps.events.api.pagination import StandardPagination
 from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
+from apps.events.services.form_response_filters import FormResponseFilterService
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +427,7 @@ class EventFormQuestionOptionViewSet(viewsets.ModelViewSet):
 # ── EventFormResponseViewSet ──────────────────────────────────────────────────
 from rest_framework.exceptions import PermissionDenied
 
+
 @extend_schema_view(
     list=extend_schema(
         summary="List Form Responses",
@@ -452,6 +457,39 @@ class EventFormResponseViewSet(viewsets.ModelViewSet):
     filterset_class = EventFormResponseFilterSet
     ordering_fields = ['submitted_at', 'updated_at']
     ordering = ['-submitted_at']
+
+    @extend_schema(
+        summary='Advanced filter form responses',
+        description=(
+            'POST-based filter endpoint for EventFormResponse. '
+            'Supports filtering by attendee demographics, attendee status, '
+            'and per-question answer conditions for the specified form. '
+            'Returns the same paginated format as the GET list endpoint.'
+        ),
+        tags=['Event Form Responses'],
+        request=FormResponseFilterRequestSerializer,
+        responses={
+            200: OpenApiResponse(description='Paginated list of matching form responses'),
+            400: OpenApiResponse(description='Validation error'),
+        },
+    )
+    @action(detail=False, methods=['post'], url_path='filter')
+    def filter_responses(self, request):
+        """POST-based form response filter with demographic and question-answer conditions."""
+        serializer = FormResponseFilterRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        service = FormResponseFilterService(request, serializer.validated_data)
+        qs = service.get_queryset()
+        items, meta = service.paginate(qs)
+
+        result_serializer = EventFormResponseSerializer(
+            items, many=True, context={'request': request}
+        )
+        return Response({
+            **meta,
+            'results': result_serializer.data,
+        })
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
