@@ -25,6 +25,7 @@ from django.utils import timezone
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 
+from apps.attendee.models.checkin import CheckInScanResult
 from apps.common.models import VerificationStatus
 from apps.events.models import EventQuestionTypeChoices, EventFormQuestionTypeChoices
 from apps.products.models import OrderStatusChoices, ProductVariant
@@ -390,15 +391,17 @@ class AttendeeFilterSet(django_filters.FilterSet):
         """Filter checked-in attendees."""
         if value:
             return queryset.filter(
-                event_attendances__check_in_time__isnull=False,
-                event_attendances__check_out_time__isnull=True
+                # event_attendances__check_in_time__isnull=False,
+                # event_attendances__check_out_time__isnull=True
+                check_in_records__action=AttendeeActionChoices.CHECK_IN,
+                check_in_records__scan_result=CheckInScanResult.SUCCESS
             ).distinct()
-        else:
+        elif value is not None:
             return queryset.exclude(
-                event_attendances__check_in_time__isnull=False,
-                event_attendances__check_out_time__isnull=True
+                check_in_records__action=AttendeeActionChoices.CHECK_IN,
+                check_in_records__scan_result=CheckInScanResult.SUCCESS
             ).distinct()
-    
+        
     def filter_is_event_staff(self, queryset, name, value):
         """Filter attendees who are event staff."""
         if value:

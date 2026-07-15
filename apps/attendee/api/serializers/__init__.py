@@ -77,7 +77,7 @@ from .checkin import (
     AttendeeRosterItemSerializer,
 )
 
-from .filter_serializers import (
+from .filtering import (
     AttendeeFilterRequestSerializer,
     AttendeeFilterResponseSerializer,
     AttendeeFiltersSerializer,

@@ -15,7 +15,7 @@ from datetime import date
 from apps.attendee.models import (
     Attendee, AttendeeGuardian, AttendeeAction, AttendeeActionChoices,
     AttendeeRelationship, FamilyGroup, FamilyAttendee,
-    AttendeeMessage, AttendeeMessagePriority
+    AttendeeMessage, CheckInScanResult, CheckInAction
 )
 
 User = get_user_model()
@@ -39,13 +39,15 @@ class AttendeeListSerializer(serializers.ModelSerializer):
     is_registered = serializers.BooleanField(read_only=True)
     is_checked_in = serializers.BooleanField(read_only=True)
     is_refunded = serializers.BooleanField(read_only=True)
+    last_check_in_at = serializers.SerializerMethodField(read_only=True)
+    event_day_last_seen = serializers.SerializerMethodField(read_only=True)
     class Meta:
         model = Attendee
         fields = (
             'attendee_id', 'attendee_display_id', 'first_name', 'last_name', 'full_name',
             'email', 'phone_number', 'date_of_birth', 'age', 'is_minor', 'gender',
             'relationship_to_user', 'relationship_display', 'event', 'event_title', 'status',
-            'is_cancelled', 'is_registered', 'is_checked_in', 'is_refunded',
+            'is_cancelled', 'is_registered', 'is_checked_in', 'is_refunded', 'last_check_in_at', 'event_day_last_seen',
             'created_at', '_links', 'area_from_name'
         )
         read_only_fields = ('attendee_id', 'attendee_display_id', 'full_name', 'age', 'is_minor', 'created_at')
@@ -104,6 +106,26 @@ class AttendeeListSerializer(serializers.ModelSerializer):
         
         return links
 
+
+    @extend_schema_field(OpenApiTypes.DATETIME)
+    def get_last_check_in_at(self, obj):
+        """Get the last check-in timestamp for the attendee."""
+        last_checkin_action = obj.check_in_records.filter(
+            action=CheckInAction.CHECK_IN, 
+            scan_result=CheckInScanResult.SUCCESS
+        ).order_by('-performed_at').first()
+
+        return last_checkin_action.performed_at if last_checkin_action else None
+    
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_event_day_last_seen(self, obj):
+        """Get the last check-in day for the attendee."""
+        last_checkin_action = obj.check_in_records.filter(
+            action=CheckInAction.CHECK_IN, 
+            scan_result=CheckInScanResult.SUCCESS
+        ).order_by('-performed_at').first()
+
+        return last_checkin_action.event_day if last_checkin_action else None
 class AttendeeDetailSerializer(AttendeeListSerializer):
     """Detailed serializer for Attendee with extended fields."""
     

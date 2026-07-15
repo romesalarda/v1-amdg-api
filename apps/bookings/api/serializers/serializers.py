@@ -1205,7 +1205,15 @@ class AttendeeAlternativeSigninDetailSerializer(AttendeeAlternativeSigninListSer
 
 class AttendeeAlternativeSigninCreateUpdateSerializer(serializers.ModelSerializer):
     """Create/Update serializer for AttendeeAlternativeSigninIdentifier with validation."""
-    
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from apps.attendee.models import Attendee as AttendeeModel
+        self.fields['attendee'] = serializers.SlugRelatedField(
+            slug_field='attendee_id',
+            queryset=AttendeeModel.objects.all(),
+        )
+
     class Meta:
         model = AttendeeAlternativeSigninIdentifier
         fields = (

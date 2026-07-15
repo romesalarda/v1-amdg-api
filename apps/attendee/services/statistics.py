@@ -22,6 +22,7 @@ from apps.attendee.models import (
     Attendee, AttendeeMedicalCondition, AttendeeAccessibilityRequirement,
     AttendeeDietaryRequirement, AttendeeConsent, EmergencyContact, EventAttendance
 )
+from apps.attendee.models.attendee import AttendeeStatus
 
 
 # ============================================================================
@@ -883,6 +884,7 @@ def calculate_checkin_stats_by_day(
         attendee__in=attendee_qs,
         action=CheckInAction.CHECK_IN,
         scan_result=CheckInScanResult.SUCCESS,
+        attendee_status_snapshot=AttendeeStatus.CHECKED_IN
     )
     if event_day is not None:
         checkin_qs = checkin_qs.filter(event_day=event_day)

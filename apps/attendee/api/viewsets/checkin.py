@@ -35,6 +35,9 @@ from uuid import UUID
 from apps.attendee.api.permissions import IsEventStaffOrReadOnly
 from apps.common.pagination import StandardPagination
 
+from apps.bookings.models import AttendeeAlternativeSigninIdentifier
+from apps.attendee.models import EventAttendance
+
 @extend_schema_view(
     list=extend_schema(
         summary="List Check-In Records",
@@ -146,6 +149,7 @@ class CheckInViewSet(viewsets.GenericViewSet):
             ticket = Ticket.objects.select_related(
                 'attendee', 'attendee__area_from', 'ticket_type'
             ).filter(Q(ticket_code=data['ticket_code']) | Q(attendee_alternative_signins__identifier=data['ticket_code'])).first()
+
             if ticket:
                 attendee = ticket.attendee
 
@@ -442,17 +446,19 @@ class CheckInViewSet(viewsets.GenericViewSet):
         Attendee.objects.bulk_update(attendees, ['status', 'updated_at'])
 
         # Upsert EventAttendance records
-        # for att in attendees:
-        #     if bulk_action == CheckInAction.CHECK_IN:
-        #         EventAttendance.objects.update_or_create(
-        #             event=event,
-        #             attendee=att,
-        #             defaults={'check_in_by': request.user},
-        #         )
-        #     else:
-        #         EventAttendance.objects.filter(event=event, attendee=att).update(
-        #             checked_out_by=request.user,
-        #         )
+        for att in attendees:
+            if bulk_action == CheckInAction.CHECK_IN:
+                EventAttendance.objects.update_or_create(
+                    event=event,
+                    attendee=att,
+                    defaults={'check_in_by': request.user},
+                    check_in_time=timezone.now()
+                )
+            else:
+                EventAttendance.objects.filter(event=event, attendee=att).update(
+                    check_out_by=request.user,
+                    check_out_time=timezone.now()
+                )
 
         # Bulk create action log entries
         AttendeeAction.objects.bulk_create([

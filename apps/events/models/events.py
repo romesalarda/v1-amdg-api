@@ -343,10 +343,10 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
 
         if self.status == EventStatusChoices.DRAFTING and not self.is_approved:
             tasks.append(build_task(
-                title="Event authorization pending",
+                title="Event authorisation pending",
                 description="This event is pending approval by an administrator. Once approved, you can publish, and participants will be able to register.",
-                hint="Event authorization is pending review by an administrator. You will receive a notification once the review is complete.",
-                code="AUTHORIZATION_PENDING"
+                hint="Event authorisation is pending review by an administrator. You will receive a notification once the review is complete.",
+                code="AUTHORISATION_PENDING"
             ))
              
         
@@ -359,7 +359,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
                     hint="Go to the Availability section and add a registration availability window to specify when participants can register for this event.",
                     code="REGISTRATION_WINDOW_REQUIRED"
                 )   )
-            if not self.landing_images.exists():
+            if not self.landing_images.exists() and self.organisation.event_policy.require_landing_image:
                 tasks.append(build_task(
                     title="Set landing image",
                     description="You should set a landing image for this event to make it visually appealing when published.",
@@ -367,7 +367,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
                     code="LANDING_IMAGE_RECOMMENDED"
                 ))
 
-            if not self.long_description:
+            if not self.long_description and self.organisation.event_policy.require_long_description:
                 tasks.append(build_task(
                     title="Add long description",
                     description="Adding a long description helps provide more details about your event to potential participants.",

@@ -23,7 +23,7 @@ from apps.attendee.api.serializers import (
     AttendeeCreateSerializer, AttendeeUpdateSerializer,
     AttendeePreRemovalSummarySerializer,
 )
-from apps.attendee.api.serializers.filter_serializers import (
+from apps.attendee.api.serializers.filtering import (
     AttendeeFilterRequestSerializer,
     AttendeeFilterResponseSerializer,
 )

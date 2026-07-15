@@ -25,6 +25,7 @@ from apps.attendee.models import (
     AttendeeRelationship,
     AttendeeActionChoices,
 )
+from apps.attendee.models.checkin import CheckInAction, CheckInScanResult
 from apps.events.models import EventFormQuestionTypeChoices, EventQuestionTypeChoices
 from apps.products.models import OrderStatusChoices
 from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
@@ -290,14 +291,16 @@ class AttendeeFilterService:
         is_checked_in = s.get('is_checked_in')
         if is_checked_in is not None:
             if is_checked_in:
-                qs = qs.filter(
-                    event_attendances__check_in_time__isnull=False,
-                    event_attendances__check_out_time__isnull=True,
+                return qs.filter(
+                    # event_attendances__check_in_time__isnull=False,
+                    # event_attendances__check_out_time__isnull=True
+                    check_in_records__action=CheckInAction.CHECK_IN,
+                    check_in_records__scan_result=CheckInScanResult.SUCCESS
                 ).distinct()
-            else:
-                qs = qs.exclude(
-                    event_attendances__check_in_time__isnull=False,
-                    event_attendances__check_out_time__isnull=True,
+            elif is_checked_in is not None:
+                return qs.exclude(
+                    check_in_records__action=CheckInAction.CHECK_IN,
+                    check_in_records__scan_result=CheckInScanResult.SUCCESS
                 ).distinct()
 
         is_registered = s.get('is_registered')
