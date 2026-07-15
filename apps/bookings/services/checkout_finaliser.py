@@ -238,8 +238,6 @@ class BookingCheckoutFinaliser:
 
                 attendee_selection_metadata.append(selection_metadata)
 
-                attendee.mark_registered()
-
             if payment.base_amount and payment.base_amount != total_amount:
                 raise CheckoutFinalizationError(
                     f"Payment amount mismatch during finalization: expected {payment.base_amount}, computed {total_amount}"

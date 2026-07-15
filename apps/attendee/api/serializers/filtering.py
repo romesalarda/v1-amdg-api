@@ -243,6 +243,18 @@ class DemographicsFilterSerializer(serializers.Serializer):
         child=serializers.IntegerField(min_value=1),
         required=False, allow_empty=True, default=list,
     )
+    chapter_from = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False, allow_empty=True, default=list,
+    )
+    cluster_from = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False, allow_empty=True, default=list,
+    )
+    country_from = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False, allow_empty=True, default=list,
+    )
     has_dietary_requirements = serializers.BooleanField(required=False, allow_null=True)
     dietary_requirement = serializers.ListField(
         child=serializers.IntegerField(min_value=1),

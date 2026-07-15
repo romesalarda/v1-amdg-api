@@ -239,6 +239,18 @@ class AttendeeFilterService:
         if areas:
             qs = qs.filter(area_from__id__in=areas).distinct()
 
+        chapters = d.get('chapter_from') or []
+        if chapters:
+            qs = qs.filter(area_from__chapter__id__in=chapters).distinct()
+
+        clusters = d.get('cluster_from') or []
+        if clusters:
+            qs = qs.filter(area_from__chapter__cluster__id__in=clusters).distinct()
+
+        countries = d.get('country_from') or []
+        if countries:
+            qs = qs.filter(area_from__chapter__cluster__country__id__in=countries).distinct()
+
         has_dietary = d.get('has_dietary_requirements')
         if has_dietary is not None:
             if has_dietary:
