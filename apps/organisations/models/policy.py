@@ -45,7 +45,11 @@ class OrganisationEventPolicy(models.Model):
     )
 
     def __str__(self):
-        return f"Global Event Policy for {self.organisation.name}"
+        return f"Global Event Policy for {self.organisation.title}"
+    
+    @property
+    def title(self):
+        return self.organisation.title
 
 class OrganisationEventTypePolicyRestriction(models.Model):
     '''
@@ -78,4 +82,4 @@ class OrganisationEventTypePolicyRestriction(models.Model):
     def __str__(self):
         status = "Allowed" if self.is_allowed else "Disallowed"
         approval = "Requires Approval" if self.requires_approval else "No Approval Needed"
-        return f"{status} Event Type '{self.event_type}' for {self.organisation.name} ({approval})"
+        return f"{status} Event Type '{self.event_type}' for {self.organisation.title} ({approval})"

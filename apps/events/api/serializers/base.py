@@ -281,6 +281,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
     event_type_details = EventTypeSerializer(source='event_type', read_only=True)
     settings = EventSettingsSerializer(read_only=True)
     organisation_name = serializers.CharField(source='organisation.title', read_only=True)
+    organisation_url_safe_title = serializers.CharField(source='organisation.url_safe_title', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
     timezone = serializers.ChoiceField(choices=[(tz, tz) for tz in pytz.all_timezones], required=False)
@@ -321,6 +322,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'id', 'event_id', 'display_code', 'display_identifier', 'title', 'url_safe_title',
             'status', 'status_display', 'event_type', 'event_type_details', 'timezone',
             'short_description', 'long_description', 'what_to_bring', 'important_information',
+            'organisation_url_safe_title',
             'theme', 'anchor_verse', 'expected_attendance', 'maximum_attendance',
             'start_datetime', 'end_datetime', 'organisation', 'organisation_name',
             'created_by', 'created_by_email', 'created_at', 'updated_at', 'location',

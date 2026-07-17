@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.exceptions import PermissionDenied
 
 from drf_spectacular.utils import (
     extend_schema,
@@ -80,11 +81,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
 
     def get_object(self):
         lookup_value = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
-        print(f"Looking up organisation with {self.lookup_field}={lookup_value}")  # Debugging line
         organisation = get_object_or_url_safe_title(self.get_queryset(), lookup_value)
-        print(f"Found organisation: {organisation}")  # Debugging line
         self.check_object_permissions(self.request, organisation)
-        print(f"Permissions checked for organisation: {organisation}")  # Debugging line
         return organisation
     
     def get_serializer_class(self):
@@ -93,6 +91,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             return OrganisationListSerializer
         elif self.action in ['create', 'update', 'partial_update']:
             return OrganisationCreateUpdateSerializer
+        elif self.action == 'policy':
+            return OrganisationEventPolicySerializer
         return OrganisationDetailSerializer
     
     @extend_schema(
@@ -217,7 +217,9 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         ],
     )
     def policy(self, request, url_safe_title=None):
+        print(f"Accessing policy for organisation with url_safe_title={url_safe_title}")  # Debugging line
         organisation = self.get_object()
+        print(f"Retrieved organisation: {organisation}")  # Debugging line
         event_policy, _ = OrganisationEventPolicy.objects.get_or_create(
             organisation=organisation,
             defaults={'created_by': request.user},
@@ -227,8 +229,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             # and the organisation object has already been fetched above.
             write_perm = WriteRequiresControllerOrPolicyManager()
             if not write_perm.has_object_permission(request, self, organisation):
-                from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied(write_perm.message)
+            
             serializer = OrganisationEventPolicySerializer(
                 event_policy,
                 data=request.data,
@@ -238,10 +240,14 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return Response(serializer.data)
+        print(f"Returning event policy for organisation {organisation.title}: {event_policy}")  # Debugging line
         serializer = OrganisationEventPolicySerializer(
             event_policy, context={'request': request}
         )
-        return Response(serializer.data)
+        print(f"Serialized event policy data: {serializer.data}")  # Debugging line
+        response = Response(serializer.data)
+        print(f"Response prepared for organisation {organisation.title}: {response.data}")  # Debugging line
+        return response
 
 # ============================================================================
 # ORGANISATION CONTACT VIEWSETS
