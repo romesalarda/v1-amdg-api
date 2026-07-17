@@ -290,10 +290,6 @@ class BookingCheckoutFinaliser:
             #   1. No tickets have been created yet (create_tickets=False), AND
             #   2. The payment method is genuinely BANK_TRANSFER.
             #
-            # Stripe checkouts without an existing PaymentIntent also call
-            # finalize_for_bank_transfer (to pre-create the Booking/Attendees before
-            # the PaymentIntent is confirmed), so checking create_tickets alone is not
-            # sufficient — it would fire for those Stripe pre-finalisations too.
             # The confirmation-with-tickets email is dispatched separately by
             # BookingPaymentProcessor once the payment is marked COMPLETED.
             _method_type = payment.method.method_type if payment.method else None

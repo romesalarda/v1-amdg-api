@@ -388,6 +388,9 @@ class Booking(models.Model, PaymentMixin):
         # if self.payment:
         #     return self.payment.final_amount + Money(self.get_related_orders().aggregate(total=models.Sum('payment__original_amount'))['total'] or 0, 'GBP')
         # return Money(0, 'GBP')
+        if not self.payment:
+            return Money(0, 'GBP')
+        
         base = self.payment.final_amount
 
         agg = self.get_related_orders().aggregate(

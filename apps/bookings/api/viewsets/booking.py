@@ -997,14 +997,19 @@ class BookingViewSet(viewsets.ModelViewSet):
                     f"amount: {payment.base_amount}"
                 )
 
-                # Ensure booking/attendees exist immediately for pending flows.
-                # Stripe confirmed and CASH flows finalize in their own branches below.
+                # Pre-create booking/attendees only for bank transfer flows, where the
+                # payment is never confirmed server-side in real time and the user needs
+                # a booking reference immediately to complete the manual transfer.
+                #
+                # For Stripe, we intentionally do NOT pre-create objects here. All booking
+                # artifacts (Booking, Attendees, Tickets) are created atomically by
+                # BookingCheckoutFinaliser inside _process_completed_payment() after Stripe
+                # confirms the payment via webhook. This guarantees that if the card is
+                # declined or the user abandons the Stripe confirmation step, no orphaned
+                # records are left behind.
                 prefinalized_booking = None
                 if (
-                    payment_method.method_type in [
-                        PaymentMethodTypeChoices.BANK_TRANSFER,
-                        PaymentMethodTypeChoices.STRIPE,
-                    ]
+                    payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
                     and not stripe_payment_intent_id
                 ):
                     prefinalization = BookingCheckoutFinaliser.finalize_for_bank_transfer(payment, actor=user)
