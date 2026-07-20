@@ -22,6 +22,7 @@ services:
     image: postgres:16-alpine
     container_name: postgres_db
     restart: always
+    command: postgres -c max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
     environment:
       POSTGRES_DB: ${DB_NAME:-amdg_db}
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -65,7 +66,7 @@ services:
   celery_worker:
     image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-2.amazonaws.com}/amdg:${IMAGE_TAG:-latest}
     container_name: celery_worker
-    command: celery -A core worker --loglevel=info --concurrency=2
+    command: celery -A core worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}
     restart: unless-stopped
     depends_on:
       db:
@@ -99,7 +100,7 @@ services:
 
   # Nginx Reverse Proxy
   nginx:
-    image: nginx:latest
+    image: nginx:1.27-alpine
     container_name: nginx_server
     ports:
       - "80:80"

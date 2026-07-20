@@ -13,19 +13,17 @@ services:
       - .env
 
   celery_worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: amdg-test:${IMAGE_TAG:-ci-build}
     container_name: celery_worker_test
     env_file:
       - .env
+    depends_on:
+      - web
 
   celery_beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: amdg-test:${IMAGE_TAG:-ci-build}
     container_name: celery_beat_test
     env_file:
       - .env
+    depends_on:
+      - web
