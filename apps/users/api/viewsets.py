@@ -1093,12 +1093,13 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             logger.info(f"Setting auth cookies for user: {user_email}")
             
             # Set HTTP-only cookies for tokens
+            _samesite = 'None' if not settings.DEBUG else 'Lax'
             response.set_cookie(
                 key='access',
                 value=response.data['access'],
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 domain=None,  # Allow localhost in dev
                 max_age=60 * 15  # 15 minutes
             )
@@ -1107,7 +1108,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 value=response.data['refresh'],
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 domain=None,  # Allow localhost in dev
                 max_age=60 * 60 * 24 * 7  # 7 days
             )
@@ -1179,7 +1180,7 @@ class CustomTokenRefreshView(TokenRefreshView):
                 value=response.data['access'],
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite='None' if not settings.DEBUG else 'Lax',
                 max_age=60 * 15  # 15 minutes
             )
             
@@ -1453,12 +1454,13 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
             
             # Set HTTP-only cookies
             logger.info(f"Setting auth cookies for Google OAuth user: {user.email}")
+            _samesite = 'None' if not settings.DEBUG else 'Lax'
             response.set_cookie(
                 key='access',
                 value=str(refresh.access_token),
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 domain=None,  # Allow localhost in dev
                 max_age=60 * 15  # 15 minutes
             )
@@ -1467,7 +1469,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
                 value=str(refresh),
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 domain=None,  # Allow localhost in dev
                 max_age=60 * 60 * 24 * 7  # 7 days
             )

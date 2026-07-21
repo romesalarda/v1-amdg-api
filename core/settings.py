@@ -677,7 +677,7 @@ GOOGLE_OAUTH_REDIRECT_URI = get_secret("GOOGLE_OAUTH_REDIRECT_URI", "")
 # SECURITY SETTINGS
 # =============================================================================
 if not DEBUG:
-    SECURE_SSL_REDIRECT = False # WARNING: Set to True in production behind a reverse proxy that handles SSL termination
+    SECURE_SSL_REDIRECT = True # WARNING: Set to True in production behind a reverse proxy that handles SSL termination
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
