@@ -1174,17 +1174,31 @@ class CustomTokenRefreshView(TokenRefreshView):
         response = super().post(request, *args, **kwargs)
         
         if response.status_code == 200:
+            _samesite = 'None' if not settings.DEBUG else 'Lax'
             # Update access token cookie
             response.set_cookie(
                 key='access',
                 value=response.data['access'],
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='None' if not settings.DEBUG else 'Lax',
+                samesite=_samesite,
                 max_age=60 * 15  # 15 minutes
             )
-            
-            # Remove token from response body
+
+            # Update refresh cookie — required because ROTATE_REFRESH_TOKENS=True
+            # issues a new refresh token each cycle and blacklists the old one.
+            # Without this the browser keeps the stale (blacklisted) refresh cookie.
+            if 'refresh' in response.data:
+                response.set_cookie(
+                    key='refresh',
+                    value=response.data['refresh'],
+                    httponly=True,
+                    secure=not settings.DEBUG,
+                    samesite=_samesite,
+                    max_age=60 * 60 * 24 * 7  # 7 days
+                )
+
+            # Remove tokens from response body
             response.data = {'message': 'Token refreshed successfully.'}
         
         return response
