@@ -83,7 +83,13 @@ REQUIRED_SECRETS = [
     'AWS_STORAGE_BUCKET_NAME',
     'AWS_S3_REGION_NAME',
     'AWS_ACCESS_KEY_ID',
-    'AWS_SECRET_ACCESS_KEY'
+    'AWS_SECRET_ACCESS_KEY',
+    'STRIPE_TEST_MODE',
+    'STRIPE_SECRET_KEY_TEST',
+    'STRIPE_SECRET_KEY_LIVE',
+    'STRIPE_PUBLISHABLE_KEY_TEST',
+    'STRIPE_PUBLISHABLE_KEY_LIVE',
+    'STRIPE_WEBHOOK_SECRET',
 ]
 
 if USE_SSM:
@@ -119,7 +125,6 @@ def _load_all_secrets_from_ssm():
     
     try:
         param_names = [f"{SSM_PARAM_PREFIX}{secret}" for secret in REQUIRED_SECRETS]
-        print(param_names)
         # SSM allows max 10 parameters per get_parameters call
         for chunk in _chunked(param_names, 10):
             response = ssm_client.get_parameters(
@@ -134,7 +139,6 @@ def _load_all_secrets_from_ssm():
             # Log any invalid parameters
             if response.get('InvalidParameters'):
                 logger.warning(f"WARNING: Invalid SSM parameters: {response['InvalidParameters']}")
-        print("finished loading ssm params")
     except Exception as e:
         print("an error occured in ssm params")
         logger.error(f"ERROR loading secrets from SSM: {e}")
@@ -142,9 +146,6 @@ def _load_all_secrets_from_ssm():
 
 # Load secrets at startup
 _load_all_secrets_from_ssm()
-
-print("secrets cache :" + str(_SECRET_CACHE))
-print("ssm :" + str(ssm_client))
 
 def get_secret(name, default=None):
     """
@@ -673,7 +674,7 @@ GOOGLE_OAUTH_REDIRECT_URI = get_secret("GOOGLE_OAUTH_REDIRECT_URI", "")
 # SECURITY SETTINGS
 # =============================================================================
 if not DEBUG:
-    SECURE_SSL_REDIRECT = True
+    SECURE_SSL_REDIRECT = False # WARNING: Set to True in production behind a reverse proxy that handles SSL termination
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
