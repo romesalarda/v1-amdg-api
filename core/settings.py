@@ -113,7 +113,7 @@ def _chunked(iterable, size=10):
 
 def _load_all_secrets_from_ssm():
     """Load ALL secrets from SSM Parameter Store in a single batch call at startup."""
-    if not USE_SSM or not ssm_client:
+    if not USE_SSM or not ssm_client or _SECRET_CACHE:
         print("not loading secrets due to disabled!")
         return
     
