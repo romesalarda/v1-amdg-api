@@ -1300,8 +1300,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
         ```
     """
     permission_classes = [permissions.AllowAny]
-    
-    # Google OAuth configuration
+    authentication_classes = []  # No session auth — avoids spurious CSRF enforcement on public OAuth endpoints
     GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
     GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
     GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
