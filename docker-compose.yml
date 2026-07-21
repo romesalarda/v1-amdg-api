@@ -107,8 +107,9 @@ services:
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
-      - /etc/letsencrypt/live/rsalarda.works/fullchain.pem:/etc/letsencrypt/live/rsalarda.works/fullchain.pem:ro
-      - /etc/letsencrypt/live/rsalarda.works/privkey.pem:/etc/letsencrypt/live/rsalarda.works/privkey.pem:ro
+      - /etc/letsencrypt/live/api.amdgevents.co.uk:/etc/letsencrypt/live/api.amdgevents.co.uk:ro
+      - /etc/letsencrypt/archive/api.amdgevents.co.uk:/etc/letsencrypt/archive/api.amdgevents.co.uk:ro
+
     depends_on:
       web:
         condition: service_healthy
