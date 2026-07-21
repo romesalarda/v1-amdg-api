@@ -1094,9 +1094,10 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             
             # Set HTTP-only cookies for tokens
             _samesite = 'None' if not settings.DEBUG else 'Lax'
+            access_token = response.data['access']
             response.set_cookie(
                 key='access',
-                value=response.data['access'],
+                value=access_token,
                 httponly=True,
                 secure=not settings.DEBUG,
                 samesite=_samesite,
@@ -1113,10 +1114,12 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 max_age=60 * 60 * 24 * 7  # 7 days
             )
             
-            # Remove tokens from response body for security
+            # Return access token in body so SPAs can use Bearer header auth
+            # (cross-origin cookie sending is unreliable; Bearer token is not)
             # Keep user data only
             response.data = {
                 'user': response.data.get('user'),
+                'access': access_token,
                 'message': 'Login successful.'
             }
         
@@ -1175,10 +1178,11 @@ class CustomTokenRefreshView(TokenRefreshView):
         
         if response.status_code == 200:
             _samesite = 'None' if not settings.DEBUG else 'Lax'
+            access_token = response.data['access']
             # Update access token cookie
             response.set_cookie(
                 key='access',
-                value=response.data['access'],
+                value=access_token,
                 httponly=True,
                 secure=not settings.DEBUG,
                 samesite=_samesite,
@@ -1198,8 +1202,8 @@ class CustomTokenRefreshView(TokenRefreshView):
                     max_age=60 * 60 * 24 * 7  # 7 days
                 )
 
-            # Remove tokens from response body
-            response.data = {'message': 'Token refreshed successfully.'}
+            # Return new access token in body for Bearer header auth
+            response.data = {'access': access_token, 'message': 'Token refreshed successfully.'}
         
         return response
 
