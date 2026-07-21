@@ -441,10 +441,10 @@ class EventPermissionAPITest(BaseEventAPITestCase):
     def test_retrieve_permission(self):
         self.client.force_authenticate(user=self.user)
         response = self.client.get(f'/api/event/permissions/{self.permission.id}/')
-        print(response.data)
+        # print(response.data)
         print(response.status_code)
         print(response.headers.get("Location"))
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['name'], 'Can Edit Event')
     
