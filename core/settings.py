@@ -384,7 +384,7 @@ STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').exists() else 
 # Variants are stored alongside originals in whatever storage backend is active.
 # Filenames are content-hash-addressed by imagekit — safe for immutable CDN caching.
 IMAGEKIT_DEFAULT_FILE_STORAGE = 'core.storage_backends.VariantMediaStorage'
-IMAGEKIT_CACHEFILE_DIR = 'resources/images/CACHE'
+IMAGEKIT_CACHEFILE_DIR = 'CACHE'
 # Optimistic: generate lazily on first .url access, then cache the file.
 IMAGEKIT_CACHEFILE_DEFAULT_CACHEFILE_STRATEGY = 'imagekit.cachefiles.strategies.Optimistic'
 # =============================================================================
