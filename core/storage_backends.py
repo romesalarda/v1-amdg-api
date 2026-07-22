@@ -6,7 +6,7 @@ from storages.backends.s3boto3 import S3Boto3Storage
 
 class MediaStorage(S3Boto3Storage):
     """Custom storage for media files"""
-    location = 'media'
+    location = ''
     file_overwrite = False
 
 
@@ -18,7 +18,7 @@ class VariantMediaStorage(S3Boto3Storage):
     them with ``Cache-Control: max-age=31536000, immutable`` — Cloudflare
     will cache them aggressively and clients will never receive stale data.
     """
-    location = 'media'
+    location = ''
     file_overwrite = True  # imagekit manages its own filename hashing
 
     def object_parameters(self, name: str) -> dict:
