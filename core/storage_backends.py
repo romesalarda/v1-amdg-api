@@ -21,7 +21,6 @@ class VariantMediaStorage(S3Boto3Storage):
     location = ''
     file_overwrite = True  # imagekit manages its own filename hashing
 
-    def object_parameters(self, name: str) -> dict:
-        params = super().object_parameters(name)
-        params['CacheControl'] = 'max-age=31536000, immutable'
-        return params
+    object_parameters = {
+        'CacheControl': 'max-age=31536000, immutable',
+    }
