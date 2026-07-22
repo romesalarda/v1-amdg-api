@@ -393,12 +393,12 @@ class AttendeeFilterSet(django_filters.FilterSet):
             return queryset.filter(
                 # event_attendances__check_in_time__isnull=False,
                 # event_attendances__check_out_time__isnull=True
-                check_in_records__action=AttendeeActionChoices.CHECK_IN,
+                check_in_records__action=AttendeeActionChoices.CHECKED_IN,
                 check_in_records__scan_result=CheckInScanResult.SUCCESS
             ).distinct()
         elif value is not None:
             return queryset.exclude(
-                check_in_records__action=AttendeeActionChoices.CHECK_IN,
+                check_in_records__action=AttendeeActionChoices.CHECKED_IN,
                 check_in_records__scan_result=CheckInScanResult.SUCCESS
             ).distinct()
         
