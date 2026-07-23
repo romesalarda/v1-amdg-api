@@ -3,6 +3,14 @@
 # Runs once per instance boot (or service start), before uvicorn.
 set -euo pipefail
 
+# Force the AWS CLI to use the instance's IAM role, not any stale/
+# leftover AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY that may already
+# be present in the environment (e.g. from a previous run's app.env
+# being loaded by systemd's EnvironmentFile= before this script runs).
+unset AWS_ACCESS_KEY_ID
+unset AWS_SECRET_ACCESS_KEY
+unset AWS_SESSION_TOKEN
+
 SSM_PREFIX="/prod/amdg/v1/"          # your existing SSM_PARAM_PREFIX
 REGION="eu-west-2"
 OUT_FILE="/run/app.env"
