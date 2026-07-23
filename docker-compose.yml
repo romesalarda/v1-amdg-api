@@ -59,6 +59,28 @@ services:
         condition: service_healthy
     environment:
       - DJANGO_SETTINGS_MODULE=core.settings
+      - SECRET_KEY
+      - DEBUG
+      - ALLOWED_HOSTS
+      - DB_ENGINE
+      - DB_NAME
+      - DB_USER
+      - DB_PASSWORD
+      - DB_HOST
+      - DB_PORT
+      - AWS_STORAGE_BUCKET_NAME
+      - AWS_S3_REGION_NAME
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - STRIPE_TEST_MODE
+      - STRIPE_SECRET_KEY_TEST
+      - STRIPE_SECRET_KEY_LIVE
+      - STRIPE_PUBLISHABLE_KEY_TEST
+      - STRIPE_PUBLISHABLE_KEY_LIVE
+      - STRIPE_WEBHOOK_SECRET
+      - GOOGLE_OAUTH_CLIENT_ID
+      - GOOGLE_OAUTH_CLIENT_SECRET
+      - GOOGLE_OAUTH_REDIRECT_URI
       # All other env vars are set via shell environment on EC2
       # Never use env_file in production - use AWS Systems Manager Parameter Store
 
