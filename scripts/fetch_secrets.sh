@@ -3,7 +3,7 @@
 # Runs once per instance boot (or service start), before uvicorn.
 set -euo pipefail
 
-SSM_PREFIX="prod/amdg/v1/"          # your existing SSM_PARAM_PREFIX
+SSM_PREFIX="/prod/amdg/v1/"          # your existing SSM_PARAM_PREFIX
 REGION="eu-west-2"
 OUT_FILE="/run/app.env"
 ENV_FILE="/home/ec2-user/v1-amdg-api/.env"
