@@ -329,12 +329,18 @@ class EventFormViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'One or more question IDs not found on this form.'}, status=status.HTTP_404_NOT_FOUND)
 
         with transaction.atomic():
-            order_map = {item['id']: item['order'] for item in questions_data}
+            order_map = {str(item['id']): item['order'] for item in questions_data}
             for q in questions:
-                if str(q.id) not in order_map: # TODO: test this
-                    pass
+                if str(q.id) not in order_map:
+                    continue  # shouldn't happen given the count check above, but skip safely
                 q.order = order_map[str(q.id)]
                 q.save(update_fields=['order'])
+
+        try:
+            question_ids = [item['id'] for item in questions_data]
+            order_map = {str(item['id']): item['order'] for item in questions_data}
+        except (KeyError, TypeError):
+            return Response({'detail': 'Each item must include id and order.'}, status=status.HTTP_400_BAD_REQUEST)
 
         _broadcast_form_event(
             event_id=str(form.event.event_id),

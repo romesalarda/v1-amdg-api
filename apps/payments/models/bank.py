@@ -11,12 +11,12 @@ from djmoney.models.fields import MoneyField
 from apps.common.models.verification import RequiresVerificationModel
 
 
-MAX_BANK_TRANSFER_EVIDENCE_SIZE = 10 * 1024 * 1024
+MAX_BANK_TRANSFER_EVIDENCE_SIZE = 50 * 1024 * 1024
 
 
 def validate_evidence_file_size(uploaded_file):
     if uploaded_file and uploaded_file.size > MAX_BANK_TRANSFER_EVIDENCE_SIZE:
-        raise ValidationError('Evidence file must be 10MB or smaller.')
+        raise ValidationError('Evidence file must be 50MB or smaller.')
 
 
 class BankTransferEvidence(RequiresVerificationModel):
