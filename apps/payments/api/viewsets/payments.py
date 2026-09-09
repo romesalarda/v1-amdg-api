@@ -148,9 +148,19 @@ class PaymentViewSet(viewsets.ModelViewSet):
         for pt in _RESERVATION_PAYMENT_TYPES:
             reservation_q |= Q(metadata__contains={'payment_type': pt}) & Q(status=PaymentStatusChoices.DRAFTING)
         # Users see their own payments or payments for events they admin
-        return queryset.filter(
-            Q(user=user) | Q(event_id__in=admin_event_ids)
-        ).exclude(reservation_q).distinct()
+        # return queryset.filter(
+        #     Q(user=user) | Q(event_id__in=admin_event_ids)
+        # ).exclude(reservation_q).distinct()
+        # return payments that admins can see
+        # if event= provided, return payments for that event that ADMINS can see
+        # if not event=, return only the payments the user owns
+        event_id = self.request.query_params.get('event')
+        if event_id:
+            if event_id in admin_event_ids:
+                return queryset.filter(event_id=event_id).exclude(reservation_q).distinct()
+            else:
+                return queryset.none()
+        return queryset.filter(user=user).exclude(reservation_q).distinct()
     
     def perform_create(self, serializer):
         """Create payment — only administrative staff may call this endpoint."""
