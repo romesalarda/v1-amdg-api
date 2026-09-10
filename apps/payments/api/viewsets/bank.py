@@ -18,7 +18,7 @@ from apps.payments.api.serializers import (
     BankTransferEvidenceCreateSerializer, BankTransferEvidenceUpdateSerializer,)
 from apps.payments.api.filtersets import BankTransferEvidenceFilterSet
 from apps.payments.api.permissions import IsBankTransferEvidenceAccessible, user_can_manage_bank_evidence
-from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices, EventPermissionAssignment, EventPermissionCategoryChoices
 from apps.common.pagination import StandardPagination
 
 import logging
@@ -118,10 +118,18 @@ class BankTransferEvidenceViewSet(viewsets.ModelViewSet):
             role__name__icontains='finance'
         ).values_list('event_id', flat=True)
 
+        # No dedicated event filter exists on this endpoint; explicit PAYMENT_MANAGEMENT
+        # grants widen visibility the same way role-based access does.
+        permitted_event_ids = EventPermissionAssignment.objects.filter(
+            user=user,
+            permission__category=EventPermissionCategoryChoices.PAYMENT_MANAGEMENT,
+        ).values_list('event_id', flat=True)
+
         return queryset.filter(
             Q(payment__user=user) |
             Q(payment__event_id__in=managed_event_ids) |
-            Q(payment__event_id__in=finance_event_ids)
+            Q(payment__event_id__in=finance_event_ids) |
+            Q(payment__event_id__in=permitted_event_ids)
         ).distinct()
 
     def perform_create(self, serializer):

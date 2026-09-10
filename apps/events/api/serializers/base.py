@@ -24,6 +24,7 @@ from apps.common.api.serializers import (
     ResourceSerializer
 )
 from apps.bookings.api.serializers.serializers import BookingDetailSerializer
+from apps.events.models.roles import EventRoleCategoryChoices
 from core.utils.currency import format_price
 
 from urllib.parse import urlparse
@@ -1018,14 +1019,20 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
                 instance.timezone = timezone_str
                 instance.save(update_fields=['timezone'])
 
-            # add user as staff with full permissions
-
             EventStaff.objects.create(
                 event=instance,
                 user=self.context['request'].user,
                 assigned_at=timezone.now(),
                 assigned_by=self.context['request'].user,
             )
+
+            EventRoleAssignment.objects.create(
+                event=instance,
+                user=self.context['request'].user,
+                role=EventRoleCategoryChoices.ADMINISTRATIVE, 
+                assigned_at=timezone.now(),
+                assigned_by=self.context['request'].user,
+            ),
 
             return instance
         except Exception as e:

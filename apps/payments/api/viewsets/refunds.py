@@ -25,12 +25,14 @@ from apps.payments.api.serializers import (
     RefundPolicySerializer, RefundPolicyCreateUpdateSerializer,
 )
 from apps.payments.api.filtersets import RefundRequestFilterSet, RefundPolicyFilterSet
-from apps.payments.api.permissions import IsAdministrativeStaffOnly, IsRefundRequestOwnerOrAdministrative
+from apps.payments.api.permissions import (
+    IsAdministrativeStaffOnly, IsRefundRequestOwnerOrAdministrative,
+    resolve_event_from_request, user_can_access_event_payments,
+)
 
 from apps.payments.services.attendee_refunds import AttendeeRefundService
 from apps.payments.tasks import send_refund_email
 from apps.common.pagination import StandardPagination
-from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
 
 from apps.events.services.notifications import create_notification, NotificationPriorityChoices, NotificationTypeChoices
 
@@ -122,25 +124,31 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         return RefundRequestDetailSerializer
     
     def get_queryset(self):
-        """Filter queryset based on user permissions."""
+        """
+        Filter queryset based on user permissions.
+
+        For LIST only: no event filter -> only refunds for the user's own payments;
+        event/event_id filter -> all refunds for that event if authorized, else own only.
+        Detail actions rely on object-level permissions.
+        """
         user = self.request.user
         queryset = super().get_queryset()
-        
-        # Admins see all
-        if user.is_superuser or user.is_staff:
+
+        if self.action != 'list':
             return queryset
-        
-        # Check if user has administrative role for any event
-        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
-        admin_event_ids = EventRoleAssignment.objects.filter(
-            user=user,
-            role__category=EventRoleCategoryChoices.ADMINISTRATIVE
-        ).values_list('event_id', flat=True)
-        
-        # Users see refunds for their own payments or events they admin
-        return queryset.filter(
-            Q(payment__user=user) | Q(payment__event_id__in=admin_event_ids)
-        ).distinct()
+
+        requested_event_id = self.request.query_params.get('event') or self.request.query_params.get('event_id')
+        if not requested_event_id:
+            return queryset.filter(payment__user=user).distinct()
+
+        event = resolve_event_from_request(self.request)
+        if not event:
+            return queryset.none()
+
+        if user_can_access_event_payments(user, event, action='read'):
+            return queryset.filter(payment__event=event).distinct()
+
+        return queryset.filter(payment__event=event, payment__user=user).distinct()
     
     def perform_create(self, serializer):
         """Validate user can create refund for this payment."""
@@ -149,14 +157,8 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         
         # Check if user owns the payment or is admin
         if not (user.is_superuser or user.is_staff) and payment.user != user: # TODO: this should be implemented in object perms
-            # Check if user is admin for the event
-            is_event_admin = EventRoleAssignment.objects.filter(
-                user=user,
-                event=payment.event,
-                role__category=EventRoleCategoryChoices.ADMINISTRATIVE
-            ).exists()
-            
-            if not is_event_admin:
+            # Check if user is authorized (role or explicit permission) for the event
+            if not user_can_access_event_payments(user, payment.event, action='create'):
                 raise PermissionDenied("You can only create refund requests for your own payments.")
             
         with transaction.atomic():
