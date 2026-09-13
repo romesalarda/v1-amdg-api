@@ -13,7 +13,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 
@@ -38,6 +38,7 @@ from apps.events.models import (
     EventFormQuestion, EventFormQuestionOption,
     EventFormResponse, EventFormResponseAnswer, EventFormResponseAnswerChoice,
     EventFormDelegateToken,
+    EventRoleAssignment, EventRoleCategoryChoices,
 )
 from apps.events.api.permissions import IsEventStaffOrReadOnly, IsEventOwnerOrStaffMember
 from apps.events.api.serializers import (
@@ -505,11 +506,22 @@ class EventFormResponseViewSet(viewsets.ModelViewSet):
         ).prefetch_related('answers__question', 'answers__selected_options__option').all()
 
         user = self.request.user
-        # Staff/superusers see all; everyone else sees only their attendee responses
-        if not (user.is_staff or user.is_superuser):
-            qs = qs.filter(attendee__booking__user=user)
+        # if user.is_staff or user.is_superuser:
+        #     return qs
 
-        return qs
+        # Event owners, assigned event staff, and ADMINISTRATIVE role holders see
+        # every response for their event(s); everyone else only sees their own.
+        administrative_event_ids = EventRoleAssignment.objects.filter(
+            user=user, role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).values_list('event_id', flat=True)
+        managed_q = (
+            Q(form__event__created_by=user)
+            | Q(form__event__staff_members__user=user)
+            | Q(form__event_id__in=administrative_event_ids)
+        )
+        own_q = Q(attendee__booking__made_by=user)
+
+        return qs.filter(managed_q | own_q).distinct()
 
     def validate_form_is_open(self, form):
         if form.status != EventFormStatusChoices.PUBLISHED:
@@ -596,10 +608,20 @@ class EventFormResponseAnswerViewSet(viewsets.ModelViewSet):
         ).prefetch_related('selected_options__option').all()
 
         user = self.request.user
-        if not (user.is_staff or user.is_superuser):
-            qs = qs.filter(response__attendee__booking__user=user)
+        if user.is_staff or user.is_superuser:
+            return qs
 
-        return qs
+        administrative_event_ids = EventRoleAssignment.objects.filter(
+            user=user, role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        ).values_list('event_id', flat=True)
+        managed_q = (
+            Q(response__form__event__created_by=user)
+            | Q(response__form__event__staff_members__user=user)
+            | Q(response__form__event_id__in=administrative_event_ids)
+        )
+        own_q = Q(response__attendee__booking__made_by=user)
+
+        return qs.filter(managed_q | own_q).distinct()
 
     def perform_update(self, serializer):
         instance = serializer.instance

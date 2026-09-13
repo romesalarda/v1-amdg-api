@@ -320,6 +320,7 @@ class OrderEmailService:
         No bank details are included — the user has already transferred.
         """
         context = cls._build_event_block(order)
+        order_items = cls._build_order_items(order)
 
         event = order.event
         view_order_url = f"{settings.FRONTEND_URL}/events/{event.url_safe_title}"
@@ -332,6 +333,9 @@ class OrderEmailService:
             {
                 "order_reference": order.order_reference_id,
                 "user_display_name": user_display_name,
+                "order_items": order_items,
+                "item_count": len(order_items),
+                "total_amount": order.total_amount,
                 "view_order_url": view_order_url,
             }
         )

@@ -23,7 +23,10 @@ from apps.payments.api.serializers import (
     PaymentMethodSerializer, PaymentMethodDetailSerializer, PaymentMethodCreateUpdateSerializer,
 )
 from apps.payments.api.filtersets import PaymentFilterSet, PaymentMethodFilterSet
-from apps.payments.api.permissions import IsAdministrativeStaffOnly, IsPaymentOwnerOrAdministrative
+from apps.payments.api.permissions import (
+    IsAdministrativeStaffOnly, IsPaymentOwnerOrAdministrative,
+    resolve_event_from_request, user_can_access_event_payments,
+)
    
 from apps.bookings.services import TicketCreatorService
 from apps.payments.models import PaymentMethodTypeChoices
@@ -122,20 +125,20 @@ class PaymentViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated(), IsPaymentOwnerOrAdministrative()]
     
     def get_queryset(self):
-        """Filter queryset based on user permissions."""
+        """
+        Filter queryset based on user permissions.
+
+        For LIST only:
+        - No event filter: users see ONLY their own payments (no admin widening).
+        - event/event_id filter: users see all payments for that event if authorized
+          (creator, ADMINISTRATIVE role, or explicit PAYMENT_MANAGEMENT permission),
+          otherwise only their own payments within that event.
+
+        Detail actions (retrieve/update/destroy/custom actions) rely on the object-level
+        permission classes for authorization and are not further restricted here.
+        """
         user = self.request.user
         queryset = super().get_queryset()
-        
-        # Admins see all
-        # if user.is_superuser or user.is_staff:
-        #     return queryset
-        
-        # Check if user has administrative role for any event
-        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
-        admin_event_ids = EventRoleAssignment.objects.filter(
-            user=user,
-            role__category=EventRoleCategoryChoices.ADMINISTRATIVE
-        ).values_list('event_id', flat=True)
 
         # Exclude all inflight/abandoned reservation DRAFTING payments from non-admin views.
         # These are internal checkout artefacts (bank transfer references not yet confirmed)
@@ -147,20 +150,23 @@ class PaymentViewSet(viewsets.ModelViewSet):
         reservation_q = Q()
         for pt in _RESERVATION_PAYMENT_TYPES:
             reservation_q |= Q(metadata__contains={'payment_type': pt}) & Q(status=PaymentStatusChoices.DRAFTING)
-        # Users see their own payments or payments for events they admin
-        # return queryset.filter(
-        #     Q(user=user) | Q(event_id__in=admin_event_ids)
-        # ).exclude(reservation_q).distinct()
-        # return payments that admins can see
-        # if event= provided, return payments for that event that ADMINS can see
-        # if not event=, return only the payments the user owns
-        event_id = self.request.query_params.get('event')
-        if event_id:
-            if event_id in admin_event_ids:
-                return queryset.filter(event_id=event_id).exclude(reservation_q).distinct()
-            else:
-                return queryset.none()
-        return queryset.filter(user=user).exclude(reservation_q).distinct()
+        queryset = queryset.exclude(reservation_q)
+
+        if self.action != 'list':
+            return queryset
+
+        requested_event_id = self.request.query_params.get('event') or self.request.query_params.get('event_id')
+        if not requested_event_id:
+            return queryset.filter(user=user).distinct()
+
+        event = resolve_event_from_request(self.request)
+        if not event:
+            return queryset.none()
+
+        if user_can_access_event_payments(user, event, action='read'):
+            return queryset.filter(event=event).distinct()
+
+        return queryset.filter(event=event, user=user).distinct()
     
     def perform_create(self, serializer):
         """Create payment — only administrative staff may call this endpoint."""

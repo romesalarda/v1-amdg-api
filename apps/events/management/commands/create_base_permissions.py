@@ -83,6 +83,20 @@ class Command(BaseCommand):
                 'category': EventPermissionCategoryChoices.STAFF_MANAGEMENT
             },
             
+            # PAYMENT_MANAGEMENT
+            {
+                'code': 'VIEW_PAYMENTS',
+                'name': 'View Payments',
+                'description': 'Can view payments and payment-related records for the event',
+                'category': EventPermissionCategoryChoices.PAYMENT_MANAGEMENT
+            },
+            {
+                'code': 'MANAGE_PAYMENTS',
+                'name': 'Manage Payments',
+                'description': 'Can create, update, and manage payments and payment-related records',
+                'category': EventPermissionCategoryChoices.PAYMENT_MANAGEMENT
+            },
+
             # REPORTING
             {
                 'code': 'VIEW_REPORTS',

@@ -27,7 +27,10 @@ from apps.events.models.venue import EventVenue, EventVenueRoom
 
 from apps.attendee.api.serializers import (
     CheckInCreateSerializer, CheckInResponseSerializer,
-    CheckInBroadcastSerializer,
+    CheckInBroadcastSerializer, BulkDeleteCheckInsSerializer,
+    BulkAttendeeStatusUpdateSerializer, AttendeeStatusUpdateSerializer,
+    UpdatedCountResponseSerializer, DeletedCountResponseSerializer,
+    CheckInLogDatesResponseSerializer,
 )
 from apps.attendee.services.pre_removal import AttendeePreRemovalSummaryService
 from uuid import UUID
@@ -275,6 +278,20 @@ class CheckInViewSet(viewsets.GenericViewSet):
         response_serializer = CheckInResponseSerializer(check_in)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        summary="List Check-In Log Dates",
+        description=(
+            "Return a paginated list of distinct calendar dates on which "
+            "check-in logs exist for a given event, ordered most-recent first."
+        ),
+        tags=['Check-In'],
+        parameters=[
+            OpenApiParameter('event', OpenApiTypes.UUID, required=True, description='Event UUID'),
+            OpenApiParameter('page', OpenApiTypes.INT, description='A page number within the paginated result set.'),
+            OpenApiParameter('page_size', OpenApiTypes.INT, description='Number of results to return per page.'),
+        ],
+        responses={200: CheckInLogDatesResponseSerializer},
+    )
     @action(detail=False, methods=['get'], url_path='log-dates',
             permission_classes=[IsEventStaffOrReadOnly])
     def log_dates(self, request, *args, **kwargs):
@@ -319,6 +336,13 @@ class CheckInViewSet(viewsets.GenericViewSet):
         results = [d.isoformat() if d else None for d in dates_qs]
         return Response(results)
 
+    @extend_schema(
+        summary="Bulk Delete Check-In Logs",
+        description="Delete AttendeeCheckIn audit records for a specific event, optionally scoped to a date or date range.",
+        tags=['Check-In'],
+        request=BulkDeleteCheckInsSerializer,
+        responses={200: DeletedCountResponseSerializer},
+    )
     @action(detail=False, methods=['delete'], url_path='bulk-delete-logs',
             permission_classes=[IsEventStaffOrReadOnly])
     def bulk_delete_logs(self, request, *args, **kwargs):
@@ -356,6 +380,16 @@ class CheckInViewSet(viewsets.GenericViewSet):
         count, _ = qs.delete()
         return Response({'deleted': count}, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        summary="Bulk Check-In / Check-Out Attendees",
+        description=(
+            "Mass check-in or check-out all (or specific) attendees in an event, "
+            "creating audit records and broadcasting over WebSocket."
+        ),
+        tags=['Check-In'],
+        request=BulkAttendeeStatusUpdateSerializer,
+        responses={200: UpdatedCountResponseSerializer},
+    )
     @action(detail=False, methods=['post'], url_path='bulk-status',
             permission_classes=[IsEventStaffOrReadOnly])
     def bulk_status_update(self, request, *args, **kwargs):
@@ -446,18 +480,25 @@ class CheckInViewSet(viewsets.GenericViewSet):
         Attendee.objects.bulk_update(attendees, ['status', 'updated_at'])
 
         # Upsert EventAttendance records
+        now = timezone.now()
         for att in attendees:
             if bulk_action == CheckInAction.CHECK_IN:
                 EventAttendance.objects.update_or_create(
                     event=event,
                     attendee=att,
-                    defaults={'check_in_by': request.user},
-                    check_in_time=timezone.now()
+                    defaults={
+                        'check_in_by': request.user,
+                        'check_in_time': now,
+                    },
                 )
             else:
-                EventAttendance.objects.filter(event=event, attendee=att).update(
-                    check_out_by=request.user,
-                    check_out_time=timezone.now()
+                EventAttendance.objects.update_or_create(
+                    event=event,
+                    attendee=att,
+                    defaults={
+                        'check_out_by': request.user,
+                        'check_out_time': now,
+                    },
                 )
 
         # Bulk create action log entries
@@ -488,6 +529,16 @@ class CheckInViewSet(viewsets.GenericViewSet):
 
         return Response({'updated': len(attendees)}, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        summary="Check-In / Check-Out Specific Attendees",
+        description=(
+            "Check in or check out one or more specific attendees by UUID. "
+            "The event is inferred from the attendees, so callers do not need to supply it."
+        ),
+        tags=['Check-In'],
+        request=AttendeeStatusUpdateSerializer,
+        responses={200: UpdatedCountResponseSerializer},
+    )
     @action(detail=False, methods=['post'], url_path='attendee-status',
             permission_classes=[IsEventStaffOrReadOnly])
     def attendee_status_update(self, request, *args, **kwargs):
@@ -575,6 +626,28 @@ class CheckInViewSet(viewsets.GenericViewSet):
         for att in attendees:
             att.status = new_status
         Attendee.objects.bulk_update(attendees, ['status', 'updated_at'])
+
+        # Upsert EventAttendance records
+        now = timezone.now()
+        for att in attendees:
+            if target_action == CheckInAction.CHECK_IN:
+                EventAttendance.objects.update_or_create(
+                    event=att.event,
+                    attendee=att,
+                    defaults={
+                        'check_in_by': request.user,
+                        'check_in_time': now,
+                    },
+                )
+            else:
+                EventAttendance.objects.update_or_create(
+                    event=att.event,
+                    attendee=att,
+                    defaults={
+                        'check_out_by': request.user,
+                        'check_out_time': now,
+                    },
+                )
 
         # Bulk create action log entries
         AttendeeAction.objects.bulk_create([

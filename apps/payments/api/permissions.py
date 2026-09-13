@@ -18,7 +18,10 @@ from django.contrib.auth import get_user_model
 from typing import Any
 from uuid import UUID
 
-from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+from apps.events.models import (
+    EventRoleAssignment, EventRoleCategoryChoices,
+    EventPermissionAssignment, EventPermissionCategoryChoices,
+)
 from apps.payments.models import (
     BankTransferEvidence,
     CreditExpense,
@@ -29,6 +32,99 @@ from apps.payments.models import (
 )
 
 User = get_user_model()
+
+
+def _http_method_to_action(method: str) -> str:
+    """Map an HTTP verb to a CRUD action name used by the permission checks below."""
+    return {
+        'POST': 'create',
+        'PUT': 'update',
+        'PATCH': 'update',
+        'DELETE': 'delete',
+    }.get((method or '').upper(), 'read')
+
+
+def _assignment_effective_access(assignment: 'EventPermissionAssignment') -> dict:
+    """Mirror the read/create/update/delete semantics used in EventDetailSerializer.get_user_permissions."""
+    if assignment.read_only:
+        return {'read': True, 'create': False, 'update': False, 'delete': False}
+    return {
+        'read': assignment.allow_update or assignment.allow_delete or assignment.allow_create,
+        'create': assignment.allow_create,
+        'update': assignment.allow_update,
+        'delete': assignment.allow_delete,
+    }
+
+
+def user_has_explicit_payment_permission(user, event, action: str = 'read') -> bool:
+    """Check explicit PAYMENT_MANAGEMENT EventPermissionAssignment grants for the given action."""
+    if not user or not getattr(user, 'is_authenticated', False) or not event:
+        return False
+
+    assignments = EventPermissionAssignment.objects.filter(
+        event=event,
+        user=user,
+        permission__category=EventPermissionCategoryChoices.PAYMENT_MANAGEMENT,
+    )
+
+    return any(_assignment_effective_access(assignment).get(action, False) for assignment in assignments)
+
+
+def user_can_access_event_payments(user, event, action: str = 'read') -> bool:
+    """
+    Central authority check for payment-family access scoped to an event.
+
+    Grants access if the user is a superuser/staff, the event creator, holds an
+    ADMINISTRATIVE event role, or holds an explicit PAYMENT_MANAGEMENT permission
+    assignment covering the requested action.
+    """
+    if not user or not getattr(user, 'is_authenticated', False) or not event:
+        return False
+
+    if user.is_superuser or user.is_staff:
+        return True
+
+    if getattr(event, 'created_by_id', None) == user.id:
+        return True
+
+    if EventRoleAssignment.objects.filter(
+        user=user,
+        event=event,
+        role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
+    ).exists():
+        return True
+
+    return user_has_explicit_payment_permission(user, event, action=action)
+
+
+def resolve_event_from_request(request, event_param: str = 'event', event_id_param: str = 'event_id'):
+    """Resolve an Event from query params, accepting UUID, url_safe_title, or numeric pk. Returns None if absent/not found."""
+    from apps.events.models import Event
+
+    event_id = request.query_params.get(event_id_param)
+    identifier = request.query_params.get(event_param)
+
+    if not event_id and not identifier:
+        return None
+
+    if event_id:
+        try:
+            UUID(str(event_id))
+            return Event.objects.filter(event_id=event_id).first()
+        except (ValueError, TypeError):
+            return None
+
+    value = str(identifier).strip()
+    try:
+        UUID(value)
+        return Event.objects.filter(event_id=value).first()
+    except (ValueError, TypeError):
+        pass
+
+    if value.isdigit():
+        return Event.objects.filter(pk=int(value)).first()
+
+    return Event.objects.filter(url_safe_title=value).first()
 
 
 class IsAdministrativeStaff(permissions.BasePermission):
@@ -97,8 +193,9 @@ class IsAdministrativeStaff(permissions.BasePermission):
         if not event:
             return False
         
-        # Check if user has an ADMINISTRATIVE role for this event
-        return self._user_has_administrative_role(request.user, event)
+        # Check role/creator/explicit-permission access scoped to the action being performed
+        action = _http_method_to_action(request.method)
+        return user_can_access_event_payments(request.user, event, action=action)
     
     def _get_event_from_object(self, obj) -> Any:
         """
@@ -125,21 +222,8 @@ class IsAdministrativeStaff(permissions.BasePermission):
         return None
     
     def _user_has_administrative_role(self, user, event) -> bool:
-        """
-        Check if user has an ADMINISTRATIVE role assignment for the event.
-        
-        Args:
-            user: The user to check
-            event: The event to check against
-            
-        Returns:
-            bool: True if user has ADMINISTRATIVE role, False otherwise
-        """
-        return EventRoleAssignment.objects.filter(
-            user=user,
-            event=event,
-            role__category=EventRoleCategoryChoices.ADMINISTRATIVE
-        ).exists()
+        """Backwards-compatible alias: checks role/creator/explicit-permission read access."""
+        return user_can_access_event_payments(user, event, action='read')
 
 
 class IsPaymentOwner(permissions.BasePermission):
@@ -307,7 +391,7 @@ class IsPaymentOwnerOrAdministrative(permissions.BasePermission):
         if owner_check.has_object_permission(request, view, obj):
             return True
         
-        # Check if administrative
+        # Check if administrative (role, creator, or explicit PAYMENT_MANAGEMENT permission)
         admin_check = IsAdministrativeStaff()
         if admin_check.has_object_permission(request, view, obj):
             return True
@@ -315,12 +399,12 @@ class IsPaymentOwnerOrAdministrative(permissions.BasePermission):
         return False
 
 
-def _user_has_finance_role(user, event) -> bool:
-    """Check whether a user has a finance-style role for the given event."""
+def _user_has_finance_role(user, event, action: str = 'read') -> bool:
+    """Check whether a user has a finance-style role, or an explicit PAYMENT_MANAGEMENT grant, for the event."""
     if not user or not getattr(user, 'is_authenticated', False) or not event:
         return False
 
-    return EventRoleAssignment.objects.filter(
+    has_finance_role = EventRoleAssignment.objects.filter(
         user=user,
         event=event,
         role__name__icontains='finance'
@@ -329,6 +413,11 @@ def _user_has_finance_role(user, event) -> bool:
         event=event,
         role__code__iexact='FIN'
     ).exists()
+
+    if has_finance_role:
+        return True
+
+    return user_has_explicit_payment_permission(user, event, action=action)
 
 
 class IsCreditAccessible(permissions.BasePermission):
@@ -360,7 +449,7 @@ class IsCreditAccessible(permissions.BasePermission):
         ).exists():
             return True
 
-        return _user_has_finance_role(request.user, event)
+        return _user_has_finance_role(request.user, event, action=_http_method_to_action(request.method))
 
 
 class IsBankTransferEvidenceAccessible(permissions.BasePermission):
@@ -393,7 +482,7 @@ class IsBankTransferEvidenceAccessible(permissions.BasePermission):
         ).exists():
             return True
 
-        return _user_has_finance_role(request.user, event)
+        return _user_has_finance_role(request.user, event, action=_http_method_to_action(request.method))
 
 
 class IsRefundRequestOwnerOrAdministrative(permissions.BasePermission):
@@ -520,6 +609,13 @@ class IsAdministrativeStaffOnly(permissions.BasePermission):
                 ):
                     return False
         
+        # For payment/payment-method creation, the event is supplied directly rather than
+        # via a polymorphic target — honor explicit PAYMENT_MANAGEMENT grants for that event.
+        if view.action == 'create' and request.data.get('event'):
+            event_obj = self._resolve_event_value(request.data.get('event'))
+            if event_obj and user_can_access_event_payments(request.user, event_obj, action='create'):
+                return True
+
         # Check for administrative event role
         # For list views, we check if user has ANY administrative role
         has_any_admin_role = EventRoleAssignment.objects.filter(
@@ -533,6 +629,22 @@ class IsAdministrativeStaffOnly(permissions.BasePermission):
         """Check administrative access for specific object."""
         admin_check = IsAdministrativeStaff()
         return admin_check.has_object_permission(request, view, obj)
+    
+    def _resolve_event_value(self, value) -> Any:
+        """Resolve an Event from a raw request payload value (UUID, url_safe_title, or numeric pk)."""
+        from apps.events.models import Event
+
+        value = str(value).strip()
+        try:
+            UUID(value)
+            return Event.objects.filter(event_id=value).first()
+        except (ValueError, TypeError):
+            pass
+
+        if value.isdigit():
+            return Event.objects.filter(pk=int(value)).first()
+
+        return Event.objects.filter(url_safe_title=value).first()
     
     def _validate_event_access_for_target(self, user, target_id, target_type_id=None, target_alias=None) -> bool:
         """Validate user has administrative access to the target object's event.
@@ -666,7 +778,7 @@ class IsDebitAccessible(permissions.BasePermission):
         ).exists():
             return True
 
-        return _user_has_finance_role(request.user, event)
+        return _user_has_finance_role(request.user, event, action=_http_method_to_action(request.method))
 
 
 class IsBudgetProposalAccessible(permissions.BasePermission):
@@ -698,7 +810,7 @@ class IsBudgetProposalAccessible(permissions.BasePermission):
         ).exists():
             return True
 
-        return _user_has_finance_role(request.user, event)
+        return _user_has_finance_role(request.user, event, action=_http_method_to_action(request.method))
     
 class IsFinanceRole(permissions.BasePermission):
     """Allow access to users with finance-related roles for the event."""
@@ -719,7 +831,7 @@ class IsFinanceRole(permissions.BasePermission):
         if not event:
             return False
 
-        return _user_has_finance_role(request.user, event)
+        return _user_has_finance_role(request.user, event, action=_http_method_to_action(request.method))
     
 
 
@@ -765,7 +877,8 @@ class CanManageBudgetProposals(permissions.BasePermission):
 
 def user_can_manage_credits(user, event) -> bool:
     '''
-    returns True if the user can manage credits for the event, which is true if they are a superuser, staff, or have a finance-related role for the event.
+    returns True if the user can manage credits for the event: superuser, staff,
+    ADMINISTRATIVE/finance role, or an explicit PAYMENT_MANAGEMENT permission grant.
     '''
     if not user or not getattr(user, 'is_authenticated', False):
         return False
@@ -780,7 +893,10 @@ def user_can_manage_credits(user, event) -> bool:
     ).exists():
         return True
 
-    return user_has_finance_role(user, event)
+    if user_has_finance_role(user, event):
+        return True
+
+    return user_has_explicit_payment_permission(user, event, action='update')
 
 
 def user_can_manage_bank_evidence(user, event) -> bool:

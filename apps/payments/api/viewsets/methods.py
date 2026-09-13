@@ -10,7 +10,9 @@ from apps.payments.api.serializers import (
     PaymentMethodSerializer, PaymentMethodDetailSerializer, PaymentMethodCreateUpdateSerializer,
 )
 from apps.payments.api.filtersets import PaymentMethodFilterSet
-from apps.payments.api.permissions import IsAdministrativeStaffOnly
+from apps.payments.api.permissions import (
+    IsAdministrativeStaffOnly, resolve_event_from_request, user_can_access_event_payments,
+)
 from apps.common.pagination import StandardPagination
 from apps.events.services.notifications import create_notification, NotificationPriorityChoices, NotificationTypeChoices
 
@@ -80,6 +82,33 @@ class PaymentMethodViewSet(viewsets.ModelViewSet):
         elif self.action in ['create', 'update', 'partial_update']:
             return PaymentMethodCreateUpdateSerializer
         return PaymentMethodDetailSerializer
+
+    def get_queryset(self):
+        """
+        Scope payment method LISTING to a specific event the caller is authorized to view.
+
+        Without an event/event_id filter, list returns nothing — payment methods are
+        always event-scoped and must not leak across events by default. Detail actions
+        (retrieve/update/destroy) are still gated by object-level permissions.
+        """
+        queryset = super().get_queryset()
+
+        if self.action != 'list':
+            return queryset
+
+        user = self.request.user
+        requested_event_id = self.request.query_params.get('event') or self.request.query_params.get('event_id')
+        if not requested_event_id:
+            return queryset.none()
+
+        event = resolve_event_from_request(self.request)
+        if not event:
+            return queryset.none()
+
+        if user_can_access_event_payments(user, event, action='read'):
+            return queryset.filter(event=event)
+
+        return queryset.none()
     
     def perform_create(self, serializer):
         """Set created_by to current user."""

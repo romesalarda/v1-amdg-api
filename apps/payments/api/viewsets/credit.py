@@ -16,8 +16,7 @@ from apps.payments.api.serializers import (
     CreditExpenseListSerializer, CreditExpenseDetailSerializer, CreditExpenseCreateSerializer, CreditExpenseUpdateSerializer,
 )
 from apps.payments.api.filtersets import CreditExpenseFilterSet
-from apps.payments.api.permissions import IsCreditAccessible
-from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+from apps.payments.api.permissions import IsCreditAccessible, user_can_access_event_payments
 from apps.common.pagination import StandardPagination
 from apps.payments.api.permissions import user_can_manage_credits
 
@@ -87,30 +86,41 @@ class CreditExpenseViewSet(viewsets.ModelViewSet):
         return CreditExpenseDetailSerializer
 
     def get_queryset(self):
+        """
+        For LIST only: no event filter -> only credits the user created;
+        event/event__event_id filter -> all credits for that event if authorized, else own only.
+        Detail actions rely on object-level permissions.
+        """
         queryset = super().get_queryset()
         user = self.request.user
 
         if not user.is_authenticated:
             return queryset.none()
 
-        if user.is_superuser or user.is_staff:
+        if self.action != 'list':
             return queryset
 
-        accessible_event_ids = EventRoleAssignment.objects.filter(
-            user=user,
-            role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
-        ).values_list('event_id', flat=True)
+        from apps.events.models import Event
 
-        finance_event_ids = EventRoleAssignment.objects.filter(
-            user=user,
-            role__name__icontains='finance'
-        ).values_list('event_id', flat=True)
+        event_uuid = self.request.query_params.get('event__event_id')
+        event_pk = self.request.query_params.get('event')
 
-        return queryset.filter(
-            Q(created_by=user) |
-            Q(event_id__in=accessible_event_ids) |
-            Q(event_id__in=finance_event_ids)
-        ).distinct()
+        if not event_uuid and not event_pk:
+            return queryset.filter(created_by=user).distinct()
+
+        event = None
+        if event_uuid:
+            event = Event.objects.filter(event_id=event_uuid).first()
+        elif event_pk and str(event_pk).isdigit():
+            event = Event.objects.filter(pk=int(event_pk)).first()
+
+        if not event:
+            return queryset.none()
+
+        if user_can_access_event_payments(user, event, action='read'):
+            return queryset.filter(event=event).distinct()
+
+        return queryset.filter(event=event, created_by=user).distinct()
 
     def perform_create(self, serializer):
         event = serializer.validated_data.get('event')

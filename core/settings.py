@@ -642,6 +642,12 @@ else:
 
 # Frontend URL — used when building links included in emails (e.g. password reset)
 FRONTEND_URL = get_secret("FRONTEND_URL", "http://localhost:3000")
+# Guard against a misconfigured secret missing the scheme — a schemeless href
+# (e.g. "amdgevents.co.uk/...") is treated as a relative link by many email
+# clients and gets rendered as a broken "[url]text" fallback instead of a link.
+if FRONTEND_URL and not FRONTEND_URL.startswith(("http://", "https://")):
+    FRONTEND_URL = f"https://{FRONTEND_URL}"
+FRONTEND_URL = FRONTEND_URL.rstrip("/")
 
 # Backend base URL — used to resolve relative media URLs in emails and other contexts
 # where an absolute URL is required (e.g. embedding images in transactional emails).
