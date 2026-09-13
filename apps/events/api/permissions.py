@@ -1,5 +1,7 @@
 from rest_framework import permissions
 
+from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
+from apps.organisations.models import OrganisationControl
 
 # ---------------------------------------------------------------------------
 # Helpers shared across permission classes
@@ -19,12 +21,28 @@ def _user_is_event_staff_member(user, event):
 
 def _user_has_administrative_role(user, event):
     """Return True if *user* has an ADMINISTRATIVE EventRole for *event*."""
-    from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
     return EventRoleAssignment.objects.filter(
         user=user,
         event=event,
         role__category=EventRoleCategoryChoices.ADMINISTRATIVE,
     ).exists()
+
+
+def user_can_manage_event_forms(user, event) -> bool:
+    """
+    Return True if *user* may see/manage all form responses for *event*:
+    the event creator, an assigned EventStaff member, a user with an
+    ADMINISTRATIVE role, or Django staff/superuser.
+    """
+    if not user or not getattr(user, 'is_authenticated', False) or event is None:
+        return False
+    if user.is_staff or user.is_superuser:
+        return True
+    return (
+        event.created_by_id == user.id
+        or _user_is_event_staff_member(user, event)
+        or _user_has_administrative_role(user, event)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +167,6 @@ class CanManageSponsorForOrganisation(permissions.BasePermission):
         if event.created_by == user or _user_has_administrative_role(user, event):
             return True
         # Fall back to org-level control
-        from apps.organisations.models import OrganisationControl
         return OrganisationControl.objects.filter(
             user=user,
             organisation=obj.organisation,
