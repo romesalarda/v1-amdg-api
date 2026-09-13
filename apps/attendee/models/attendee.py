@@ -385,14 +385,15 @@ class Attendee(SoftDeleteModel):
         '''
         Mark the attendee as checked in for a specific event.
         '''
+        now = timezone.now()
         attendance, created = EventAttendance.objects.get_or_create(
             event=event,
             attendee=self,
-            defaults={'check_in_by': checked_in_by}
+            defaults={'check_in_by': checked_in_by, 'check_in_time': now}
         )
         if not created:
             attendance.check_in_by = checked_in_by
-            attendance.check_in_at = models.DateTimeField(auto_now=True)
+            attendance.check_in_time = now
             attendance.save()
 
         self.status = AttendeeStatus.CHECKED_IN
@@ -417,9 +418,10 @@ class Attendee(SoftDeleteModel):
         Mark the attendee as checked out for a specific event.
         '''
         try:
+            now = timezone.now()
             attendance = EventAttendance.objects.get(event=event, attendee=self)
-            attendance.checked_out_by = checked_out_by
-            attendance.checked_out_at = models.DateTimeField(auto_now=True)
+            attendance.check_out_by = checked_out_by
+            attendance.check_out_time = now
             attendance.save()
             
             AttendeeAction.objects.create(
