@@ -110,6 +110,117 @@
   </tr>
 </table>
 
+<!-- ── Order items ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 8px;">
+  <tr>
+    <td>
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;
+                   color:#424656;text-transform:uppercase;letter-spacing:0.12em;">Your items</span>
+    </td>
+  </tr>
+</table>
+
+{% for item in order_items %}
+<!-- Item card -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 10px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.07);overflow:hidden;">
+  <tr>
+
+    <!-- Product image -->
+    <td width="84" style="padding:14px 0 14px 16px;vertical-align:middle;">
+      {% if item.image_url %}
+        <img src="{{ item.image_url }}"
+             alt="{{ item.product_title }}"
+             width="56"
+             height="56"
+             style="display:block;width:56px;height:56px;object-fit:cover;
+                    border-radius:6px;border:1px solid rgba(255,255,255,0.10);">
+      {% else %}
+        <!-- Placeholder if no image available -->
+        <div style="width:56px;height:56px;background-color:#283646;border-radius:6px;
+                    border:1px solid rgba(255,255,255,0.08);text-align:center;line-height:56px;">
+          <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:22px;
+                       color:#424656;">&#9633;</span>
+        </div>
+      {% endif %}
+    </td>
+
+    <!-- Product info -->
+    <td style="padding:14px 12px;vertical-align:middle;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;
+                   font-weight:600;color:#d6e4f9;display:block;margin-bottom:4px;
+                   line-height:1.3;">
+        {{ item.product_title }}
+      </span>
+
+      {% if item.variant_label %}
+        <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:12px;
+                     color:#8c90a2;display:block;margin-bottom:6px;">
+          {% if item.color_hex %}
+            <!-- Inline colour swatch -->
+            <span style="display:inline-block;width:10px;height:10px;
+                         background-color:{{ item.color_hex }};border-radius:2px;
+                         border:1px solid rgba(255,255,255,0.20);
+                         vertical-align:middle;margin-right:5px;"></span>
+          {% endif %}
+          {{ item.variant_label }}
+        </span>
+      {% endif %}
+
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11px;
+                   color:#424656;">
+        Qty: {{ item.quantity }} &times; {{ item.unit_price }}
+      </span>
+    </td>
+
+    <!-- Line total -->
+    <td style="padding:14px 16px 14px 8px;vertical-align:middle;text-align:right;
+               white-space:nowrap;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;
+                   font-weight:700;color:#b4c5ff;">
+        {{ item.total_price }}
+      </span>
+    </td>
+
+  </tr>
+</table>
+{% empty %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 10px;background-color:#1e2b3b;border-radius:8px;
+              border:1px solid rgba(255,255,255,0.07);">
+  <tr>
+    <td style="padding:16px 20px;">
+      <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                 color:#8c90a2;font-style:italic;">
+        No items found for this order.
+      </p>
+    </td>
+  </tr>
+</table>
+{% endfor %}
+
+<!-- ── Order total ── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="margin:0 0 28px;background-color:#0f1c2c;border-radius:8px;
+              border:1px solid rgba(180,197,255,0.25);">
+  <tr>
+    <td style="padding:14px 20px;vertical-align:middle;">
+      <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:13px;
+                   font-weight:700;color:#d6e4f9;text-transform:uppercase;letter-spacing:0.06em;">
+        Order total
+      </span>
+    </td>
+    <td style="padding:14px 20px;vertical-align:middle;text-align:right;white-space:nowrap;">
+      <span style="font-family:'Hanken Grotesk','Plus Jakarta Sans',Georgia,serif;
+                   font-size:22px;font-weight:800;color:#b4c5ff;">
+        {{ total_amount }}
+      </span>
+    </td>
+  </tr>
+</table>
+
 <!-- ── Status box ── -->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
        style="margin:0 0 28px;background-color:#0d2b1f;border-radius:8px;
