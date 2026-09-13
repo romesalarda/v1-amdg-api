@@ -2,6 +2,9 @@ from rest_framework import permissions
 
 from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
 from apps.organisations.models import OrganisationControl
+from apps.events.models import EventPermissionAssignment
+from apps.events.models import Event
+from apps.events.models import EventVenue
 
 # ---------------------------------------------------------------------------
 # Helpers shared across permission classes
@@ -182,7 +185,6 @@ class CanManageSponsorForOrganisation(permissions.BasePermission):
             return True
         if event.created_by == user or _user_has_administrative_role(user, event):
             return True
-        from apps.organisations.models import OrganisationControl
         return OrganisationControl.objects.filter(
             user=user,
             organisation=organisation,
@@ -416,7 +418,6 @@ class HasEventPermission(permissions.BasePermission):
     
     def _has_administrative_role(self, user, event):
         """Check if user has ADMINISTRATIVE role for the event."""
-        from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
         
         return EventRoleAssignment.objects.filter(
             user=user,
@@ -432,7 +433,6 @@ class HasEventPermission(permissions.BasePermission):
         - If read_only=True, only allow SAFE_METHODS
         - Otherwise check specific CRUD flags based on request method
         """
-        from apps.events.models import EventPermissionAssignment
         
         if not self.permission_category:
             return False
@@ -557,7 +557,6 @@ class CannotTargetEventCreator(permissions.BasePermission):
 
         # Create paths should resolve event from payload.
         if event is None and request.data.get('event'):
-            from apps.events.models import Event
 
             event_identifier = request.data.get('event')
             event = Event.objects.filter(event_id=event_identifier).first()
@@ -600,7 +599,6 @@ class CanManageEventVenueFloorPlans(permissions.BasePermission):
         event_venue_pk = view.kwargs.get("event_venue_pk")
         if not event_venue_pk:
             return False
-        from apps.events.models import EventVenue
         try:
             ev = EventVenue.objects.select_related("event").get(
                 event_venue_id=event_venue_pk
