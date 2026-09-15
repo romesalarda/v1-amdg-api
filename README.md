@@ -2,7 +2,7 @@
 
 Backend service for AMDG
 
-## 🚀 Tech Stack
+## Tech Stack
 
 - **Framework**: Django 5.1.5 + Django REST Framework
 - **Authentication**: Simple JWT (HTTP-only cookies)
@@ -19,7 +19,7 @@ Backend service for AMDG
 - **Proxy**: Nginx with SSL
 - **CDN**: Cloudflare
 
-## 📋 Prerequisites
+## Prerequisites
 
 - Python 3.10+
 - Docker & Docker Compose
@@ -27,7 +27,7 @@ Backend service for AMDG
 - PostgreSQL (or use Docker)
 - Redis (or use Docker)
 
-## 🛠️ Local Development Setup
+## Local Development Setup
 
 ### 1. Clone the repository
 
@@ -105,7 +105,7 @@ docker-compose exec web python manage.py createsuperuser
 python manage.py createsuperuser
 ```
 
-## 📦 Docker Services
+## Docker Services
 
 The application runs with the following services:
 
@@ -116,7 +116,7 @@ The application runs with the following services:
 - **celery_beat**: Scheduled task dispatcher
 - **nginx**: Reverse proxy with SSL
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -150,7 +150,7 @@ In production, set `USE_SSM=True` and configure these SSM parameters:
 
 **Important**: SSM reads are batched (max 10 per call) to prevent KMS quota exhaustion.
 
-## 🚀 Deployment
+## Deployment
 
 ### GitHub Actions CI/CD
 
@@ -203,7 +203,7 @@ sudo certbot certonly --standalone -d rsalarda.works -d www.rsalarda.works
 # /etc/letsencrypt/live/rsalarda.works/privkey.pem
 ```
 
-## 📚 API Documentation
+## API Documentation
 
 Access interactive API documentation:
 
@@ -211,7 +211,7 @@ Access interactive API documentation:
 - **ReDoc**: `/api/schema/redoc/`
 - **OpenAPI Schema**: `/api/schema/`
 
-## 🔐 Authentication
+## Authentication
 
 The API uses JWT tokens with HTTP-only cookies for security.
 
@@ -246,7 +246,7 @@ POST /api/auth/logout/
 Authorization: Bearer <token>
 ```
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run tests in Docker
@@ -260,7 +260,7 @@ coverage run --source='.' manage.py test
 coverage report
 ```
 
-## 📝 Custom User Model
+## Custom User Model
 
 The project uses a custom user model (`CommunityUser`) with:
 
@@ -270,13 +270,13 @@ The project uses a custom user model (`CommunityUser`) with:
 - Avatar, bio, phone number
 - Email verification flag
 
-## 🔄 WebSockets (Django Channels)
+## WebSockets (Django Channels)
 
 WebSocket support is configured but routes need to be added in:
 - `apps/<your_app>/routing.py`
 - Update `core/asgi.py` to include your routes
 
-## 📧 Email Configuration
+## Email Configuration
 
 **Development**: Emails are printed to console
 
@@ -286,7 +286,7 @@ EMAIL_BACKEND=django_ses.SESBackend
 AWS_SES_REGION_NAME=eu-west-2
 ```
 
-## 💳 Stripe Integration
+## Stripe Integration
 
 Configure Stripe in `.env`:
 ```
@@ -296,7 +296,7 @@ STRIPE_PUBLISHABLE_KEY_TEST=pk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 ```
 
-## 🔍 Monitoring with Sentry
+## Monitoring with Sentry
 
 Enable Sentry by setting:
 ```
@@ -304,7 +304,7 @@ SENTRY_ENABLED=True
 SENTRY_DSN=https://...@sentry.io/...
 ```
 
-## 🛠️ Development Commands
+## Development Commands
 
 ```bash
 # Make migrations
@@ -354,7 +354,7 @@ python manage.py check
 └── README.md             # This file
 ```
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
@@ -375,4 +375,4 @@ python manage.py spectacular --file openapi-schema.yml
 docker compose --file docker-compose.local.yml up -d
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
- docker exec -it postgres_db psql -U postgres -d amdg_db -c "SELECT NOW();"
+docker exec -it postgres_db psql -U postgres -d amdg_db -c "SELECT NOW();"

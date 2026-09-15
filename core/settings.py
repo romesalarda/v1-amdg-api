@@ -63,11 +63,11 @@ if SENTRY_ENABLED and SENTRY_DSN:
 # =============================================================================
 # AWS SSM PARAMETER STORE CONFIGURATION
 # =============================================================================
-USE_SSM = os.getenv("USE_SSM", "False") == "True"
+# USE_SSM = False
 SSM_PARAM_PREFIX = os.getenv("SSM_PARAM_PREFIX", "/prod/amdg/v1/")
 
 ssm_client = None
-_SECRET_CACHE = {}  # In-memory cache for secrets loaded at startup
+# _SECRET_CACHE = {}  # In-memory cache for secrets loaded at startup
 
 # Define all required secret keys upfront (MAX 10 for single batch read)
 REQUIRED_SECRETS = [
@@ -80,61 +80,75 @@ REQUIRED_SECRETS = [
     'DB_PASSWORD',
     'DB_HOST',
     'DB_PORT',
+    'AWS_STORAGE_BUCKET_NAME',
+    'AWS_S3_REGION_NAME',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'STRIPE_TEST_MODE',
+    'STRIPE_SECRET_KEY_TEST',
+    'STRIPE_SECRET_KEY_LIVE',
+    'STRIPE_PUBLISHABLE_KEY_TEST',
+    'STRIPE_PUBLISHABLE_KEY_LIVE',
+    'STRIPE_WEBHOOK_SECRET',
+    'GOOGLE_OAUTH_CLIENT_ID',
+    'GOOGLE_OAUTH_CLIENT_SECRET',
+    'GOOGLE_OAUTH_REDIRECT_URI',
 ]
 
-if USE_SSM:
-    try:
-        import boto3
-        from botocore.exceptions import ClientError, NoCredentialsError
+# if USE_SSM:
+#     try:
+#         print("Using SSM")
+#         import boto3
+#         from botocore.exceptions import ClientError, NoCredentialsError
         
-        ssm_client = boto3.client('ssm', region_name=os.getenv("AWS_REGION", "eu-west-2"))
-    except (ImportError, NoCredentialsError) as e:
-        logger.warning(f"WARNING: Could not initialize SSM client: {e}")
-        USE_SSM = False
+#         ssm_client = boto3.client('ssm', region_name=os.getenv("AWS_REGION", "eu-west-2"))
+#         if ssm_client is None:
+#             raise RuntimeError("ssm client is none")
+#         sts = boto3.client('sts')
+#         sts.get_caller_identity()
+#         print("SSM config complete")
+
+#     except (ImportError, NoCredentialsError) as e:
+#         logger.warning(f"WARNING: Could not initialize SSM client: {e}")
+#         USE_SSM = False
+# else:
+#     print("SSM is not in use, .env only in use")
 
 
-def _chunked(iterable, size=10):
-    """Split an iterable into chunks of specified size (SSM limit is 10 parameters per call)."""
-    iterator = iter(iterable)
-    while chunk := list(zip(*[iterator] * size)):
-        yield [item[0] for item in chunk]
-    # Handle remaining items
-    remaining = list(iterator)
-    if remaining:
-        yield remaining
+# def _chunked(iterable, size=10):
+#     for i in range(0, len(iterable), size):
+#         yield iterable[i:i + size]
 
 
-def _load_all_secrets_from_ssm():
-    """Load ALL secrets from SSM Parameter Store in a single batch call at startup."""
-    if not USE_SSM or not ssm_client:
-        return
+# def _load_all_secrets_from_ssm():
+#     """Load ALL secrets from SSM Parameter Store in a single batch call at startup."""
+#     if not USE_SSM or not ssm_client or _SECRET_CACHE:
+#         print("not loading secrets due to disabled!")
+#         return
     
-    try:
-        param_names = [f"{SSM_PARAM_PREFIX}{secret}" for secret in REQUIRED_SECRETS]
-        
-        # SSM allows max 10 parameters per get_parameters call
-        for chunk in _chunked(param_names, 10):
-            response = ssm_client.get_parameters(
-                Names=chunk,
-                WithDecryption=True
-            )
+#     try:
+#         param_names = [f"{SSM_PARAM_PREFIX}{secret}" for secret in REQUIRED_SECRETS]
+#         # SSM allows max 10 parameters per get_parameters call
+#         for chunk in _chunked(param_names, 10):
+#             response = ssm_client.get_parameters(
+#                 Names=chunk,
+#                 WithDecryption=True
+#             )
+#             for param in response['Parameters']:
+#                 # Strip the prefix to get the secret name
+#                 secret_name = param['Name'].replace(SSM_PARAM_PREFIX, '')
+#                 _SECRET_CACHE[secret_name] = param['Value']
             
-            for param in response['Parameters']:
-                # Strip the prefix to get the secret name
-                secret_name = param['Name'].replace(SSM_PARAM_PREFIX, '')
-                _SECRET_CACHE[secret_name] = param['Value']
-            
-            # Log any invalid parameters
-            if response.get('InvalidParameters'):
-                logger.warning(f"WARNING: Invalid SSM parameters: {response['InvalidParameters']}")
-    
-    except Exception as e:
-        logger.error(f"ERROR loading secrets from SSM: {e}")
-        logger.error("Falling back to environment variables")
+#             # Log any invalid parameters
+#             if response.get('InvalidParameters'):
+#                 logger.warning(f"WARNING: Invalid SSM parameters: {response['InvalidParameters']}")
+#     except Exception as e:
+#         print("an error occured in ssm params")
+#         logger.error(f"ERROR loading secrets from SSM: {e}")
+#         logger.error("Falling back to environment variables")
 
-# Load secrets at startup
-_load_all_secrets_from_ssm()
-
+# # Load secrets at startup
+# _load_all_secrets_from_ssm()
 
 def get_secret(name, default=None):
     """
@@ -142,8 +156,8 @@ def get_secret(name, default=None):
     
     DO NOT call boto3 SSM client here - all secrets are pre-loaded at startup.
     """
-    if USE_SSM and name in _SECRET_CACHE:
-        return _SECRET_CACHE[name]
+    # if USE_SSM and name in _SECRET_CACHE:
+    #     return _SECRET_CACHE[name]
     return os.getenv(name, default)
 
 
@@ -300,26 +314,61 @@ USE_S3 = get_secret("USE_S3", "False") == "True"
 
 if USE_S3:
     # AWS S3 Settings
-    AWS_ACCESS_KEY_ID = get_secret("AWS_ACCESS_KEY_ID", "")
-    AWS_SECRET_ACCESS_KEY = get_secret("AWS_SECRET_ACCESS_KEY", "")
-    AWS_STORAGE_BUCKET_NAME = get_secret("AWS_STORAGE_BUCKET_NAME", "")
-    AWS_S3_REGION_NAME = get_secret("AWS_S3_REGION_NAME", "eu-west-2")
-    AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
-    AWS_S3_OBJECT_PARAMETERS = {
-        'CacheControl': 'max-age=86400',
-    }
-    AWS_DEFAULT_ACL = 'public-read'
-    AWS_LOCATION = 'static'
-    AWS_QUERYSTRING_AUTH = False
+    #AWS_ACCESS_KEY_ID = get_secret("AWS_ACCESS_KEY_ID", "")
+    #AWS_SECRET_ACCESS_KEY = get_secret("AWS_SECRET_ACCESS_KEY", "")
+    #AWS_STORAGE_BUCKET_NAME = get_secret("AWS_STORAGE_BUCKET_NAME", "")
+    #AWS_S3_REGION_NAME = get_secret("AWS_S3_REGION_NAME", "eu-west-2")
+    #AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+    #AWS_S3_OBJECT_PARAMETERS = {
+    #    'CacheControl': 'max-age=86400',
+    #}
+    #AWS_DEFAULT_ACL = 'public-read'
+    #AWS_LOCATION = 'static'
+    #AWS_QUERYSTRING_AUTH = False
 
     # Static files
-    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-    STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/{AWS_LOCATION}/'
+    #STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    #STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/{AWS_LOCATION}/'
 
     # Media files
-    DEFAULT_FILE_STORAGE = 'core.storage_backends.MediaStorage'
-    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+    #DEFAULT_FILE_STORAGE = 'core.storage_backends.MediaStorage'
+    #MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+    AWS_STORAGE_BUCKET_NAME = get_secret("AWS_STORAGE_BUCKET_NAME")
+    AWS_S3_REGION_NAME = get_secret("AWS_S3_REGION_NAME")
 
+    AWS_S3_CUSTOM_DOMAIN = f"{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
+    AWS_S3_OBJECT_PARAMETERS = {
+        "CacheControl": "max-age=86400"
+    }
+    # STATICFILES_STORAGE = "core.storage.StaticStorage"
+    # DEFAULT_FILE_STORAGE = "core.storage.MediaStorage"
+
+    STATIC_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/static/"
+    MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3.S3Storage",
+                "OPTIONS": {
+                    "bucket_name": AWS_STORAGE_BUCKET_NAME,
+                    "region_name": AWS_S3_REGION_NAME,
+            },
+        },
+        "staticfiles": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "OPTIONS": {
+                "bucket_name": AWS_STORAGE_BUCKET_NAME,
+                "region_name": AWS_S3_REGION_NAME,
+                "location": "static",  # Folder in the bucket for static files
+                "file_overwrite": False,
+        },
+    },
+    }
+    
+    AWS_DEFAULT_ACL = None
+    AWS_S3_OBJECT_PARAMETERS = {
+        "CacheControl": "max-age=86400",
+    }
 else:
     # Local static/media files
     STATIC_URL = '/static/'
@@ -335,7 +384,7 @@ STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').exists() else 
 # Variants are stored alongside originals in whatever storage backend is active.
 # Filenames are content-hash-addressed by imagekit — safe for immutable CDN caching.
 IMAGEKIT_DEFAULT_FILE_STORAGE = 'core.storage_backends.VariantMediaStorage'
-IMAGEKIT_CACHEFILE_DIR = 'resources/images/CACHE'
+IMAGEKIT_CACHEFILE_DIR = 'CACHE'
 # Optimistic: generate lazily on first .url access, then cache the file.
 IMAGEKIT_CACHEFILE_DEFAULT_CACHEFILE_STRATEGY = 'imagekit.cachefiles.strategies.Optimistic'
 # =============================================================================
@@ -593,6 +642,12 @@ else:
 
 # Frontend URL — used when building links included in emails (e.g. password reset)
 FRONTEND_URL = get_secret("FRONTEND_URL", "http://localhost:3000")
+# Guard against a misconfigured secret missing the scheme — a schemeless href
+# (e.g. "amdgevents.co.uk/...") is treated as a relative link by many email
+# clients and gets rendered as a broken "[url]text" fallback instead of a link.
+if FRONTEND_URL and not FRONTEND_URL.startswith(("http://", "https://")):
+    FRONTEND_URL = f"https://{FRONTEND_URL}"
+FRONTEND_URL = FRONTEND_URL.rstrip("/")
 
 # Backend base URL — used to resolve relative media URLs in emails and other contexts
 # where an absolute URL is required (e.g. embedding images in transactional emails).
@@ -628,7 +683,7 @@ GOOGLE_OAUTH_REDIRECT_URI = get_secret("GOOGLE_OAUTH_REDIRECT_URI", "")
 # SECURITY SETTINGS
 # =============================================================================
 if not DEBUG:
-    SECURE_SSL_REDIRECT = True
+    SECURE_SSL_REDIRECT = True # WARNING: Set to True in production behind a reverse proxy that handles SSL termination
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True

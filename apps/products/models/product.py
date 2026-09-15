@@ -498,7 +498,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
             context=attendee.get_base_context(),
         ):
             return False
-        if attendee.booking.is_cancelled: # 3. attendee's booking is cancelled
+        if getattr(attendee.booking, 'is_cancelled', False): # 3. attendee's booking is cancelled
             return False
         return True
     
@@ -540,7 +540,7 @@ class ProductVariant(ProductMetaClass): # same as product but different size/col
                 raise exceptions.ValidationError({"message": "Insufficient stock for the selected product variant.", "code": "insufficient_stock"})
             return False
         
-        if attendee.booking.is_cancelled:
+        if getattr(attendee, 'booking', None) and attendee.booking.is_cancelled:
             if raise_exception:
                 raise exceptions.ValidationError({"message": "Cannot purchase: Attendee's booking is cancelled.", "code": "booking_cancelled"})
             return False

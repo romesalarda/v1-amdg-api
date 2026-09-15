@@ -869,9 +869,8 @@ class Command(BaseCommand):
             obj, created = EventType.objects.get_or_create(
                 code=data['code'],
                 defaults={
-                    'name': data['name'],
+                    'title': data['name'],
                     'description': data['description'],
-                    'active': True,
                 },
             )
             self._log('EventType', data['name'], created)

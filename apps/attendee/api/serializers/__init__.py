@@ -72,6 +72,9 @@ from .checkin import (
     BulkDeleteCheckInsSerializer,
     BulkAttendeeStatusUpdateSerializer,
     AttendeeStatusUpdateSerializer,
+    UpdatedCountResponseSerializer,
+    DeletedCountResponseSerializer,
+    CheckInLogDatesResponseSerializer,
     AttendeeRosterFilterSerializer,
     AttendeeRosterRequestSerializer,
     AttendeeRosterItemSerializer,
@@ -147,4 +150,7 @@ __all__ = [
     'BulkDeleteCheckInsSerializer',
     'BulkAttendeeStatusUpdateSerializer',
     'AttendeeStatusUpdateSerializer',
+    'UpdatedCountResponseSerializer',
+    'DeletedCountResponseSerializer',
+    'CheckInLogDatesResponseSerializer',
 ]

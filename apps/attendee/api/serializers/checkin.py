@@ -278,6 +278,31 @@ class AttendeeStatusUpdateSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=CheckInAction.choices)
 
 
+# ============================================================================
+# HTTP — CUSTOM ACTION RESPONSES
+# ============================================================================
+
+class UpdatedCountResponseSerializer(serializers.Serializer):
+    """Response for bulk-status and attendee-status actions."""
+
+    updated = serializers.IntegerField()
+
+
+class DeletedCountResponseSerializer(serializers.Serializer):
+    """Response for the bulk-delete-logs action."""
+
+    deleted = serializers.IntegerField()
+
+
+class CheckInLogDatesResponseSerializer(serializers.Serializer):
+    """Paginated response for the log-dates action."""
+
+    count = serializers.IntegerField()
+    next = serializers.CharField(allow_null=True)
+    previous = serializers.CharField(allow_null=True)
+    results = serializers.ListField(child=serializers.DateField())
+
+
 class AttendeeRosterFilterSerializer(serializers.Serializer):
     """
     Validates attendee.filter.set and the filters sub-field in

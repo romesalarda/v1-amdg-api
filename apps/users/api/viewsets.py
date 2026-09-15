@@ -1093,12 +1093,14 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             logger.info(f"Setting auth cookies for user: {user_email}")
             
             # Set HTTP-only cookies for tokens
+            _samesite = 'None' if not settings.DEBUG else 'Lax'
+            access_token = response.data['access']
             response.set_cookie(
                 key='access',
-                value=response.data['access'],
+                value=access_token,
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 domain=None,  # Allow localhost in dev
                 max_age=60 * 15  # 15 minutes
             )
@@ -1107,15 +1109,17 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 value=response.data['refresh'],
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 domain=None,  # Allow localhost in dev
                 max_age=60 * 60 * 24 * 7  # 7 days
             )
             
-            # Remove tokens from response body for security
+            # Return access token in body so SPAs can use Bearer header auth
+            # (cross-origin cookie sending is unreliable; Bearer token is not)
             # Keep user data only
             response.data = {
                 'user': response.data.get('user'),
+                'access': access_token,
                 'message': 'Login successful.'
             }
         
@@ -1173,18 +1177,33 @@ class CustomTokenRefreshView(TokenRefreshView):
         response = super().post(request, *args, **kwargs)
         
         if response.status_code == 200:
+            _samesite = 'None' if not settings.DEBUG else 'Lax'
+            access_token = response.data['access']
             # Update access token cookie
             response.set_cookie(
                 key='access',
-                value=response.data['access'],
+                value=access_token,
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 max_age=60 * 15  # 15 minutes
             )
-            
-            # Remove token from response body
-            response.data = {'message': 'Token refreshed successfully.'}
+
+            # Update refresh cookie — required because ROTATE_REFRESH_TOKENS=True
+            # issues a new refresh token each cycle and blacklists the old one.
+            # Without this the browser keeps the stale (blacklisted) refresh cookie.
+            if 'refresh' in response.data:
+                response.set_cookie(
+                    key='refresh',
+                    value=response.data['refresh'],
+                    httponly=True,
+                    secure=not settings.DEBUG,
+                    samesite=_samesite,
+                    max_age=60 * 60 * 24 * 7  # 7 days
+                )
+
+            # Return new access token in body for Bearer header auth
+            response.data = {'access': access_token, 'message': 'Token refreshed successfully.'}
         
         return response
 
@@ -1281,8 +1300,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
         ```
     """
     permission_classes = [permissions.AllowAny]
-    
-    # Google OAuth configuration
+    authentication_classes = []  # No session auth — avoids spurious CSRF enforcement on public OAuth endpoints
     GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
     GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
     GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
@@ -1453,12 +1471,13 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
             
             # Set HTTP-only cookies
             logger.info(f"Setting auth cookies for Google OAuth user: {user.email}")
+            _samesite = 'None' if not settings.DEBUG else 'Lax'
             response.set_cookie(
                 key='access',
                 value=str(refresh.access_token),
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 domain=None,  # Allow localhost in dev
                 max_age=60 * 15  # 15 minutes
             )
@@ -1467,7 +1486,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
                 value=str(refresh),
                 httponly=True,
                 secure=not settings.DEBUG,
-                samesite='Lax',
+                samesite=_samesite,
                 domain=None,  # Allow localhost in dev
                 max_age=60 * 60 * 24 * 7  # 7 days
             )
