@@ -67,9 +67,7 @@ if SENTRY_ENABLED and SENTRY_DSN:
 SSM_PARAM_PREFIX = os.getenv("SSM_PARAM_PREFIX", "/prod/amdg/v1/")
 
 ssm_client = None
-# _SECRET_CACHE = {}  # In-memory cache for secrets loaded at startup
 
-# Define all required secret keys upfront (MAX 10 for single batch read)
 REQUIRED_SECRETS = [
     'SECRET_KEY',
     'DEBUG',
@@ -95,69 +93,12 @@ REQUIRED_SECRETS = [
     'GOOGLE_OAUTH_REDIRECT_URI',
 ]
 
-# if USE_SSM:
-#     try:
-#         print("Using SSM")
-#         import boto3
-#         from botocore.exceptions import ClientError, NoCredentialsError
-        
-#         ssm_client = boto3.client('ssm', region_name=os.getenv("AWS_REGION", "eu-west-2"))
-#         if ssm_client is None:
-#             raise RuntimeError("ssm client is none")
-#         sts = boto3.client('sts')
-#         sts.get_caller_identity()
-#         print("SSM config complete")
-
-#     except (ImportError, NoCredentialsError) as e:
-#         logger.warning(f"WARNING: Could not initialize SSM client: {e}")
-#         USE_SSM = False
-# else:
-#     print("SSM is not in use, .env only in use")
-
-
-# def _chunked(iterable, size=10):
-#     for i in range(0, len(iterable), size):
-#         yield iterable[i:i + size]
-
-
-# def _load_all_secrets_from_ssm():
-#     """Load ALL secrets from SSM Parameter Store in a single batch call at startup."""
-#     if not USE_SSM or not ssm_client or _SECRET_CACHE:
-#         print("not loading secrets due to disabled!")
-#         return
-    
-#     try:
-#         param_names = [f"{SSM_PARAM_PREFIX}{secret}" for secret in REQUIRED_SECRETS]
-#         # SSM allows max 10 parameters per get_parameters call
-#         for chunk in _chunked(param_names, 10):
-#             response = ssm_client.get_parameters(
-#                 Names=chunk,
-#                 WithDecryption=True
-#             )
-#             for param in response['Parameters']:
-#                 # Strip the prefix to get the secret name
-#                 secret_name = param['Name'].replace(SSM_PARAM_PREFIX, '')
-#                 _SECRET_CACHE[secret_name] = param['Value']
-            
-#             # Log any invalid parameters
-#             if response.get('InvalidParameters'):
-#                 logger.warning(f"WARNING: Invalid SSM parameters: {response['InvalidParameters']}")
-#     except Exception as e:
-#         print("an error occured in ssm params")
-#         logger.error(f"ERROR loading secrets from SSM: {e}")
-#         logger.error("Falling back to environment variables")
-
-# # Load secrets at startup
-# _load_all_secrets_from_ssm()
-
 def get_secret(name, default=None):
     """
     Get a secret from the cache (populated at startup) or fall back to environment variables.
     
-    DO NOT call boto3 SSM client here - all secrets are pre-loaded at startup.
+    All secrets are pre-loaded at startup.
     """
-    # if USE_SSM and name in _SECRET_CACHE:
-    #     return _SECRET_CACHE[name]
     return os.getenv(name, default)
 
 
@@ -313,26 +254,7 @@ USE_TZ = True
 USE_S3 = get_secret("USE_S3", "False") == "True"
 
 if USE_S3:
-    # AWS S3 Settings
-    #AWS_ACCESS_KEY_ID = get_secret("AWS_ACCESS_KEY_ID", "")
-    #AWS_SECRET_ACCESS_KEY = get_secret("AWS_SECRET_ACCESS_KEY", "")
-    #AWS_STORAGE_BUCKET_NAME = get_secret("AWS_STORAGE_BUCKET_NAME", "")
-    #AWS_S3_REGION_NAME = get_secret("AWS_S3_REGION_NAME", "eu-west-2")
-    #AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
-    #AWS_S3_OBJECT_PARAMETERS = {
-    #    'CacheControl': 'max-age=86400',
-    #}
-    #AWS_DEFAULT_ACL = 'public-read'
-    #AWS_LOCATION = 'static'
-    #AWS_QUERYSTRING_AUTH = False
 
-    # Static files
-    #STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-    #STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/{AWS_LOCATION}/'
-
-    # Media files
-    #DEFAULT_FILE_STORAGE = 'core.storage_backends.MediaStorage'
-    #MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
     AWS_STORAGE_BUCKET_NAME = get_secret("AWS_STORAGE_BUCKET_NAME")
     AWS_S3_REGION_NAME = get_secret("AWS_S3_REGION_NAME")
 
@@ -340,8 +262,6 @@ if USE_S3:
     AWS_S3_OBJECT_PARAMETERS = {
         "CacheControl": "max-age=86400"
     }
-    # STATICFILES_STORAGE = "core.storage.StaticStorage"
-    # DEFAULT_FILE_STORAGE = "core.storage.MediaStorage"
 
     STATIC_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/static/"
     MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
