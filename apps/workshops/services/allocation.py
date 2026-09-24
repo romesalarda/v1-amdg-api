@@ -39,8 +39,6 @@ def _create_or_update_registration(
     """
     Get-or-create a WorkshopRegistration, updating status/method when it already exists.
     """
-    if WorkshopRegistration.objects.filter(workshop=workshop, attendee=attendee).exists():
-        return False
 
     registration, _ = WorkshopRegistration.objects.get_or_create(
         workshop=workshop,

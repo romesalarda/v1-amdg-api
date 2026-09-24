@@ -189,7 +189,7 @@ class WorkshopListCreateTest(BaseWorkshopTestCase):
         payload = {
             'title': 'New Workshop',
             'description': 'A brand new workshop.',
-            'event': self.event.pk,
+            'event': self.event.event_id,
             'date': (timezone.now() + timedelta(days=35)).isoformat(),
             'status': WorkshopStatus.DRAFT,
             'allocation_mode': AllocationMode.FCFS,
@@ -340,7 +340,7 @@ class WorkshopRegistrationCRUDTest(BaseWorkshopTestCase):
         self.auth_admin()
         payload = {
             'workshop': str(self.workshop.pk),
-            'attendee': str(self.attendee.pk),
+            'attendee': str(self.attendee.attendee_id),
         }
         response = self.client.post(REGISTRATIONS_URL, payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -360,7 +360,7 @@ class WorkshopRegistrationCRUDTest(BaseWorkshopTestCase):
         self.auth_admin()
         payload = {
             'workshop': str(self.workshop.pk),
-            'attendee': str(self.attendee.pk),
+            'attendee': str(self.attendee.attendee_id),
         }
         response = self.client.post(REGISTRATIONS_URL, payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -371,7 +371,7 @@ class WorkshopRegistrationCRUDTest(BaseWorkshopTestCase):
 
     def test_duplicate_registration_returns_400(self):
         self.auth_admin()
-        payload = {'workshop': str(self.workshop.pk), 'attendee': str(self.attendee.pk)}
+        payload = {'workshop': str(self.workshop.pk), 'attendee': str(self.attendee.attendee_id)}
         self.client.post(REGISTRATIONS_URL, payload, format='json')
         # Second attempt
         response = self.client.post(REGISTRATIONS_URL, payload, format='json')
@@ -463,8 +463,8 @@ class WorkshopInterestSubmissionCRUDTest(BaseWorkshopTestCase):
 
     def _submission_payload(self):
         return {
-            'event': str(self.event.pk),
-            'attendee': str(self.attendee.pk),
+            'event': str(self.event.event_id),
+            'attendee': str(self.attendee.attendee_id),
             'ranks': [
                 {'workshop': str(self.workshop.pk), 'rank': 1},
             ],
@@ -480,7 +480,9 @@ class WorkshopInterestSubmissionCRUDTest(BaseWorkshopTestCase):
 
     def test_create_submission_creates_rank(self):
         self.auth_admin()
-        self.client.post(INTEREST_URL, self._submission_payload(), format='json')
+        detail = self.client.post(INTEREST_URL, self._submission_payload(), format='json')
+
+        self.assertEqual(detail.status_code, status.HTTP_201_CREATED)
         sub = WorkshopInterestSubmission.objects.get(event=self.event, attendee=self.attendee)
         self.assertEqual(sub.ranks.count(), 1)
 
@@ -491,8 +493,8 @@ class WorkshopInterestSubmissionCRUDTest(BaseWorkshopTestCase):
             date=timezone.now() + timedelta(days=31), status=WorkshopStatus.OPEN,
         )
         payload = {
-            'event': str(self.event.pk),
-            'attendee': str(self.attendee.pk),
+            'event': str(self.event.event_id),
+            'attendee': str(self.attendee.attendee_id),
             'ranks': [
                 {'workshop': str(self.workshop.pk), 'rank': 1},
                 {'workshop': str(ws2.pk), 'rank': 1},  # duplicate rank value
@@ -510,8 +512,8 @@ class WorkshopInterestSubmissionCRUDTest(BaseWorkshopTestCase):
         )
         self.auth_admin()
         payload = {
-            'event': str(self.event.pk),
-            'attendee': str(self.attendee.pk),
+            'event': str(self.event.event_id),
+            'attendee': str(self.attendee.attendee_id),
             'ranks': [{'workshop': str(other_ws.pk), 'rank': 1}],
         }
         response = self.client.post(INTEREST_URL, payload, format='json')
