@@ -1,8 +1,8 @@
 from django.db import models
 from django.contrib.auth import get_user_model
-from timezone_field import TimeZoneField
-
 from django.utils.translation import gettext_lazy as _
+
+from timezone_field import TimeZoneField
 
 from core.utils.validators import PhoneNumberValidator
 User = get_user_model()

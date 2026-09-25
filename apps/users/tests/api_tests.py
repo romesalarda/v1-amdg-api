@@ -16,14 +16,15 @@ Test Classes:
 Author: AMDG Platform Team
 Version: 1.0.0
 """
-from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 from django.urls import reverse
-from datetime import datetime, timedelta
-from django.utils import timezone
-import json
+
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+from apps.users.services.tokens import email_verification_token
+
 
 from apps.users.models import Profile
 
@@ -694,9 +695,10 @@ class EmailVerificationTestCase(APITestCase):
     
     def test_email_verification_success(self):
         """Test successful email verification."""
+        
         data = {
-            'email': self.user.email,
-            'token': 'valid-token-123'  # TODO: Generate real token
+            'uid': urlsafe_base64_encode(force_bytes(self.user.pk)),
+            'token': email_verification_token.make_token(self.user),
         }
         
         response = self.client.post(self.verify_url, data, format='json')
@@ -708,16 +710,20 @@ class EmailVerificationTestCase(APITestCase):
         self.assertTrue(self.user.email_verified)
         self.assertIsNotNone(self.user.email_verified_at)
     
-    def test_email_verification_with_invalid_email(self):
-        """Test email verification fails with non-existent email."""
+    def test_email_verification_with_invalid_token(self):
+        """Test email verification fails with a bogus token/uid pair."""
+        
         data = {
-            'email': 'nonexistent@example.com',
-            'token': 'valid-token-123'
+            'uid': urlsafe_base64_encode(force_bytes(self.user.pk)),
+            'token': 'invalid-token-123',
         }
         
         response = self.client.post(self.verify_url, data, format='json')
         
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.email_verified)
 
 
 class UserOrderingAndPaginationTestCase(APITestCase):

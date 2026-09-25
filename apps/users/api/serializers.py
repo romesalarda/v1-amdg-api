@@ -70,6 +70,14 @@ class ProfileSerializer(serializers.HyperlinkedModelSerializer):
         view_name='users:user-detail',
         read_only=True
     )
+
+    user_id = serializers.PrimaryKeyRelatedField(
+        source='user',
+        queryset=User.objects.all(),
+        write_only=True,
+        help_text="ID of the associated user"
+    )
+    
     area_from = serializers.PrimaryKeyRelatedField(
         queryset=AreaLocation.objects.all(),
         required=False,
@@ -95,9 +103,9 @@ class ProfileSerializer(serializers.HyperlinkedModelSerializer):
         fields = (
             'url', 'user', 'preferred_name', 'profile_picture', 'profile_picture_url',
             'profile_picture_uploaded_at', 'area_from', 'area_from_details',
-            'contact_phone', 'preferred_language', 'timezone', 'full_name',
+            'preferred_language', 'timezone', 'full_name',
             'created_at', 'updated_at', 'is_public', 'is_clergy_or_religious',
-            'ecclesiastical_status', 'ecclesiastical_rank'
+            'ecclesiastical_status', 'ecclesiastical_rank', 'user_id',
         )
         read_only_fields = (
             'url', 'user', 'full_name', 'profile_picture_uploaded_at',
@@ -158,7 +166,7 @@ class ProfileSerializer(serializers.HyperlinkedModelSerializer):
             return obj.profile_picture.url
         return None
     
-    def validate_profile_picture(self, value):
+    def validate_profile_picture(self, value: Optional[Any]) -> Optional[Any]:
         """
         Validate profile picture upload.
         
@@ -205,6 +213,16 @@ class ProfileSerializer(serializers.HyperlinkedModelSerializer):
         if value and not value.strip():
             raise serializers.ValidationError("Phone number cannot be empty.")
         return value
+
+class UnrestrictedProfileSerializer(ProfileSerializer):
+    '''
+    Serializer for unrestricted view of user profile.
+    
+    Provides full profile information including contact phone for the profile owner.
+    '''
+    class Meta(ProfileSerializer.Meta):
+        fields = ProfileSerializer.Meta.fields + ('contact_phone',)
+
 
 
 class UserSerializer(serializers.HyperlinkedModelSerializer):

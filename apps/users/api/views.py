@@ -6,7 +6,6 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.db import connection
 from django.core.cache import cache
-import redis
 from django.conf import settings
 from drf_spectacular.utils import extend_schema
 
