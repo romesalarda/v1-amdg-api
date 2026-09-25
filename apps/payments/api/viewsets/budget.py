@@ -25,9 +25,13 @@ from apps.payments.api.serializers import (
 from apps.payments.api.filtersets import BudgetProposalFilterSet
 
 from apps.payments.api.permissions import IsBudgetProposalAccessible, user_can_access_event_payments
+from apps.events.models import Event
 from apps.common.pagination import StandardPagination
-
 from apps.payments.api.permissions import user_can_manage_credits
+from apps.utils.querying import get_event_or_url_safe_title
+
+from django.db.models import Sum as DbSum
+
 
 import logging
 
@@ -95,7 +99,8 @@ class BudgetProposalViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         For LIST only: no event filter -> only proposals the user submitted;
-        event/event_url_safe_title filter -> all proposals for that event if authorized, else own only.
+        event/event_url_safe_title/event_id filter -> all proposals for that event if authorized, else own only.
+        Actual event filtering is left to BudgetProposalFilterSet; this only scopes by permission.
         Detail actions rely on object-level permissions.
         """
         queryset = super().get_queryset()
@@ -107,27 +112,39 @@ class BudgetProposalViewSet(viewsets.ModelViewSet):
         if self.action != 'list':
             return queryset
 
-        from apps.events.models import Event
+        event_requested, event = self._get_requested_event()
 
-        event_pk = self.request.query_params.get('event')
-        event_slug = self.request.query_params.get('event_url_safe_title')
-
-        if not event_pk and not event_slug:
+        if not event_requested:
             return queryset.filter(proposed_by=user).distinct()
-
-        event = None
-        if event_pk and str(event_pk).isdigit():
-            event = Event.objects.filter(pk=int(event_pk)).first()
-        elif event_slug:
-            event = Event.objects.filter(url_safe_title=event_slug).first()
 
         if not event:
             return queryset.none()
 
         if user_can_access_event_payments(user, event, action='read'):
-            return queryset.filter(event=event).distinct()
+            return queryset.distinct()
 
-        return queryset.filter(event=event, proposed_by=user).distinct()
+        return queryset.filter(proposed_by=user).distinct()
+
+    def _get_requested_event(self):
+        """Resolve the Event implied by the filterset's event/event_url_safe_title/event_id params, if any.
+
+        Returns (event_requested, event) where event_requested is True if any of those params were supplied.
+        """
+        params = self.request.query_params
+        event_pk = params.get('event')
+        event_slug = params.get('event_url_safe_title')
+        event_uuid = params.get('event_id')
+
+        if not event_pk and not event_slug and not event_uuid:
+            return False, None
+
+        if event_pk and str(event_pk).isdigit():
+            return True, Event.objects.filter(pk=int(event_pk)).first()
+        if event_slug:
+            return True, Event.objects.filter(url_safe_title=event_slug).first()
+        if event_uuid:
+            return True, Event.objects.filter(event_id=event_uuid).first()
+        return True, None
 
     def perform_create(self, serializer):
         event = serializer.validated_data.get('event')
@@ -354,13 +371,13 @@ class BudgetProposalViewSet(viewsets.ModelViewSet):
         summary='Per-event budget statistics',
         description=(
             'Aggregates budget statistics across all proposals for an event. '
-            'Accepts event_id (UUID) as a required query parameter. '
+            'Accepts event_id as a required query parameter, either the Event UUID or its url_safe_title. '
             'Real inbound is read-only from completed payments — never modified.'
         ),
         parameters=[
             OpenApiParameter(
-                name='event_id', type=OpenApiTypes.UUID, location=OpenApiParameter.QUERY,
-                description='Event UUID to aggregate budget statistics for', required=True,
+                name='event_id', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY,
+                description='Event UUID or url_safe_title to aggregate budget statistics for', required=True,
             )
         ],
         responses={200: EventBudgetStatisticsSerializer},
@@ -368,12 +385,14 @@ class BudgetProposalViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['get'], url_path='event-statistics')
     def event_statistics(self, request):
-        from django.db.models import Sum as DbSum
         event_id = request.query_params.get('event_id')
         if not event_id:
             raise ValidationError({'event_id': 'This query parameter is required.'})
 
-        proposals = self.get_queryset().filter(event__url_safe_title=event_id).select_related('event').prefetch_related('credit_expenses', 'debit_expenses')
+        # event_id accepts either the Event UUID or its url_safe_title
+        event = get_event_or_url_safe_title(event_id)
+
+        proposals = self.get_queryset().filter(event=event).select_related('event').prefetch_related('credit_expenses', 'debit_expenses')
 
         if not proposals:
             return Response({'detail': 'No budget proposals found for this event.'}, status=status.HTTP_404_NOT_FOUND)

@@ -117,7 +117,7 @@ class PaymentFilterSet(filters.FilterSet):
         field_name='user__id',
         help_text="Filter by user ID"
     )
-    user__username = filters.CharFilter(
+    user__username = filters.CharFilter( # TODO: fkag to remove this filter if not needed
         field_name='user__username',
         lookup_expr='icontains',
         help_text="Filter by username (case-insensitive partial match)"
@@ -1156,7 +1156,7 @@ class StockAuditLogFilterSet(filters.FilterSet):
 
     event_id = filters.CharFilter(
         method='filter_event_id',
-        help_text='Filter by event URL-safe title inferred from payment association'
+        help_text='Filter by event_id title inferred from payment association'
     )
 
     payment_id = filters.UUIDFilter(
@@ -1200,7 +1200,7 @@ class StockAuditLogFilterSet(filters.FilterSet):
             return queryset
 
         payment_ids = Payment.objects.filter(
-            event__url_safe_title=value
+            event__event_id=value
         ).values_list('payment_id', flat=True)
         return queryset.filter(payment_id__in=payment_ids)
 
@@ -1304,6 +1304,14 @@ class BudgetProposalFilterSet(filters.FilterSet):
         lookup_expr='icontains',
         help_text='Filter by event URL safe title',
     )
+
+    event_id = filters.UUIDFilter(
+        field_name='event__event_id',
+        help_text='Filter by event ID (UUID)',
+        lookup_expr='exact',
+        distinct=True,
+    )
+
     verification_status = filters.MultipleChoiceFilter(
         field_name='verification_status',
         choices=VerificationStatus.choices,

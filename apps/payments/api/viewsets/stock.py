@@ -4,9 +4,10 @@ from django.db.models import OuterRef, Subquery
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
-    OpenApiParameter,
-    OpenApiResponse,
-    inline_serializer,
+)
+
+from apps.payments.api.permissions import (
+    resolve_event_from_request, user_can_access_event_payments,
 )
 
 from apps.products.models import StockAuditLog
@@ -60,14 +61,9 @@ class StockAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             payment_reference_annotated=Subquery(payment_subquery.values('payment_reference')[:1]),
         )
 
-        event = Event.objects.filter(url_safe_title=self.request.query_params.get('event_id')).first()
+        event = resolve_event_from_request(self.request)
 
-        if event:
-            if not event.is_staff(user):
-                return queryset.filter(payment_owner_id=user.id)
-
-        if self.action == 'list' and not self.request.query_params.get('event_id'):
-            return queryset.none()
+        if event and user_can_access_event_payments(user, event):
+            return queryset.filter(payment_event_id=event.event_id).distinct()
         
-
-        return queryset
+        return queryset.none()
