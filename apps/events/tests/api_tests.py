@@ -26,7 +26,9 @@ from apps.events.models import (
     EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
 )
 from apps.common.models import AvailabilityWindow, Resource, AvailabilityTypeChoices, ResourceTypeChoices
-from apps.organisations.models import Organisation
+from apps.organisations.models import (
+    Organisation, OrganisationControl, Leader, LeaderPermission,
+)
 from apps.attendee.models import Attendee
 from apps.attendee.models import AttendeeRelationship
 from apps.locations.models import POI, Venue, POITypeChoice
@@ -266,6 +268,104 @@ class EventAPITest(BaseEventAPITestCase):
         response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/settings/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['payment_enabled'])
+
+    def test_event_policy_public_read_returns_effective_values(self):
+        response = self.client.get(f'/api/event/list/{self.event.url_safe_title}/policy/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('effective_policy', response.data)
+        self.assertTrue(response.data['allow_sponsors'])
+        self.assertTrue(response.data['effective_policy']['allow_sponsors'])
+
+    def test_event_policy_write_requires_organisation_control(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.patch(
+            f'/api/event/list/{self.event.url_safe_title}/policy/',
+            {'allow_sponsors': False},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_event_policy_controller_can_update(self):
+        OrganisationControl.objects.create(
+            organisation=self.organisation,
+            user=self.user,
+            added_by=self.user,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.patch(
+            f'/api/event/list/{self.event.url_safe_title}/policy/',
+            {'allow_sponsors': False},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['allow_sponsors'])
+        self.assertFalse(response.data['effective_policy']['allow_sponsors'])
+
+    def test_event_policy_manager_can_update(self):
+        manager = User.objects.create_user(
+            username='policy-manager',
+            email='policy-manager@example.com',
+            password='testpass123',
+        )
+        leader = Leader.objects.create(
+            user=manager,
+            target_type=ContentType.objects.get_for_model(self.organisation),
+            target_id=self.organisation.pk,
+            organisation=self.organisation,
+            added_by=self.user,
+        )
+        LeaderPermission.objects.create(
+            leader=leader,
+            permission_code='allow_policy_management',
+            allow_update=True,
+        )
+        self.client.force_authenticate(user=manager)
+
+        response = self.client.patch(
+            f'/api/event/list/{self.event.url_safe_title}/policy/',
+            {'require_long_description': True},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['require_long_description'])
+
+    def test_event_policy_cannot_loosen_organisation_baseline(self):
+        baseline = self.organisation.event_policy
+        baseline.allow_sponsors = False
+        baseline.save()
+        OrganisationControl.objects.create(
+            organisation=self.organisation,
+            user=self.user,
+            added_by=self.user,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.patch(
+            f'/api/event/list/{self.event.url_safe_title}/policy/',
+            {'allow_sponsors': True},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_sponsor_creation_rejected_when_event_policy_disables_sponsors(self):
+        self.event.policy.allow_sponsors = False
+        self.event.policy.save()
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.post(
+            f'/api/event/list/{self.event.url_safe_title}/sponsors/',
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class EventPaymentSummaryAPITest(BaseEventAPITestCase):

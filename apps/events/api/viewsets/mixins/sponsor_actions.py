@@ -132,6 +132,12 @@ class EventSponsorActionsMixin:
                 return self.get_paginated_response(serializer.data)
             return Response(serializer.data)
 
+        if not event.policy.get_effective_values()['allow_sponsors']:
+            return Response(
+                {"detail": "Sponsorships are disabled by the event policy."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # POST
         payload = request.data.copy()
         payload.setdefault("event", event.id)
@@ -342,6 +348,12 @@ class EventSponsorActionsMixin:
             if page is not None:
                 return self.get_paginated_response(serializer.data)
             return Response(serializer.data)
+
+        if not event.policy.get_effective_values()['allow_sponsors']:
+            return Response(
+                {"detail": "Sponsorships are disabled by the event policy."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         payload = request.data.copy()
         payload.setdefault("event", event.id)

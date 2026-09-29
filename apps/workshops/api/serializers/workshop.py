@@ -113,6 +113,13 @@ class WorkshopCreateUpdateSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
+        event = attrs.get('event') or (self.instance.event if self.instance else None)
+        if event and (self.instance is None or event != self.instance.event):
+            if not event.policy.get_effective_values()['allow_workshops']:
+                raise serializers.ValidationError({
+                    'event': 'This event does not allow workshops.'
+                })
+
         opens = attrs.get('registration_opens_at') or (self.instance and self.instance.registration_opens_at)
         closes = attrs.get('registration_closes_at') or (self.instance and self.instance.registration_closes_at)
         if opens and closes and opens >= closes:

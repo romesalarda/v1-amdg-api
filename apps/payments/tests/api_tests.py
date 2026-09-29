@@ -795,6 +795,29 @@ class PaymentMethodAPITestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(PaymentMethod.objects.count(), 2)
+
+    def test_create_payment_method_rejected_by_event_policy(self):
+        baseline = self.organisation.event_policy
+        baseline.bank_transfers_are_allowed = False
+        baseline.save()
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payments:paymentmethod-list')
+        data = {
+            'title': 'Disallowed Bank Transfer',
+            'event': self.event.id,
+            'method_type': PaymentMethodTypeChoices.BANK_TRANSFER,
+            'is_active': True,
+            'provided_details': {
+                'account_name': 'Test',
+                'sort_code': '12-34-56',
+                'account_number': '12345678',
+            },
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('method_type', response.data)
     
     def test_filter_payment_methods_by_type(self):
         """Test filtering payment methods by type."""

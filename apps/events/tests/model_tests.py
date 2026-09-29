@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db import IntegrityError
 from datetime import timedelta, date
+from decimal import Decimal
 import uuid
 
 from apps.events.models import (
@@ -519,6 +520,47 @@ class EventSettingsModelTest(TestCase):
         
         self.assertIn(self.event.display_code, repr(settings))
         self.assertIn('payment_enabled=True', repr(settings))
+
+    def test_event_policy_snapshots_baseline_and_respects_later_restrictions(self):
+        baseline = self.organisation.event_policy
+        baseline.allow_sponsors = True
+        baseline.max_attendees_per_event = 0
+        baseline.max_package_price = Decimal('1000.00')
+        baseline.save()
+
+        event = Event.objects.create(
+            title='Policy Snapshot Event',
+            display_code='PSE2025',
+            created_by=self.user,
+            event_type=self.event_type,
+            start_datetime=timezone.now() + timedelta(days=30),
+            end_datetime=timezone.now() + timedelta(days=32),
+            organisation=self.organisation,
+        )
+        policy = event.policy
+        self.assertTrue(policy.allow_sponsors)
+        self.assertEqual(policy.max_attendees_per_event, 0)
+
+        baseline.allow_sponsors = False
+        baseline.max_attendees_per_event = 20
+        baseline.max_package_price = Decimal('100.00')
+        baseline.save()
+
+        effective = policy.get_effective_values()
+        self.assertTrue(policy.allow_sponsors)
+        self.assertFalse(effective['allow_sponsors'])
+        self.assertEqual(effective['max_attendees_per_event'], 20)
+        self.assertEqual(effective['max_package_price'], Decimal('100.00'))
+
+    def test_event_policy_limit_caps_unlimited_event_capacity(self):
+        policy = self.event.policy
+        policy.max_attendees_per_event = 2
+        policy.save()
+        self.event.maximum_attendance = None
+        self.event.save(update_fields=['maximum_attendance'])
+
+        self.assertEqual(self.event.effective_maximum_attendance, 2)
+        self.assertEqual(self.event.available_capacity, 2)
 
 
 class EventAuthorizationModelTest(TestCase):

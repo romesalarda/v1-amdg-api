@@ -199,6 +199,25 @@ class WorkshopListCreateTest(BaseWorkshopTestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Workshop.objects.filter(title='New Workshop').count(), 1)
 
+    def test_create_rejected_when_event_policy_disables_workshops(self):
+        self.event.policy.allow_workshops = False
+        self.event.policy.save()
+        self.auth_admin()
+        payload = {
+            'title': 'Disallowed Workshop',
+            'description': 'Not permitted for this event.',
+            'event': self.event.event_id,
+            'date': (timezone.now() + timedelta(days=35)).isoformat(),
+            'status': WorkshopStatus.DRAFT,
+            'allocation_mode': AllocationMode.FCFS,
+            'capacity': 20,
+        }
+
+        response = self.client.post(WORKSHOPS_URL, payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Workshop.objects.filter(title='Disallowed Workshop').exists())
+
     def test_filter_by_event(self):
         self.auth_regular()
         response = self.client.get(WORKSHOPS_URL, {'event': self.event.pk})
