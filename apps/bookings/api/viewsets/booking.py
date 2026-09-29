@@ -1159,7 +1159,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             raise ValidationError({
                 'checkout': (
                     'Checkout failed due to an unexpected error. '
-                    'All changes have been rolled back. Please try again or contact support.'
+                    'Please try again or contact support.'
                 )
             })
 

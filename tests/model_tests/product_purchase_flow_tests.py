@@ -410,7 +410,7 @@ class FullProductPurchaseFlowTest(TestCase):
         with self.assertRaises(Exception) as context:
             order.add_order_item(self.tshirt_medium_blue, 10)  # Max is 5
         
-        self.assertIn('exceed maximum', str(context.exception).lower())
+        self.assertIn('quantity exceeds the maximum', str(context.exception).lower())
         
     def test_purchase_flow_with_insufficient_stock(self):
         """

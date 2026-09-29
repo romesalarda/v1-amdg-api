@@ -811,6 +811,8 @@ class CheckoutAPITestCase(TestCase):
             ]
         }, format='json')
 
+        print(response.data)
+
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'pending_payment')
         self.assertIsNotNone(response.data.get('booking_id'))
@@ -1054,6 +1056,9 @@ class CheckoutAPITestCase(TestCase):
                         'date_of_birth': '1990-01-01',
                         'gender': 'MALE',
                         'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                        'phone_number': '1234567890',
+                        'gender': 'other',
                         'consents': [
                             {
                                 'consent_id': consent.id,
@@ -1091,7 +1096,7 @@ class CheckoutAPITestCase(TestCase):
                 }
             ]
         }, format='json')
-
+        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'confirmed')
 
@@ -1141,6 +1146,8 @@ class CheckoutAPITestCase(TestCase):
                                 'identifier': ' 123456 ',
                             }
                         },
+                        'phone_number': '1234567890',
+                        'gender': 'other',
                     },
                 }
             ],

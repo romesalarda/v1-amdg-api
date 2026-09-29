@@ -5,6 +5,9 @@ from djmoney.models.fields import MoneyField
 
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+
+from django.core.exceptions import ValidationError
+
 from django.utils import timezone
 
 from djmoney.money import Money
@@ -17,6 +20,7 @@ from apps.common.mixins import HasAvailabilityMixin
 from core.utils.display import try_generate_unique_code
 from decimal import Decimal
 import uuid
+import logging
 
 User = get_user_model()
 
@@ -214,13 +218,10 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
         
         # Trigger Stripe refund if payment has Stripe PaymentIntent
         if self.payment.stripe_payment_intent:
-            from apps.payments.services.stripe.refunds import RefundService
-            from apps.payments.services.stripe.exceptions import StripeServiceError
-            from django.core.exceptions import ValidationError
-            import logging
             
             logger = logging.getLogger(__name__)
-            
+            from apps.payments.services.stripe.refunds import RefundService
+            from apps.payments.services.stripe.exceptions import StripeServiceError
             try:
                 # Create Stripe refund
                 stripe_refund = RefundService.create(
