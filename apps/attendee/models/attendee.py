@@ -20,6 +20,8 @@ from apps.common.models.softdelete import SoftDeleteModel
 from apps.payments.models.refunds import RefundAssociation
 from apps.bookings.models import Ticket
 
+from django.utils import timezone
+
 User = get_user_model()
 
 class AttendeeRelationship(models.TextChoices):

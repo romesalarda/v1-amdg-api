@@ -1026,10 +1026,14 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
                 assigned_by=self.context['request'].user,
             )
 
+            role = EventRole.objects.filter(category=EventRoleCategoryChoices.ADMINISTRATIVE).first()
+            if not role:
+                raise serializers.ValidationError({"role-assignment": "an unexpected error occured"})
+
             EventRoleAssignment.objects.create(
                 event=instance,
                 user=self.context['request'].user,
-                role=EventRoleCategoryChoices.ADMINISTRATIVE, 
+                role=role, 
                 assigned_at=timezone.now(),
                 assigned_by=self.context['request'].user,
             ),

@@ -223,7 +223,7 @@ class EventFormResponseOwnershipTest(FormViewSetTestBase):
             'is_complete': False,
         }
         response = self.client.post('/api/event/form-responses/', data, format='json')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_staff_sees_all_responses(self):
         self.form.publish()

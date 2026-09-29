@@ -67,6 +67,12 @@ class BaseEventAPITestCase(TestCase):
             description='Conference events',
             created_by=self.user
         )
+
+        EventRole.objects.create(
+            name="ADMINISTRATIVE",
+            code="ADMIN",
+            category=EventRoleCategoryChoices.ADMINISTRATIVE,
+        )
         
         self.start_time = timezone.now() + timedelta(days=30)
         self.end_time = timezone.now() + timedelta(days=32)

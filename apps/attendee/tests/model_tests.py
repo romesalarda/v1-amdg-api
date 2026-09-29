@@ -606,7 +606,7 @@ class AttendeeModelTest(TestCase):
         attendance = attendee.mark_checked_out(self.event, self.user)
         
         self.assertIsNotNone(attendance)
-        self.assertIsNotNone(attendance.checked_out_by)
+        self.assertIsNotNone(attendance.check_out_by)
         
         # Test checking out without checking in first
         new_attendee = Attendee.objects.create(
