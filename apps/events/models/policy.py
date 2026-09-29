@@ -52,52 +52,5 @@ class EventPolicy(models.Model):
         'max_package_price',
     )
 
-    @classmethod
-    def get_or_create_for_event(cls, event):
-        defaults = {}
-        if event.organisation_id:
-            from apps.organisations.models import OrganisationEventPolicy
-
-            baseline, _ = OrganisationEventPolicy.objects.get_or_create(
-                organisation=event.organisation,
-            )
-            defaults = {
-                field: getattr(baseline, field)
-                for field in cls.POLICY_FIELDS
-            }
-        return cls.objects.get_or_create(event=event, defaults=defaults)
-
     def __str__(self):
         return f"Policy for {self.event.title}"
-
-    def get_effective_values(self):
-        """Combine this event's values with its organisation's current ceiling."""
-        values = {field: getattr(self, field) for field in self.POLICY_FIELDS}
-        organisation = self.event.organisation
-        if organisation is None:
-            return values
-
-        from apps.organisations.models import OrganisationEventPolicy
-
-        try:
-            baseline = organisation.event_policy
-        except OrganisationEventPolicy.DoesNotExist:
-            return values
-
-        for field in self.ALLOW_FIELDS:
-            values[field] = values[field] and getattr(baseline, field)
-        for field in self.REQUIRE_FIELDS:
-            values[field] = values[field] or getattr(baseline, field)
-
-        event_limit = values['max_attendees_per_event']
-        organisation_limit = baseline.max_attendees_per_event
-        if event_limit == 0:
-            values['max_attendees_per_event'] = organisation_limit
-        elif organisation_limit != 0:
-            values['max_attendees_per_event'] = min(event_limit, organisation_limit)
-
-        values['max_package_price'] = min(
-            values['max_package_price'],
-            baseline.max_package_price,
-        )
-        return values

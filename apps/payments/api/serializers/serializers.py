@@ -46,6 +46,7 @@ from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 from apps.payments.services.attendee_refunds import AttendeeRefundService
 from apps.events.models import Event
+from apps.events.services.policy import get_effective_policy_values
 
 User = get_user_model()
 
@@ -141,7 +142,7 @@ class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
         )
 
         if event:
-            policy = event.policy.get_effective_values()
+            policy = get_effective_policy_values(event.policy)
             if method_type == PaymentMethodTypeChoices.STRIPE and not policy['card_payments_are_allowed']:
                 raise serializers.ValidationError({
                     'method_type': 'Card payments are disabled by the event policy.'

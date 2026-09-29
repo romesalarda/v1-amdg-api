@@ -18,6 +18,7 @@ from apps.events.api.permissions import (
     IsEventAdminOrDjangoStaff,
     CanManageSponsorForOrganisation,
 )
+from apps.events.services.policy import get_effective_policy_values
 from apps.organisations.models import EventSponsor, EventSponsorPackage
 from apps.organisations.api.serializers import (
     EventSponsorListSerializer,
@@ -132,7 +133,7 @@ class EventSponsorActionsMixin:
                 return self.get_paginated_response(serializer.data)
             return Response(serializer.data)
 
-        if not event.policy.get_effective_values()['allow_sponsors']:
+        if not get_effective_policy_values(event.policy)['allow_sponsors']:
             return Response(
                 {"detail": "Sponsorships are disabled by the event policy."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -349,7 +350,7 @@ class EventSponsorActionsMixin:
                 return self.get_paginated_response(serializer.data)
             return Response(serializer.data)
 
-        if not event.policy.get_effective_values()['allow_sponsors']:
+        if not get_effective_policy_values(event.policy)['allow_sponsors']:
             return Response(
                 {"detail": "Sponsorships are disabled by the event policy."},
                 status=status.HTTP_403_FORBIDDEN,

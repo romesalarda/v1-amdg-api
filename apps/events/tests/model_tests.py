@@ -19,6 +19,7 @@ from apps.events.models import (
 )
 from apps.organisations.models import Organisation
 from apps.attendee.models import Attendee, AttendeeRelationship
+from apps.events.services.policy import get_effective_policy_values
 
 User = get_user_model()
 
@@ -546,7 +547,7 @@ class EventSettingsModelTest(TestCase):
         baseline.max_package_price = Decimal('100.00')
         baseline.save()
 
-        effective = policy.get_effective_values()
+        effective = get_effective_policy_values(policy)
         self.assertTrue(policy.allow_sponsors)
         self.assertFalse(effective['allow_sponsors'])
         self.assertEqual(effective['max_attendees_per_event'], 20)

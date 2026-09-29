@@ -25,6 +25,7 @@ from apps.common.api.serializers import (
 )
 from apps.bookings.api.serializers.serializers import BookingDetailSerializer
 from apps.events.models.roles import EventRoleCategoryChoices
+from apps.events.services.policy import get_effective_policy_values
 from core.utils.currency import format_price
 
 from urllib.parse import urlparse
@@ -168,7 +169,7 @@ class EventPolicySerializer(serializers.ModelSerializer):
 
     @extend_schema_field(EventPolicyValuesSerializer)
     def get_effective_policy(self, obj):
-        return obj.get_effective_values()
+        return get_effective_policy_values(obj)
 
     def validate(self, attrs):
         event = self.instance.event

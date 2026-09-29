@@ -4,8 +4,8 @@ import logging
 
 from apps.events.models.events import Event
 from apps.events.models.questions import EventQuestion, EventQuestionOption
-from apps.events.models import EventPolicy
 from apps.events.models.events import EventSettings
+from apps.events.services.policy import get_or_create_event_policy
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ def create_default_event_settings(sender, instance: Event, created: bool, **kwar
     '''
     if created:
         EventSettings.objects.create(event=instance)
-        EventPolicy.get_or_create_for_event(instance)
+        get_or_create_event_policy(instance)
 
 @receiver(pre_save, sender=Event)
 def update_event_settings(sender, instance: Event, **kwargs):

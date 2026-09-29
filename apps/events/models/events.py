@@ -310,7 +310,9 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
 
     @property
     def can_event_be_published(self) -> bool:
-        policy_values = self.policy.get_effective_values()
+        from apps.events.services.policy import get_effective_policy_values
+
+        policy_values = get_effective_policy_values(self.policy)
         content_requirements_met = (
             (not policy_values['require_long_description'] or bool(self.long_description and self.long_description.strip()))
             and (not policy_values['require_short_description'] or bool(self.short_description and self.short_description.strip()))
@@ -346,7 +348,9 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         '''
 
         tasks = []
-        policy_values = self.policy.get_effective_values()
+        from apps.events.services.policy import get_effective_policy_values
+
+        policy_values = get_effective_policy_values(self.policy)
 
         if self.status == EventStatusChoices.DRAFTING and not self.is_approved:
             tasks.append(build_task(
@@ -552,7 +556,9 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         if policy is None:
             return event_limit
 
-        policy_limit = policy.get_effective_values()['max_attendees_per_event']
+        from apps.events.services.policy import get_effective_policy_values
+
+        policy_limit = get_effective_policy_values(policy)['max_attendees_per_event']
         if policy_limit == 0:
             return event_limit
         if event_limit is None:

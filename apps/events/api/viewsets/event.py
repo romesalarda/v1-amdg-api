@@ -29,7 +29,8 @@ from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.events.models import Event, EventType, EventPolicy, EventStatusChoices
+from apps.events.models import Event, EventType, EventStatusChoices
+from apps.events.services.policy import get_or_create_event_policy
 from apps.events.api.serializers import (
     EventTypeSerializer,
     EventListSerializer,
@@ -415,7 +416,7 @@ class EventViewSet(
     )
     def event_policy(self, request, url_safe_title=None):
         event = self.get_non_restrictive_object()
-        event_policy, _ = EventPolicy.get_or_create_for_event(event)
+        event_policy, _ = get_or_create_event_policy(event)
         if request.method == "PATCH":
             serializer = EventPolicySerializer(
                 event_policy,

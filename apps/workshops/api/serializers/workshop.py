@@ -5,6 +5,7 @@ from drf_spectacular.types import OpenApiTypes
 from apps.workshops.models.workshop import Workshop, WorkshopStatus, AllocationMode
 from apps.attendee.models import Attendee
 from apps.events.models import Event
+from apps.events.services.policy import get_effective_policy_values
 class WorkshopListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for listing workshops."""
 
@@ -115,7 +116,7 @@ class WorkshopCreateUpdateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         event = attrs.get('event') or (self.instance.event if self.instance else None)
         if event and (self.instance is None or event != self.instance.event):
-            if not event.policy.get_effective_values()['allow_workshops']:
+            if not get_effective_policy_values(event.policy)['allow_workshops']:
                 raise serializers.ValidationError({
                     'event': 'This event does not allow workshops.'
                 })
