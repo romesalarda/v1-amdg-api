@@ -299,15 +299,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         auth = self.latest_authorisation() 
         return auth and auth.status == EventAuthorizationStatusChoices.APPROVED
 
-    def get_event_policy(self):
-        from apps.events.models import EventPolicy
-
-        try:
-            return self.policy
-        except EventPolicy.DoesNotExist:
-            policy, _ = EventPolicy.get_or_create_for_event(self)
-            return policy
-
     @property
     def can_participants_register(self):
         return (
@@ -319,7 +310,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
 
     @property
     def can_event_be_published(self) -> bool:
-        policy_values = self.get_event_policy().get_effective_values()
+        policy_values = self.policy.get_effective_values()
         content_requirements_met = (
             (not policy_values['require_long_description'] or bool(self.long_description and self.long_description.strip()))
             and (not policy_values['require_short_description'] or bool(self.short_description and self.short_description.strip()))
@@ -355,7 +346,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         '''
 
         tasks = []
-        policy_values = self.get_event_policy().get_effective_values()
+        policy_values = self.policy.get_effective_values()
 
         if self.status == EventStatusChoices.DRAFTING and not self.is_approved:
             tasks.append(build_task(
@@ -557,7 +548,10 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
     @property
     def effective_maximum_attendance(self):
         event_limit = self.maximum_attendance
-        policy = self.get_event_policy()
+        policy = getattr(self, 'policy', None)
+        if policy is None:
+            return event_limit
+
         policy_limit = policy.get_effective_values()['max_attendees_per_event']
         if policy_limit == 0:
             return event_limit
