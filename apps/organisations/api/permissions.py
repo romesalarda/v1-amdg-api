@@ -57,22 +57,6 @@ class IsOrganisationController(permissions.BasePermission):
         if request.user.is_superuser or request.user.is_staff:
             return True
         
-        # if request.query_params.get("organisation"): # refuse access if no organisation is specified in query params
-        #     org_id = request.query_params.get("organisation")
-        #     try:
-        #         organisation = get_organisation_or_url_safe_title(org_id)
-        #         if not (request.user.is_superuser or request.user.is_staff or OrganisationControl.objects.filter(
-        #             organisation=organisation,
-        #             user=request.user,
-        #         ).exists()):
-        #             print(f"User {request.user} does not have control over organisation {organisation}.")
-        #             return False
-        #         return True
-        #     except Organisation.DoesNotExist:
-        #         print(f"Organisation with ID {org_id} does not exist.")
-        #         return False
-        # print(f"User {request.user} has no permission to access the view {view}.")
-        # return False
         org_id = view.kwargs.get("organisation") or view.kwargs.get("org_id")
 
         # 2. Fallback to query param
