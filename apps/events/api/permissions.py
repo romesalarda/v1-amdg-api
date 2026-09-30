@@ -3,7 +3,7 @@ from rest_framework import permissions
 from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
 from apps.organisations.models import OrganisationControl
 from apps.events.models import EventPermissionAssignment
-from apps.events.models import Event
+from apps.events.models import Event, EventStatusChoices
 from apps.events.models import EventVenue
 
 # ---------------------------------------------------------------------------
@@ -77,6 +77,56 @@ class IsEventOwnerOrDjangoStaff(permissions.BasePermission):
         if event is None:
             return False
         return event.created_by == user
+
+
+class CanManageEventPolicy(permissions.BasePermission):
+    """Allow policy reads for visible events and writes by organisation policy managers."""
+
+    message = "You must control the organisation or have its policy management permission."
+
+    def has_permission(self, request, view):
+        return request.method in permissions.SAFE_METHODS or bool(
+            request.user and request.user.is_authenticated
+        )
+
+    def has_object_permission(self, request, view, event):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return request.method in permissions.SAFE_METHODS and event.status in {
+                EventStatusChoices.PUBLISHED,
+                EventStatusChoices.OPEN,
+                EventStatusChoices.POSTPONED,
+                EventStatusChoices.IN_PROGRESS,
+                EventStatusChoices.COMPLETED,
+            }
+
+        if request.method in permissions.SAFE_METHODS and event.status in {
+            EventStatusChoices.PUBLISHED,
+            EventStatusChoices.OPEN,
+            EventStatusChoices.POSTPONED,
+            EventStatusChoices.IN_PROGRESS,
+            EventStatusChoices.COMPLETED,
+        }:
+            return True
+
+        if user.is_staff or user.is_superuser:
+            return True
+        if event.organisation_id is None:
+            return False
+        if OrganisationControl.objects.filter(
+            organisation_id=event.organisation_id,
+            user=user,
+        ).exists():
+            return True
+
+        from apps.organisations.models import LeaderPermission
+
+        return LeaderPermission.objects.filter(
+            leader__organisation_id=event.organisation_id,
+            leader__user=user,
+            permission_code='allow_policy_management',
+            allow_update=True,
+        ).exists()
 
 
 class IsEventOwnerOrEventStaffOrDjangoStaff(permissions.BasePermission):

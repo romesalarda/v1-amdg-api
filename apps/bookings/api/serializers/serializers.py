@@ -219,8 +219,9 @@ class BookingIntentCreateSerializer(serializers.ModelSerializer):
             total=Sum('intended_ticket_count')
         )['total'] or 0
         
-        if event.maximum_attendance is not None:
-            available_capacity = event.maximum_attendance - event.number_of_attendees - reserved_by_intents
+        maximum_attendance = event.effective_maximum_attendance
+        if maximum_attendance is not None:
+            available_capacity = maximum_attendance - event.number_of_attendees - reserved_by_intents
         
             if available_capacity < intended_count:
                 raise serializers.ValidationError({
@@ -282,9 +283,10 @@ class BookingIntentUpdateSerializer(serializers.ModelSerializer):
                 reserved_by_intents = pending_intents.aggregate(
                     total=Sum('intended_ticket_count')
                 )['total'] or 0
-                if self.instance.event.maximum_attendance is not None:
+                maximum_attendance = self.instance.event.effective_maximum_attendance
+                if maximum_attendance is not None:
                     available_capacity = (
-                        self.instance.event.maximum_attendance - 
+                        maximum_attendance -
                         self.instance.event.number_of_attendees - 
                         reserved_by_intents
                     )

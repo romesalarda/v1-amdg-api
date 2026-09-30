@@ -5,7 +5,7 @@ from .models import (
     EventPermissionAssignment, EventReview, EventRole, 
     EventRoleAssignment, EventStaff, EventStaffAvailability, EventStaffInvite,
     EventQuestion, EventQuestionOption, EventQuestionAnswer, EventQuestionAnswerChoice,
-    EventSettings, EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
+    EventSettings, EventPolicy, EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
     EventNotification, EventTransportOption, EventTransportSchedule, EventTransportStop,
     EventForm, EventFormQuestion, EventFormQuestionOption,
     EventFormResponse, EventFormResponseAnswer, EventFormDelegateToken,
@@ -455,6 +455,47 @@ class EventSettingsAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # EventSettings should not be deleted independently from Event
         return False
+
+
+@admin.register(EventPolicy)
+class EventPolicyAdmin(admin.ModelAdmin):
+    list_display = (
+        'event', 'allow_workshops', 'allow_sponsors',
+        'max_attendees_per_event', 'updated_at',
+    )
+    list_filter = (
+        'allow_workshops', 'allow_product_releases', 'allow_sponsors',
+        'card_payments_are_allowed', 'bank_transfers_are_allowed',
+    )
+    search_fields = ('event__title', 'event__display_code', 'event__display_identifier')
+    readonly_fields = ('created_at', 'updated_at')
+    autocomplete_fields = ('event',)
+    fieldsets = (
+        ('Event', {'fields': ('event',)}),
+        ('Capabilities', {
+            'fields': (
+                'allow_external_events', 'allow_attendee_deletions',
+                'allow_workshops', 'allow_product_releases', 'allow_sponsors',
+            ),
+        }),
+        ('Requirements and approvals', {
+            'fields': (
+                'require_long_description', 'require_short_description',
+                'require_landing_image', 'must_be_approved_by_organisation',
+                'product_release_must_be_approved_by_organisation',
+            ),
+        }),
+        ('Limits and payments', {
+            'fields': (
+                'max_attendees_per_event', 'max_package_price',
+                'card_payments_are_allowed', 'bank_transfers_are_allowed',
+            ),
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
 
 
 @admin.register(EventStaffInvite)

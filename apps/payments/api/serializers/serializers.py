@@ -46,6 +46,7 @@ from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 from apps.payments.services.attendee_refunds import AttendeeRefundService
 from apps.events.models import Event
+from apps.events.services.policy import get_effective_policy_values
 
 User = get_user_model()
 
@@ -133,11 +134,23 @@ class PaymentMethodCreateUpdateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """Cross-field validation for payment method configuration."""
         method_type = attrs.get('method_type', self.instance.method_type if self.instance else None)
+        event = attrs.get('event') or (self.instance.event if self.instance else None)
         provided_details = attrs.get('provided_details', {})
         require_immediate = attrs.get(
             'bank_transfer_required_immediately',
             self.instance.bank_transfer_required_immediately if self.instance else False,
         )
+
+        if event:
+            policy = get_effective_policy_values(event.policy)
+            if method_type == PaymentMethodTypeChoices.STRIPE and not policy['card_payments_are_allowed']:
+                raise serializers.ValidationError({
+                    'method_type': 'Card payments are disabled by the event policy.'
+                })
+            if method_type == PaymentMethodTypeChoices.BANK_TRANSFER and not policy['bank_transfers_are_allowed']:
+                raise serializers.ValidationError({
+                    'method_type': 'Bank transfers are disabled by the event policy.'
+                })
         
         # Validate bank transfer details
         if method_type == PaymentMethodTypeChoices.BANK_TRANSFER:

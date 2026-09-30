@@ -310,11 +310,19 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
 
     @property
     def can_event_be_published(self) -> bool:
+        from apps.events.services.policy import get_effective_policy_values
+
+        policy_values = get_effective_policy_values(self.policy)
+        content_requirements_met = (
+            (not policy_values['require_long_description'] or bool(self.long_description and self.long_description.strip()))
+            and (not policy_values['require_short_description'] or bool(self.short_description and self.short_description.strip()))
+            and (not policy_values['require_landing_image'] or self.landing_images.exists())
+        )
         return self.is_approved and self.status in [
             EventStatusChoices.DRAFTING,
             EventStatusChoices.POSTPONED,
             EventStatusChoices.CANCELLED
-        ] and self.has_registration_window
+        ] and self.has_registration_window and content_requirements_met
     
     @property
     def outstanding_tasks(self):
@@ -340,6 +348,9 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         '''
 
         tasks = []
+        from apps.events.services.policy import get_effective_policy_values
+
+        policy_values = get_effective_policy_values(self.policy)
 
         if self.status == EventStatusChoices.DRAFTING and not self.is_approved:
             tasks.append(build_task(
@@ -359,7 +370,7 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
                     hint="Go to the Availability section and add a registration availability window to specify when participants can register for this event.",
                     code="REGISTRATION_WINDOW_REQUIRED"
                 )   )
-            if not self.landing_images.exists() and self.organisation.event_policy.require_landing_image:
+            if not self.landing_images.exists() and policy_values['require_landing_image']:
                 tasks.append(build_task(
                     title="Set landing image",
                     description="You should set a landing image for this event to make it visually appealing when published.",
@@ -367,12 +378,20 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
                     code="LANDING_IMAGE_RECOMMENDED"
                 ))
 
-            if not self.long_description and self.organisation.event_policy.require_long_description:
+            if not self.long_description and policy_values['require_long_description']:
                 tasks.append(build_task(
                     title="Add long description",
                     description="Adding a long description helps provide more details about your event to potential participants.",
                     hint="Go to the Details section and add a long description to give participants more information about what to expect at the event.",
                     code="LONG_DESCRIPTION_RECOMMENDED"
+                ))
+
+            if not self.short_description and policy_values['require_short_description']:
+                tasks.append(build_task(
+                    title="Add short description",
+                    description="This event needs a short description before it can be published.",
+                    hint="Go to the Details section and add a short description for this event.",
+                    code="SHORT_DESCRIPTION_REQUIRED"
                 ))
 
             if not self.theme:
@@ -526,9 +545,25 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         Check if maximum capacity has been reached, considering both
         confirmed attendees and pending booking intents.
         """
-        if self.maximum_attendance is None:
+        if self.effective_maximum_attendance is None:
             return False
         return self.available_capacity <= 0
+
+    @property
+    def effective_maximum_attendance(self):
+        event_limit = self.maximum_attendance
+        policy = getattr(self, 'policy', None)
+        if policy is None:
+            return event_limit
+
+        from apps.events.services.policy import get_effective_policy_values
+
+        policy_limit = get_effective_policy_values(policy)['max_attendees_per_event']
+        if policy_limit == 0:
+            return event_limit
+        if event_limit is None:
+            return policy_limit
+        return min(event_limit, policy_limit)
     
     @property
     def number_of_attendees(self) -> int:
@@ -541,7 +576,6 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         This prevents race conditions when multiple users are booking at capacity.
         """
         from apps.bookings.models import BookingIntent, BookingIntentStatusChoices
-
         
         pending_intents = BookingIntent.objects.filter(
             event=self,
@@ -564,11 +598,12 @@ class Event(SoftDeleteModel, LandingImageMixin, HasAvailabilityMixin):
         Returns:
             int: Number of spots available for new bookings
         """
-        if self.maximum_attendance is None:
+        maximum_attendance = self.effective_maximum_attendance
+        if maximum_attendance is None:
             return float('inf')  # Unlimited capacity
         
         used_capacity = self.number_of_attendees + self.pending_intent_capacity
-        return max(0, self.maximum_attendance - used_capacity)
+        return max(0, maximum_attendance - used_capacity)
     
     @property
     def registration_open_from_window(self):

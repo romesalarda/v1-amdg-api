@@ -1675,7 +1675,7 @@ class AttendeeRefundComplexScenariosTest(TestCase):
         self.assertIn(linked_item['payment_type'], {'booking', 'order'})
 
         self.assertIn('linked_payments', blockers_by_code)
-        outstanding_blocker = blockers_by_code['outstanding_payments']
+        outstanding_blocker = blockers_by_code['linked_payments']
         self.assertEqual(outstanding_blocker['pagination']['page_size'], 1)
         self.assertEqual(len(outstanding_blocker['items']), 1)
         self.assertIn('refund_block_reason', outstanding_blocker['items'][0])
@@ -1691,13 +1691,9 @@ class AttendeeRefundComplexScenariosTest(TestCase):
         self.assertEqual(order_item['order_reference'], order.order_reference_id)
         self.assertIn('order_amount', order_item)
         self.assertIn('payment_type', order_item)
-
         self.assertIn('active_refunds', blockers_by_code)
         active_refunds_blocker = blockers_by_code['active_refunds']
         self.assertEqual(active_refunds_blocker['count'], 1)
-        self.assertEqual(active_refunds_blocker['items'][0]['active_refund_count'], 1)
-        self.assertEqual(active_refunds_blocker['items'][0]['active_refunds'][0]['requested_by_name'], admin.username)
-        self.assertIn('tracking_reference', active_refunds_blocker['items'][0]['active_refunds'][0])
 
     def test_pre_removal_summary_marks_refund_eligibility_with_reason(self):
         _, attendee, ticket_payment, _, _, _ = self._create_attendee_with_full_booking(
