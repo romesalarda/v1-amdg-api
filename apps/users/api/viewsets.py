@@ -13,17 +13,20 @@ ViewSets:
 Author: AMDG Platform Team
 Version: 1.0.0
 """
+from typing import Any, Dict, Optional
+
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import action, api_view, permission_classes as permission_classes_decorator
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.request import Request
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.utils import timezone
-from django.db.models import Q, Prefetch
+from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
@@ -47,10 +50,9 @@ from drf_spectacular.utils import (
 )
 from drf_spectacular.types import OpenApiTypes
 import requests
-from typing import Any, Dict, Optional
-import os
 
 from .serializers import (
+    UnrestrictedProfileSerializer,
     UserSerializer,
     UserDetailSerializer,
     UserRegistrationSerializer,
@@ -286,8 +288,8 @@ class UserViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
 
         # Non-staff users can only see themselves.
-        # if not (self.request.user.is_staff or self.request.user.is_superuser):
-        #     queryset = queryset.filter(id=self.request.user.id)
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(id=self.request.user.id)
 
         return queryset
     
@@ -369,7 +371,7 @@ class UserViewSet(viewsets.ModelViewSet):
         },
     )
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='event-attendees')
-    def event_attendees(self, request):
+    def event_attendees(self, request: Request) -> Response:
         """List users scoped to an event's attendee/service-team membership."""
         event_id = request.query_params.get('event_id')
         if not event_id:
@@ -822,7 +824,7 @@ class UserViewSet(viewsets.ModelViewSet):
         }
     )
     @action(detail=True, methods=['get'], url_path='profile')
-    def profile(self, request, pk=None):
+    def profile(self, request: Request, pk=None) -> Response:
         """
         Get a user's profile.
         
@@ -974,22 +976,13 @@ class ProfileViewSet(viewsets.ModelViewSet):
     search_fields = ['user__email', 'user__username', 'preferred_name', 'contact_phone']
     ordering_fields = ['created_at', 'updated_at']
     ordering = ['-created_at']
-    
-    def get_queryset(self):
-        """
-        Filter profiles based on permissions.
-        
-        Regular users only see their own profile, staff see all.
-        
-        Returns:
-            Filtered queryset
-        """
-        queryset = super().get_queryset()
-        
-        # if not self.request.user.is_staff:
-        #     queryset = queryset.filter(user=self.request.user)
-        
-        return queryset
+
+    def get_serializer_class(self):
+        restricted_views = ["retrieve", "update", "partial_update"]
+        if self.action in restricted_views and self.request.user == self.get_object().user:
+            return UnrestrictedProfileSerializer
+        return ProfileSerializer
+
     
     @extend_schema(
         summary="Get Current User's Profile",
@@ -1002,7 +995,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
         responses={200: ProfileSerializer}
     )
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def me(self, request):
+    def me(self, request: Request) -> Response:
         """
         Get current authenticated user's profile.
         
@@ -1078,7 +1071,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     """
     serializer_class = CustomTokenObtainPairSerializer
     
-    def post(self, request, *args, **kwargs):
+    def post(self, request: Request, *args, **kwargs) -> Response:
         """
         Authenticate user and set JWT tokens in HTTP-only cookies.
         
@@ -1090,7 +1083,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         if response.status_code == 200:
             # Get user from serializer for logging
             user_email = self.user.email if hasattr(self, 'user') and self.user else 'unknown'
-            logger.info(f"Setting auth cookies for user: {user_email}")
             
             # Set HTTP-only cookies for tokens
             _samesite = 'None' if not settings.DEBUG else 'Lax'
@@ -1155,7 +1147,7 @@ class CustomTokenRefreshView(TokenRefreshView):
         No request body required.
     """
     
-    def post(self, request, *args, **kwargs):
+    def post(self, request: Request, *args, **kwargs) -> Response:
         """
         Refresh access token from refresh cookie.
         
@@ -1232,7 +1224,6 @@ def logout(request):
     Returns:
         Response with success message
     """
-    logger.info(f"Logging out user: {request.user.email if request.user and not request.user.is_anonymous else 'unknown'}")
     
     response = Response(
         {'message': 'Logout successful.'},
@@ -1334,7 +1325,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
         }
     )
     @action(detail=False, methods=['post'], url_path='authorize')
-    def authorize(self, request):
+    def authorize(self, request: Request) -> Response:
         """
         Generate Google OAuth authorization URL.
         
@@ -1345,7 +1336,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         
         # Get Google OAuth credentials from environment
-        client_id = os.getenv('GOOGLE_OAUTH_CLIENT_ID')
+        client_id = settings.GOOGLE_OAUTH_CLIENT_ID
         
         if not client_id:
             return Response(
@@ -1395,7 +1386,7 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
         }
     )
     @action(detail=False, methods=['post'], url_path='callback')
-    def callback(self, request):
+    def callback(self, request: Request) -> Response:
         """
         Handle Google OAuth callback and authenticate user.
         
@@ -1406,8 +1397,8 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         
         # Get Google OAuth credentials
-        client_id = os.getenv('GOOGLE_OAUTH_CLIENT_ID')
-        client_secret = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET')
+        client_id = settings.GOOGLE_OAUTH_CLIENT_ID
+        client_secret = settings.GOOGLE_OAUTH_CLIENT_SECRET
         
         if not client_id or not client_secret:
             return Response(
@@ -1470,7 +1461,6 @@ class GoogleOAuthViewSet(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
             
             # Set HTTP-only cookies
-            logger.info(f"Setting auth cookies for Google OAuth user: {user.email}")
             _samesite = 'None' if not settings.DEBUG else 'Lax'
             response.set_cookie(
                 key='access',

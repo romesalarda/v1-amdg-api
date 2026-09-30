@@ -37,7 +37,7 @@ from apps.payments.models import (
 )
 from apps.events.models import (
     Event, EventType, EventStatusChoices, EventAuthorization, EventAuthorizationStatusChoices,
-    EventQuestion, EventQuestionOption, EventQuestionTypeChoices, EventQuestionAnswer
+    EventQuestion, EventQuestionTypeChoices, EventQuestionAnswer
 )
 from apps.attendee.models import (
     Attendee, AttendeeRelationship, AttendeeStatus,
@@ -65,7 +65,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
-
 
 class CheckoutAPITestCase(TestCase):
     """Test checkout API endpoint with various payment methods."""
@@ -766,12 +765,15 @@ class CheckoutAPITestCase(TestCase):
                         'last_name': 'Bank',
                         'date_of_birth': '1990-01-01',
                         'relationship_to_user': 'self',
+                        'email': 'draft.attendee@example.com',
+                        'phone_number': '0123456789',
+                        'gender': 'other',
                         'area_from': self.area.id,
                     }
                 }
             ]
         }, format='json')
-
+        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'pending_verification')
         self.assertIsNotNone(response.data.get('booking_id'))
@@ -787,7 +789,7 @@ class CheckoutAPITestCase(TestCase):
 
     @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
     def test_checkout_stripe_pending_creates_booking_and_attendee_from_draft(self, mock_create_intent):
-        """Stripe checkout (client_secret flow) must create booking and attendee before payment confirmation."""
+        """Stripe checkout (client_secret flow) defers booking/attendee creation until webhook confirms payment."""
         intent = self.create_booking_intent(ticket_count=1)
         mock_create_intent.return_value = SimpleNamespace(
             id='pi_pending_123',
@@ -813,18 +815,15 @@ class CheckoutAPITestCase(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'pending_payment')
-        self.assertIsNotNone(response.data.get('booking_id'))
+        # No booking exists yet: unlike bank transfer, Stripe intentionally avoids
+        # pre-creating Booking/Attendee records so a declined/abandoned card leaves no orphans.
+        self.assertIsNone(response.data.get('booking_id'))
         self.assertIsNotNone(response.data.get('stripe_client_secret'))
 
         payment = Payment.objects.get(payment_reference=response.data['payment_reference'])
         self.assertEqual(payment.stripe_payment_intent, 'pi_pending_123')
-        self.assertIsNotNone(payment.target)
-        self.assertIsInstance(payment.target, Booking)
-
-        booking = payment.target
-        attendees = Attendee.objects.filter(booking=booking)
-        self.assertEqual(attendees.count(), 1)
-        self.assertEqual(attendees.first().status, AttendeeStatus.PENDING_PAYMENT)
+        self.assertIsNone(payment.target)
+        self.assertEqual(Attendee.objects.filter(event=intent.event).count(), 0)
     
     def test_verify_bank_transfer_creates_tickets(self):
         """Test that verifying bank transfer creates tickets."""
@@ -1054,6 +1053,9 @@ class CheckoutAPITestCase(TestCase):
                         'date_of_birth': '1990-01-01',
                         'gender': 'MALE',
                         'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                        'phone_number': '1234567890',
+                        'gender': 'other',
                         'consents': [
                             {
                                 'consent_id': consent.id,
@@ -1091,7 +1093,6 @@ class CheckoutAPITestCase(TestCase):
                 }
             ]
         }, format='json')
-
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'confirmed')
 
@@ -1141,6 +1142,8 @@ class CheckoutAPITestCase(TestCase):
                                 'identifier': ' 123456 ',
                             }
                         },
+                        'phone_number': '1234567890',
+                        'gender': 'other',
                     },
                 }
             ],
@@ -1318,6 +1321,9 @@ class CheckoutAPITestCase(TestCase):
                         'date_of_birth': '1990-01-01',
                         'gender': 'MALE',
                         'relationship_to_user': 'self',
+                        'email': 'draft.attendee@example.com',
+                        'phone_number': '0123456789',
+                        'area_from': self.area.id,
                     }
                 }
             ]
@@ -1330,7 +1336,6 @@ class CheckoutAPITestCase(TestCase):
             HTTP_IDEMPOTENCY_KEY='checkout-key-1'
         )
         self.assertEqual(response_one.status_code, status.HTTP_201_CREATED)
-
         response_two = self.client.post(
             '/api/bookings/list/checkout/',
             payload,
@@ -1453,6 +1458,9 @@ class CheckoutAPITestCase(TestCase):
                     'date_of_birth': '1990-01-01',
                     'relationship_to_user': 'self',
                     'area_from': self.area.id,
+                    'email': 'multipart.tester@example.com',
+                    'phone_number': '0123456789',
+                    'gender': 'other',
                     'question_answers': [
                         {
                             'question_id': str(short_question.id),
@@ -1477,7 +1485,6 @@ class CheckoutAPITestCase(TestCase):
             },
             format='multipart',
         )
-
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         attendee = Attendee.objects.get(first_name='Multipart', last_name='Tester')
         upload_answer = EventQuestionAnswer.objects.get(attendee=attendee, question=upload_question)
@@ -1563,6 +1570,9 @@ class CheckoutAPITestCase(TestCase):
                         'date_of_birth': '1990-01-01',
                         'gender': 'MALE',
                         'relationship_to_user': 'self',
+                        'email': 'draft.attendee@example.com',
+                        'phone_number': '0123456789',
+                        'area_from': self.area.id,
                     }
                 }
             ]
@@ -1573,6 +1583,153 @@ class CheckoutAPITestCase(TestCase):
 
         payment = Payment.objects.get(payment_reference=response.data['payment_reference'])
         self.assertEqual(payment.status, PaymentStatusChoices.COMPLETED)
+
+    def _stripe_checkout_payload(self, intent, **overrides):
+        payload = {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.stripe_method.id,
+            'stripe_payment_intent_id': 'pi_confirmed',
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Draft',
+                        'last_name': 'Attendee',
+                        'date_of_birth': '1990-01-01',
+                        'gender': 'MALE',
+                        'relationship_to_user': 'self',
+                    }
+                }
+            ]
+        }
+        payload.update(overrides)
+        return payload
+
+    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    def test_checkout_stripe_retrieve_failure_returns_400(self, mock_retrieve_intent):
+        """Checkout should surface a validation error if the Stripe PaymentIntent can't be retrieved."""
+        intent = self.create_booking_intent(ticket_count=1)
+        mock_retrieve_intent.side_effect = Exception('network error')
+
+        response = self.client.post(
+            '/api/bookings/list/checkout/',
+            self._stripe_checkout_payload(intent),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('stripe_payment_intent_id', response.data)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    def test_checkout_stripe_amount_mismatch_returns_400(self, mock_retrieve_intent):
+        """Checkout should reject a Stripe PaymentIntent whose amount doesn't match the checkout total."""
+        intent = self.create_booking_intent(ticket_count=1)
+        mock_retrieve_intent.return_value = SimpleNamespace(
+            amount=1, currency='gbp', status='succeeded', id='pi_confirmed'
+        )
+
+        response = self.client.post(
+            '/api/bookings/list/checkout/',
+            self._stripe_checkout_payload(intent),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('stripe_payment_intent_id', response.data)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    def test_checkout_stripe_currency_mismatch_returns_400(self, mock_retrieve_intent):
+        """Checkout should reject a Stripe PaymentIntent whose currency doesn't match the checkout currency."""
+        intent = self.create_booking_intent(ticket_count=1)
+        mock_retrieve_intent.return_value = SimpleNamespace(
+            amount=5000, currency='usd', status='succeeded', id='pi_confirmed'
+        )
+
+        response = self.client.post(
+            '/api/bookings/list/checkout/',
+            self._stripe_checkout_payload(intent),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('stripe_payment_intent_id', response.data)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    def test_checkout_stripe_not_succeeded_returns_400(self, mock_retrieve_intent):
+        """Checkout should reject a Stripe PaymentIntent that has not succeeded."""
+        intent = self.create_booking_intent(ticket_count=1)
+        mock_retrieve_intent.return_value = SimpleNamespace(
+            amount=5000, currency='gbp', status='requires_action', id='pi_confirmed'
+        )
+
+        response = self.client.post(
+            '/api/bookings/list/checkout/',
+            self._stripe_checkout_payload(intent),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('stripe_payment_intent_id', response.data)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    def test_checkout_stripe_create_intent_failure_returns_400(self, mock_create_intent):
+        """Checkout should surface a validation error if Stripe PaymentIntent creation fails."""
+        intent = self.create_booking_intent(ticket_count=1)
+        mock_create_intent.side_effect = Exception('stripe unavailable')
+
+        payload = self._stripe_checkout_payload(intent)
+        payload.pop('stripe_payment_intent_id')
+
+        response = self.client.post('/api/bookings/list/checkout/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('payment', response.data)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_checkout_rejects_already_consumed_bank_transfer_evidence(self):
+        """Checkout should reject bank transfer evidence already consumed by another payment."""
+        intent = self.create_booking_intent(ticket_count=1)
+        other_payment = Payment.objects.create(
+            user=self.user,
+            event=self.event,
+            method=self.bank_method,
+            base_amount=Money(50, 'GBP'),
+            original_amount=Money(50, 'GBP'),
+            status=PaymentStatusChoices.PENDING,
+        )
+        evidence = BankTransferEvidence.objects.create(
+            transfer_id='BT-ALREADY-CONSUMED-001',
+            evidence_file=SimpleUploadedFile(
+                'proof.pdf', b'%PDF-1.4 evidence', content_type='application/pdf',
+            ),
+            payment=other_payment,
+            payer_name='Some Payer',
+            payer_account_last4='1234',
+            amount_on_evidence=Money(50, 'GBP'),
+            metadata={
+                'booking_intent_id': str(intent.booking_intent_id),
+                'uploaded_by_user_id': self.user.id,
+            },
+        )
+
+        response = self.client.post('/api/bookings/list/checkout/', {
+            'booking_intent_id': str(intent.booking_intent_id),
+            'payment_method_id': self.bank_method.id,
+            'bank_transfer_evidence_id': str(evidence.bank_transfer_id),
+            'attendees': [
+                {
+                    'package_id': self.package.id,
+                    'attendee': {
+                        'first_name': 'Draft',
+                        'last_name': 'Bank',
+                        'date_of_birth': '1990-01-01',
+                        'relationship_to_user': 'self',
+                        'area_from': self.area.id,
+                    }
+                }
+            ]
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('bank_transfer_evidence_id', response.data)
 
     def test_question_upload_endpoint_creates_resource(self):
         """Upload endpoint should create a resource for question answers."""

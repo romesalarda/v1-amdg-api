@@ -965,7 +965,7 @@ class AttendeeAlternativeSigninEndpointTests(BookingsAPITestCase):
         """Test creating attendee alternative signin."""
         self.client.force_authenticate(user=self.admin_user)
         data = {
-            'attendee': self.attendee.id,
+            'attendee': self.attendee.attendee_id,
             'ticket': str(self.ticket.ticket_id),
             'identifier': '123456',
             'event_alternative_signin': self.event_signin.id
@@ -983,7 +983,7 @@ class AttendeeAlternativeSigninEndpointTests(BookingsAPITestCase):
         """Test that identifier not matching format fails."""
         self.client.force_authenticate(user=self.admin_user)
         data = {
-            'attendee': self.attendee.id,
+            'attendee': self.attendee.attendee_id,
             'ticket': str(self.ticket.ticket_id),
             'identifier': '12345',  # Should be 6 digits
             'event_alternative_signin': self.event_signin.id

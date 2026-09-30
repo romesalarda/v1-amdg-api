@@ -51,7 +51,6 @@ class EventAlternativeSigninIdentifier(RequiresVerificationModel):
         verbose_name_plural = _("Event Alternative Sign-in Identifiers")
 
     def save(self, *args, **kwargs):
-
         self.full_clean()
         self.title = self.title.strip().upper()  # Normalize title to uppercase and strip whitespace
         super().save(*args, **kwargs)

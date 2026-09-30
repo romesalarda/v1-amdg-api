@@ -217,9 +217,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         ],
     )
     def policy(self, request, url_safe_title=None):
-        print(f"Accessing policy for organisation with url_safe_title={url_safe_title}")  # Debugging line
+        
         organisation = self.get_object()
-        print(f"Retrieved organisation: {organisation}")  # Debugging line
         event_policy, _ = OrganisationEventPolicy.objects.get_or_create(
             organisation=organisation,
             defaults={'created_by': request.user},
@@ -240,13 +239,11 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return Response(serializer.data)
-        print(f"Returning event policy for organisation {organisation.title}: {event_policy}")  # Debugging line
+
         serializer = OrganisationEventPolicySerializer(
             event_policy, context={'request': request}
         )
-        print(f"Serialized event policy data: {serializer.data}")  # Debugging line
         response = Response(serializer.data)
-        print(f"Response prepared for organisation {organisation.title}: {response.data}")  # Debugging line
         return response
 
 # ============================================================================

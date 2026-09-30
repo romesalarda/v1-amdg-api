@@ -30,18 +30,21 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.events.models import Event, EventType, EventStatusChoices
+from apps.events.services.policy import get_or_create_event_policy
 from apps.events.api.serializers import (
     EventTypeSerializer,
     EventListSerializer,
     EventDetailSerializer,
     EventCreateUpdateSerializer,
     EventSettingsSerializer,
+    EventPolicySerializer,
 )
 from apps.events.api.filtersets import EventFilterSet
 from apps.events.api.pagination import StandardPagination
 from apps.events.api.permissions import (
     IsEventOwnerOrDjangoStaff,
     IsEventOwnerOrEventStaffOrDjangoStaff,
+    CanManageEventPolicy,
 )
 from apps.events.services.notifications import (
     create_notification,
@@ -392,6 +395,43 @@ class EventViewSet(
                 status=status.HTTP_404_NOT_FOUND,
             )
         serializer = EventSettingsSerializer(event_settings)
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Get or update event policy",
+        description=(
+            "Retrieve or update event-specific policy values. Effective values also respect "
+            "the current organisation policy. Writes require organisation control or the "
+            "organisation's policy management permission."
+        ),
+        request=EventPolicySerializer,
+        responses={200: EventPolicySerializer},
+        tags=["Events"],
+    )
+    @action(
+        detail=True,
+        methods=["get", "patch"],
+        url_path="policy",
+        permission_classes=[permissions.IsAuthenticatedOrReadOnly, CanManageEventPolicy],
+    )
+    def event_policy(self, request, url_safe_title=None):
+        event = self.get_non_restrictive_object()
+        event_policy, _ = get_or_create_event_policy(event)
+        if request.method == "PATCH":
+            serializer = EventPolicySerializer(
+                event_policy,
+                data=request.data,
+                partial=True,
+                context={"request": request},
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+
+        serializer = EventPolicySerializer(
+            event_policy,
+            context={"request": request},
+        )
         return Response(serializer.data)
 
     # ------------------------------------------------------------------

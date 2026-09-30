@@ -50,6 +50,9 @@ from apps.bookings.api.permissions import IsBookingOwnerOrAdministrative
 from apps.attendee.api.serializers import AttendeeListSerializer
 
 from apps.bookings.services import BookingCheckoutFinaliser
+from apps.bookings.services.utils import (
+    CheckoutPayloadBuilder, CheckoutPricingCalculator, CheckoutResponseBuilder,
+)
 from apps.payments.services.stripe.payment_intents import PaymentIntentService
 from apps.bookings.api.pagination import StandardPagination
 
@@ -504,310 +507,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         discount_code = serializer.validated_data.get('discount_code') or None
         user = request.user
         idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
-        
-        def serialize_checkout_attendees(selections: typing.List[typing.Dict[str, typing.Any]]) -> typing.List[typing.Dict[str, typing.Any]]:
-            """
-            Serialize attendee selections for checkout.
-            """
-            serialized = []
-            for selection in selections:
-                attendee = selection.get('_attendee')
-                draft = selection.get('_attendee_draft') or {}
-                package = selection['_package']
 
-                product_rows = []
-                for prod_selection in selection.get('product_selections', []):
-                    package_product = prod_selection['_package_product']
-                    variant = prod_selection['_variant']
-                    product_rows.append({
-                        'package_product_id': package_product.id,
-                        'variant_id': str(variant.variant_id),
-                        'product_id': str(variant.product.product_id),
-                        'quantity': int(prod_selection['quantity']),
-                    })
+        # Payload serialization, pricing/eligibility validation, and response formatting are
+        # delegated to apps.bookings.services.utils so this method stays a linear orchestration flow.
 
-                question_answers = []
-                for answer in draft.get('question_answers', []) or []:
-                    answer_row = {
-                        'question_id': str(answer.get('question_id')) if answer.get('question_id') else None,
-                        'answer_text': answer.get('answer_text'),
-                        'selected_option_ids': answer.get('selected_option_ids') or [],
-                        'upload_resource_id': answer.get('upload_resource_id'),
-                        'upload_url': answer.get('upload_url'),
-                    }
-                    # Keep metadata payload JSON-safe and avoid persisting multipart mapping internals.
-                    question_answers.append(answer_row)
-
-                draft_payload = {
-                    **draft,
-                    'question_answers': question_answers,
-                }
-
-                serialized.append({
-                    'attendee_id': str(attendee.attendee_id) if attendee else None,
-                    'attendee_draft': (
-                        json.loads(json.dumps(draft_payload, cls=DjangoJSONEncoder))
-                        if not attendee else None
-                    ),
-                    'package_id': package.id,
-                    'product_selections': product_rows,
-                })
-            return serialized
-
-        def materialize_multipart_question_uploads(selections: list, event: Event, actor: User) -> None:
-            '''
-            Materialize any multipart question uploads into Resource objects and attach their IDs and URLs to the attendee draft answers.
-            Args:
-                selections (list): List of attendee selections with potential multipart uploads.
-                event (Event): The event for which the booking is being made.
-                actor (User): The user performing the checkout action.
-            '''
-            content_type = ContentType.objects.get_for_model(event.__class__)
-
-            for selection in selections:
-                draft = selection.get('_attendee_draft') or {}
-                answers = draft.get('question_answers', []) or []
-                for answer in answers:
-                    upload_file = answer.pop('_upload_file', None)
-                    answer.pop('upload_file_key', None)
-                    if not upload_file:
-                        continue
-
-                    content_type_value = str(getattr(upload_file, 'content_type', '') or '').lower()
-                    is_image = content_type_value.startswith('image/')
-
-                    resource_kwargs = {
-                        'name': getattr(upload_file, 'name', 'question-upload'),
-                        'resource_type': ResourceTypeChoices.IMAGE if is_image else ResourceTypeChoices.DOCUMENT,
-                        'target_type': content_type,
-                        'target_id': event.id,
-                        'added_by': actor,
-                        'public': False,
-                        'tag': 'QUESTION_UPLOAD',
-                    }
-
-                    if is_image:
-                        resource_kwargs['image'] = upload_file
-                    else:
-                        resource_kwargs['file'] = upload_file
-
-                    resource = Resource.objects.create(**resource_kwargs)
-                    answer['upload_resource_id'] = resource.id
-                    answer['upload_url'] = resource.resource_url
-                    if not answer.get('answer_text'):
-                        answer['answer_text'] = resource.resource_url or ''
-
-        def calculate_total_and_validate(
-            intent_obj: BookingIntent, 
-            selections: typing.List[typing.Dict[str, typing.Any]], 
-            code: typing.Optional[str] = None
-            ) -> typing.Tuple[Money, typing.List[typing.Dict[str, typing.Any]]]:
-            '''
-            Calculate the total amount for the booking and validate attendee selections.
-            Args:
-                intent_obj: The BookingIntent object associated with the checkout.
-                selections: List of attendee selections including packages and product selections.
-                code: Optional discount code to apply.
-            Returns:
-                total_amount (Money): The total amount for the booking after discounts.
-                applied_discounts_snapshot (list): A snapshot of applied discounts for each attendee.
-            '''
-            total_amount = Money(0, 'GBP')
-            applied_discounts_snapshot = []
-            preview_savepoint = transaction.savepoint()
-
-            try:
-                for attendee_index, selection in enumerate(selections):
-                    package = selection['_package']
-                    product_selections = selection.get('product_selections', [])
-
-                    attendee = selection.get('_attendee')
-                    if not attendee:
-                        draft = selection.get('_attendee_draft') or {}
-                        relationship = draft.get('relationship_to_user')
-                        attendee_user = user if relationship == AttendeeRelationship.SELF else None
-                        attendee = Attendee.objects.create(
-                            event=intent_obj.event,
-                            user=attendee_user,
-                            defined_by=user,
-                            first_name=draft.get('first_name'),
-                            last_name=draft.get('last_name'),
-                            email=draft.get('email') or None,
-                            phone_number=draft.get('phone_number') or None,
-                            date_of_birth=draft.get('date_of_birth'),
-                            gender=draft.get('gender') or None,
-                            relationship_to_user=relationship,
-                            area_from_id=draft.get('area_from'),
-                        )
-
-                    if not package.can_use_package(user, attendee):
-                        raise ValidationError({
-                            'package_id': (
-                                f'Attendee {attendee.attendee_id} is not eligible for package {package.name}.'
-                            )
-                        })
-
-                    attendee_context = attendee.pricing_context(code=code)
-                    package_base = package.modified_amount
-
-                    # Collect discount breakdown for this attendee's package
-                    attendee_discount_breakdown = []
-                    percentage_total = Decimal('0.00')
-                    fixed_total = Money(0, package_base.currency)
-                    for d in package.discounts:
-                        if not discount_applies(d, attendee_context):
-                            continue
-                        if d.discount_type == DiscountType.PERCENTAGE:
-                            discount_amount = package_base * (d.percentage / Decimal('100'))
-                            percentage_total += d.percentage
-                            value = str(d.percentage)
-                        else:
-                            discount_amount = d.amount
-                            fixed_total += d.amount
-                            value = str(d.amount.amount)
-                        attendee_discount_breakdown.append({
-                            'discount_id': str(d.discount_id),
-                            'name': d.name,
-                            'discount_type': d.discount_type,
-                            'value': value,
-                            'amount': str(discount_amount.amount),
-                            'currency': package_base.currency.code,
-                        })
-
-                    package_price = package.total_amount_for_context(attendee_context)
-                    total_amount += package_price
-
-                    applied_discounts_snapshot.append({
-                        'attendee_index': attendee_index,
-                        'attendee_id': str(attendee.attendee_id),
-                        'attendee_name': attendee.full_name,
-                        'package_id': package.id,
-                        'package_name': package.name,
-                        'discount_breakdown': attendee_discount_breakdown,
-                        'total_discount': str(
-                            min(
-                                package_base * (percentage_total / Decimal('100')) + fixed_total,
-                                package_base,
-                            ).amount.quantize(Decimal('0.01'))
-                        ),
-                    })
-
-                    if product_selections:
-                        for prod_selection in product_selections:
-                            package_product = prod_selection['_package_product']
-                            variant = prod_selection['_variant']
-                            quantity = int(prod_selection['quantity'])
-
-                            if package_product.booking_package_id != package.id:
-                                raise ValidationError({
-                                    'product_selections': (
-                                        f'Package product {package_product.id} does not belong to package {package.id}.'
-                                    )
-                                })
-
-                            if not variant.can_attendee_purchase(attendee):
-                                raise ValidationError({
-                                    'product_selections': (
-                                        f'Attendee {attendee.attendee_id} is not eligible for selected variant {variant.variant_id}.'
-                                    )
-                                })
-
-                            try:
-                                variant.can_attendee_purchase_quantity(attendee, quantity, raise_exception=True)
-                            except Exception as exc:
-                                raise ValidationError({'product_selections': str(exc)})
-
-                            line_total = package_product.total_amount_with_variant(
-                                variant=variant,
-                                context=attendee_context,
-                            ) * quantity
-                            total_amount += line_total
-            finally:
-                transaction.savepoint_rollback(preview_savepoint)
-
-            return total_amount, applied_discounts_snapshot
-
-        def build_response(
-                payment_obj: 'Payment', 
-                status_label: str, 
-                message: str , 
-                booking: typing.Optional['Booking'] = None, 
-                stripe_client_secret: typing.Optional[str] = None, 
-                bank_transfer_evidence: typing.Optional['BankTransferEvidence'] =None
-                ) -> typing.Dict[str, typing.Any]:
-            '''
-            Build a structured response for the checkout endpoint.
-            Args:
-                payment_obj: The Payment object associated with the checkout.
-                status_label: A string indicating the status of the checkout (e.g., 'confirmed', 'pending_payment').
-                message: A human-readable message describing the checkout result.
-                booking: Optional Booking object if a booking was created.
-                stripe_client_secret: Optional client secret for Stripe payments.
-                bank_transfer_evidence: Optional BankTransferEvidence object if applicable.
-            Returns:
-                A dictionary containing the checkout response data.
-            '''
-
-            response_data = {
-                'booking_id': str(booking.id) if booking else None,
-                'booking_reference': booking.booking_reference if booking else None,
-                'payment_id': payment_obj.payment_id,
-                'payment_reference': payment_obj.payment_reference,
-                'total_amount': str(payment_obj.base_amount.amount if payment_obj.base_amount else Decimal('0.00')),
-                'currency': payment_obj.base_amount.currency.code if payment_obj.base_amount else 'GBP',
-                'status': status_label,
-                'message': message,
-                'orders': [],
-                'stripe_client_secret': stripe_client_secret,
-                'bank_transfer_evidence_id': str(bank_transfer_evidence.bank_transfer_id) if bank_transfer_evidence else None,
-                'bank_transfer_reference': payment_obj.bank_transfer_reference if payment_obj.method and payment_obj.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER else None,
-                'bank_transfer_instructions': None,
-                '_links': {},
-            }
-
-            if response_data['bank_transfer_reference']:
-                response_data['bank_transfer_instructions'] = (
-                    f"Please transfer {payment_obj.base_amount} to our bank account with "
-                    f"reference: {payment_obj.bank_transfer_reference}. "
-                    "Your booking will be finalized after payment verification."
-                )
-
-            if booking:
-                orders = Order.objects.filter(attendee__booking=booking)
-                response_data['orders'] = [
-                    {
-                        'order_id': str(order.order_id),
-                        'order_reference': order.order_reference_id,
-                        'attendee_id': str(order.attendee.attendee_id) if order.attendee else None,
-                        'total_amount': str(order.total_amount.amount),
-                        '_links': {
-                            'self': request.build_absolute_uri(f'/api/products/orders/{order.order_id}/'),
-                        }
-                    }
-                    for order in orders
-                ]
-                response_data['_links'] = {
-                    'self': request.build_absolute_uri(f'/api/bookings/list/{booking.id}/'),
-                    'attendees': request.build_absolute_uri(f'/api/bookings/list/{booking.id}/attendees/'),
-                    'tickets': request.build_absolute_uri(f'/api/bookings/list/{booking.id}/tickets/'),
-                }
-
-                tickets = Ticket.objects.filter(attendee__booking=booking)
-                if tickets.exists():
-                    response_data['tickets'] = [
-                        {
-                            'ticket_id': str(ticket.ticket_id),
-                            'ticket_code': ticket.ticket_code,
-                            'attendee_name': ticket.attendee.full_name if ticket.attendee else None,
-                            '_links': {
-                                'self': request.build_absolute_uri(f'/api/bookings/tickets/{ticket.ticket_id}/'),
-                            }
-                        }
-                        for ticket in tickets
-                    ]
-
-            return response_data
-        
         try:
             with transaction.atomic():
                 # Lock the intent to prevent race conditions
@@ -848,7 +551,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                             except Exception:
                                 stripe_client_secret = None
 
-                        response_data = build_response(
+                        response_data = CheckoutResponseBuilder.build(
+                            request,
                             existing_payment,
                             'confirmed' if existing_booking else 'pending_payment',
                             'Returning previously initiated checkout session.',
@@ -867,16 +571,16 @@ class BookingViewSet(viewsets.ModelViewSet):
                         'booking_intent_id': 'Booking intent is no longer valid for checkout.'
                     })
 
-                materialize_multipart_question_uploads(attendee_selections, intent.event, user)
+                CheckoutPayloadBuilder.materialize_multipart_uploads(attendee_selections, intent.event, user)
 
-                total_amount, applied_discounts_snapshot = calculate_total_and_validate(
-                    intent, attendee_selections, code=discount_code
+                total_amount, applied_discounts_snapshot = CheckoutPricingCalculator.calculate_total_and_validate(
+                    intent, attendee_selections, user, code=discount_code
                 )
 
                 payment_metadata = {
                     'checkout_intent_id': str(intent.booking_intent_id),
                     'checkout_idempotency_key': idempotency_key,
-                    'checkout_attendees': serialize_checkout_attendees(attendee_selections),
+                    'checkout_attendees': CheckoutPayloadBuilder.serialize_attendees(attendee_selections),
                     'payment_type': 'booking_checkout_pending_finalization',
                     'total_attendees': len(attendee_selections),
                     'booking_finalized': False,
@@ -921,7 +625,8 @@ class BookingViewSet(viewsets.ModelViewSet):
 
                     finalization = BookingCheckoutFinaliser.finalize_for_stripe(payment, actor=user)
                     booking = finalization['booking']
-                    response_data = build_response(
+                    response_data = CheckoutResponseBuilder.build(
+                        request,
                         payment,
                         'confirmed',
                         'Registration completed. No payment required.',
@@ -1054,7 +759,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                         finalization = BookingCheckoutFinaliser.finalize_from_payment(payment, actor=user)
                         booking = finalization['booking']
 
-                        response_data = build_response(
+                        response_data = CheckoutResponseBuilder.build(
+                            request,
                             payment,
                             'confirmed',
                             'Payment confirmed and booking finalized.',
@@ -1082,7 +788,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                         payment.stripe_payment_intent = payment_intent.id
                         payment.save(update_fields=['stripe_payment_intent', 'updated_at'])
 
-                        response_data = build_response(
+                        response_data = CheckoutResponseBuilder.build(
+                            request,
                             payment,
                             'pending_payment',
                             'Checkout initiated. Complete payment with Stripe to finalize booking.',
@@ -1098,7 +805,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                         raise ValidationError({'payment': f'Failed to initialize Stripe payment: {str(e)}'})
 
                 if payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
-                    response_data = build_response(
+                    response_data = CheckoutResponseBuilder.build(
+                        request,
                         payment,
                         'pending_verification',
                         'Checkout initiated. Complete bank transfer to finalize booking.',
@@ -1126,7 +834,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                     payment.transition_to(PaymentStatusChoices.COMPLETED)
                     finalization = BookingCheckoutFinaliser.finalize_from_payment(payment, actor=user)
                     booking = finalization['booking']
-                    response_data = build_response(
+                    response_data = CheckoutResponseBuilder.build(
+                        request,
                         payment,
                         'confirmed',
                         'Booking finalized. Pay cash on arrival.',
@@ -1159,7 +868,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             raise ValidationError({
                 'checkout': (
                     'Checkout failed due to an unexpected error. '
-                    'All changes have been rolled back. Please try again or contact support.'
+                    'Please try again or contact support.'
                 )
             })
 

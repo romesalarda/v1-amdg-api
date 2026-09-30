@@ -758,7 +758,7 @@ class CreditAndBankTransferModelTests(TestCase):
         )
 
         with self.assertRaises(ValidationError):
-            credit.save()
+            credit.full_clean()
 
     def test_credit_amount_locked_after_verification(self):
         credit = CreditExpense.objects.create(
@@ -772,7 +772,7 @@ class CreditAndBankTransferModelTests(TestCase):
         credit.amount = Money('25.00', 'GBP')
 
         with self.assertRaises(ValidationError):
-            credit.save()
+            credit.full_clean()
 
     def test_bank_transfer_evidence_sets_auto_expiry_date(self):
         evidence = BankTransferEvidence.objects.create(
@@ -805,4 +805,4 @@ class CreditAndBankTransferModelTests(TestCase):
         )
 
         with self.assertRaises(ValidationError):
-            evidence.save()
+            evidence.full_clean()

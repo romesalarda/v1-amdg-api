@@ -7,7 +7,7 @@ from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
 from djmoney.contrib.django_rest_framework import MoneyField
 from apps.events.models import (
-    Event, EventType, EventSettings, EventStatusChoices,
+    Event, EventType, EventSettings, EventPolicy, EventStatusChoices,
     EventAuthorization,
     EventPermission, EventPermissionAssignment, 
     EventRole, EventRoleAssignment, 
@@ -25,6 +25,7 @@ from apps.common.api.serializers import (
 )
 from apps.bookings.api.serializers.serializers import BookingDetailSerializer
 from apps.events.models.roles import EventRoleCategoryChoices
+from apps.events.services.policy import get_effective_policy_values
 from core.utils.currency import format_price
 
 from urllib.parse import urlparse
@@ -130,6 +131,84 @@ class EventSettingsSerializer(serializers.ModelSerializer):
             )
         
         return links
+
+
+class EventPolicyValuesSerializer(serializers.Serializer):
+    allow_external_events = serializers.BooleanField()
+    allow_attendee_deletions = serializers.BooleanField()
+    allow_workshops = serializers.BooleanField()
+    allow_product_releases = serializers.BooleanField()
+    allow_sponsors = serializers.BooleanField()
+    require_long_description = serializers.BooleanField()
+    require_short_description = serializers.BooleanField()
+    require_landing_image = serializers.BooleanField()
+    product_release_must_be_approved_by_organisation = serializers.BooleanField()
+    must_be_approved_by_organisation = serializers.BooleanField()
+    max_attendees_per_event = serializers.IntegerField()
+    card_payments_are_allowed = serializers.BooleanField()
+    bank_transfers_are_allowed = serializers.BooleanField()
+    max_package_price = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+
+class EventPolicySerializer(serializers.ModelSerializer):
+    effective_policy = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EventPolicy
+        fields = (
+            'id', 'event',
+            'allow_external_events', 'allow_attendee_deletions', 'allow_workshops',
+            'allow_product_releases', 'allow_sponsors', 'require_long_description',
+            'require_short_description', 'require_landing_image',
+            'product_release_must_be_approved_by_organisation',
+            'must_be_approved_by_organisation', 'max_attendees_per_event',
+            'card_payments_are_allowed', 'bank_transfers_are_allowed',
+            'max_package_price', 'effective_policy', 'created_at', 'updated_at',
+        )
+        read_only_fields = ('id', 'event', 'effective_policy', 'created_at', 'updated_at')
+
+    @extend_schema_field(EventPolicyValuesSerializer)
+    def get_effective_policy(self, obj):
+        return get_effective_policy_values(obj)
+
+    def validate(self, attrs):
+        event = self.instance.event
+        if not event.organisation_id:
+            return attrs
+
+        from apps.organisations.models import OrganisationEventPolicy
+
+        try:
+            baseline = event.organisation.event_policy
+        except OrganisationEventPolicy.DoesNotExist:
+            return attrs
+
+        for field in EventPolicy.ALLOW_FIELDS:
+            if attrs.get(field) is True and getattr(baseline, field) is False:
+                raise serializers.ValidationError({
+                    field: 'This capability is disabled by the organisation policy.'
+                })
+        for field in EventPolicy.REQUIRE_FIELDS:
+            if attrs.get(field) is False and getattr(baseline, field) is True:
+                raise serializers.ValidationError({
+                    field: 'This requirement is enforced by the organisation policy.'
+                })
+
+        attendee_limit = attrs.get('max_attendees_per_event')
+        organisation_limit = baseline.max_attendees_per_event
+        if attendee_limit is not None and organisation_limit and (
+            attendee_limit == 0 or attendee_limit > organisation_limit
+        ):
+            raise serializers.ValidationError({
+                'max_attendees_per_event': 'The event limit cannot exceed the organisation limit.'
+            })
+
+        package_price = attrs.get('max_package_price')
+        if package_price is not None and package_price > baseline.max_package_price:
+            raise serializers.ValidationError({
+                'max_package_price': 'The event limit cannot exceed the organisation limit.'
+            })
+        return attrs
 
 
 class EventListSerializer(serializers.ModelSerializer):
@@ -1026,10 +1105,14 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
                 assigned_by=self.context['request'].user,
             )
 
+            role = EventRole.objects.filter(category=EventRoleCategoryChoices.ADMINISTRATIVE).first()
+            if not role:
+                raise serializers.ValidationError({"role-assignment": "an unexpected error occured"})
+
             EventRoleAssignment.objects.create(
                 event=instance,
                 user=self.context['request'].user,
-                role=EventRoleCategoryChoices.ADMINISTRATIVE, 
+                role=role, 
                 assigned_at=timezone.now(),
                 assigned_by=self.context['request'].user,
             ),

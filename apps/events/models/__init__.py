@@ -1,4 +1,5 @@
 from .events import Event, EventType, EventStatusChoices, EventSettings
+from .policy import EventPolicy
 from .permissions import EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices
 from .forms import (
     EventForm, EventFormStatusChoices,
@@ -39,6 +40,7 @@ __all__ = [
     'EventQuestionAnswer',
     'EventQuestionAnswerChoice',
     'EventSettings',
+    'EventPolicy',
     'EventVenue',
     'EventVenueRoom',
     'EventVenueContact',

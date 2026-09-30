@@ -269,9 +269,10 @@ class BookingIntent(SoftDeleteModel): # intents delete after expiry
             total=Sum('intended_ticket_count')
         )['total'] or 0
 
-        if self.event.maximum_attendance is None:
+        maximum_attendance = self.event.effective_maximum_attendance
+        if maximum_attendance is None:
             return True
-        available_capacity = self.event.maximum_attendance - self.event.number_of_attendees - reserved_by_intents
+        available_capacity = maximum_attendance - self.event.number_of_attendees - reserved_by_intents
         return available_capacity >= self.intended_ticket_count
     
     def can_create_booking(self) -> bool:
@@ -286,7 +287,7 @@ class BookingIntent(SoftDeleteModel): # intents delete after expiry
             return False
         
         # Final capacity check
-        if self.event.maximum_attendance is not None:
+        if self.event.effective_maximum_attendance is not None:
             if self.event.available_capacity < self.intended_ticket_count:
                 return False
         

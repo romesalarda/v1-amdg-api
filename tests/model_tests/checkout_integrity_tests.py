@@ -172,9 +172,12 @@ class CheckoutIntegrityModelTest(TestCase):
                         "attendee_draft": {
                             "first_name": "Draft",
                             "last_name": "Model",
+                            "email": "draft.model@example.com",
                             "date_of_birth": "1990-01-01",
                             "relationship_to_user": "self",
                             "area_from": self.area.id,
+                            "phone_number": "1234567890",
+                            "gender": "other"
                         },
                         "package_id": self.package.id,
                         "product_selections": [],

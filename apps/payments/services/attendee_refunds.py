@@ -1314,7 +1314,7 @@ class AttendeeRefundService:
                 "failed_order_ids": failed_order_ids,
                 "restored_payment_status": restored_payment_status,
             },
-            notification_type=NotificationTypeChoices.REFUND_REJECTED,
+            notification_type=NotificationTypeChoices.REFUND_REJECTION,
             priority=NotificationPriorityChoices.HIGH,
             force_create=True,
         )
