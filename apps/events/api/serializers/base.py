@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db.models import Q
@@ -1087,6 +1088,19 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "timezone": f"Invalid timezone: {timezone_str}"
                 })
+        
+        # Enforce event creation authorisation for organisation events.
+        # Only applies on create; external events (no organisation) are unrestricted.
+        if self.instance is None:
+            organisation = data.get('organisation')
+            if organisation is not None:
+                from apps.organisations.api.permissions import user_can_create_event_for_organisation
+                request = self.context.get('request')
+                user = getattr(request, 'user', None)
+                if not user_can_create_event_for_organisation(user, organisation):
+                    raise PermissionDenied(
+                        "You are not authorised to create events for this organisation."
+                    )
         
         return data
     

@@ -15,19 +15,19 @@ from PIL import Image
 from djmoney.money import Money
 
 from apps.events.models import (
-    Event, EventType, EventSettings, EventStatusChoices,
+    Event, EventType, EventStatusChoices,
     EventAuthorization, EventAuthorizationStatusChoices,
     EventPermission, EventPermissionAssignment, EventPermissionCategoryChoices,
     EventRole, EventRoleAssignment, EventRoleCategoryChoices,
-    EventStaff, EventStaffAvailability, EventStaffInvite,
+    EventStaff, EventStaffInvite,
     EventReview,
     EventQuestion, EventQuestionTypeChoices, EventQuestionOption,
-    EventQuestionAnswer, EventQuestionAnswerChoice,
-    EventVenue, EventVenueRoom, EventVenueContact, EventVenueMetadata,
+    EventQuestionAnswer, EventVenue
 )
 from apps.common.models import AvailabilityWindow, Resource, AvailabilityTypeChoices, ResourceTypeChoices
 from apps.organisations.models import (
-    Organisation, OrganisationControl, Leader, LeaderPermission,
+    Organisation, OrganisationControl, Leader, LeaderPermission, LeaderPermissionCode,
+    OrganisationInvite,
 )
 from apps.attendee.models import Attendee
 from apps.attendee.models import AttendeeRelationship
@@ -56,11 +56,29 @@ class BaseEventAPITestCase(TestCase):
             is_staff=True
         )
 
+        self.other_user = User.objects.create_user(
+            username='otheruser',
+            email='otheruser@example.com',
+            password='testpass123'
+        )
+
+        self.target_user = User.objects.create_user(
+            username='targetuser',
+            email='targetuser@example.com',
+            password='testpass123'
+        )
         
         self.organisation = Organisation.objects.create(
             title='Test Organisation',
             description='Test organisation description',
             created_by=self.user
+        )
+
+        # The base user controls the organisation so event creation stays authorised.
+        OrganisationControl.objects.create(
+            organisation=self.organisation,
+            user=self.user,
+            added_by=self.user,
         )
         
         self.event_type = EventType.objects.create(
@@ -289,11 +307,6 @@ class EventAPITest(BaseEventAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_event_policy_controller_can_update(self):
-        OrganisationControl.objects.create(
-            organisation=self.organisation,
-            user=self.user,
-            added_by=self.user,
-        )
         self.client.force_authenticate(user=self.user)
 
         response = self.client.patch(
@@ -339,11 +352,6 @@ class EventAPITest(BaseEventAPITestCase):
         baseline = self.organisation.event_policy
         baseline.allow_sponsors = False
         baseline.save()
-        OrganisationControl.objects.create(
-            organisation=self.organisation,
-            user=self.user,
-            added_by=self.user,
-        )
         self.client.force_authenticate(user=self.user)
 
         response = self.client.patch(
@@ -1976,17 +1984,17 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         """Set up test data for staff invite tests"""
         super().setUp()
         
-        self.target_user = User.objects.create_user(
-            username='targetuser',
-            email='targetuser@example.com',
-            password='testpass123'
-        )
+        # self.target_user = User.objects.create_user(
+        #     username='targetuser',
+        #     email='targetuser@example.com',
+        #     password='testpass123'
+        # )
         
-        self.other_user = User.objects.create_user(
-            username='otheruser',
-            email='otheruser@example.com',
-            password='testpass123'
-        )
+        # self.other_user = User.objects.create_user(
+        #     username='otheruser',
+        #     email='otheruser@example.com',
+        #     password='testpass123'
+        # )
         
         # Make the main user an event staff member so they can create invites
         self.staff_member = EventStaff.objects.create(
@@ -2152,6 +2160,109 @@ class EventStaffInviteAPITest(BaseEventAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('message', response.data)
         self.assertIn('staff', response.data)
+
+
+class EventCreateAuthorisationTest(BaseEventAPITestCase):
+    """Only controllers or ALLOW_EVENT_APPROVAL(create) leaders may create organisation events."""
+
+    def setUp(self):
+        super().setUp()
+
+        self.invite = OrganisationInvite.objects.create(
+            organisation=self.organisation,
+            target_user=self.target_user,
+            invited_by=self.user,
+        )
+
+    def _payload(self, **overrides):
+        data = {
+            'title': 'Authorisation Test Event',
+            'display_code': f'AT{uuid.uuid4().hex[:6].upper()}',
+            'event_type': self.event_type.id,
+            'start_datetime': (timezone.now() + timedelta(days=60)).isoformat(),
+            'end_datetime': (timezone.now() + timedelta(days=62)).isoformat(),
+            'organisation': self.organisation.id,
+            'status': EventStatusChoices.DRAFTING,
+            'timezone': 'Europe/London',
+        }
+        data.update(overrides)
+        return data
+
+    def _make_leader(self, user, permission_code, allow_create):
+        org_ct = ContentType.objects.get_for_model(Organisation)
+        leader = Leader.objects.create(
+            user=user,
+            target_type=org_ct,
+            target_id=self.organisation.id,
+            organisation=self.organisation,
+        )
+        return LeaderPermission.objects.create(
+            leader=leader,
+            permission_code=permission_code,
+            allow_create=allow_create,
+        )
+
+    def test_create_as_controller_succeeds(self):
+        """Organisation controllers may create events."""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post('/api/event/list/', self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_create_as_leader_with_create_access_succeeds(self):
+        """Leaders with ALLOW_EVENT_APPROVAL + allow_create may create events."""
+        leader_user = User.objects.create_user(
+            username='eventleader', email='eventleader@example.com', password='pass'
+        )
+        self._make_leader(leader_user, LeaderPermissionCode.ALLOW_EVENT_APPROVAL, True)
+        self.client.force_authenticate(user=leader_user)
+        response = self.client.post('/api/event/list/', self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_create_as_leader_without_create_access_forbidden(self):
+        """ALLOW_EVENT_APPROVAL without allow_create does not authorise creation."""
+        leader_user = User.objects.create_user(
+            username='eventleadernc', email='eventleadernc@example.com', password='pass'
+        )
+        self._make_leader(leader_user, LeaderPermissionCode.ALLOW_EVENT_APPROVAL, False)
+        self.client.force_authenticate(user=leader_user)
+        response = self.client.post('/api/event/list/', self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_as_leader_with_other_permission_forbidden(self):
+        """Other leader permission codes do not authorise creation."""
+        leader_user = User.objects.create_user(
+            username='eventleaderop', email='eventleaderop@example.com', password='pass'
+        )
+        self._make_leader(leader_user, LeaderPermissionCode.ALLOW_MEMBERSHIP_ACCESS, True)
+        self.client.force_authenticate(user=leader_user)
+        response = self.client.post('/api/event/list/', self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_as_regular_user_forbidden(self):
+        """Authenticated users without roles cannot create organisation events."""
+        regular_user = User.objects.create_user(
+            username='regularcreator', email='regularcreator@example.com', password='pass'
+        )
+        self.client.force_authenticate(user=regular_user)
+        response = self.client.post('/api/event/list/', self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_as_staff_without_authorisation_forbidden(self):
+        """Staff users are not exempt from the authorisation rule."""
+        self.client.force_authenticate(user=self.staff_user)
+        response = self.client.post('/api/event/list/', self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_external_event_without_organisation_allowed(self):
+        """Events without an organisation remain unrestricted."""
+        regular_user = User.objects.create_user(
+            username='externalcreator', email='externalcreator@example.com', password='pass'
+        )
+        self.client.force_authenticate(user=regular_user)
+        payload = self._payload()
+        del payload['organisation']
+        response = self.client.post('/api/event/list/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         
         # Verify invite is accepted
         self.invite.refresh_from_db()

@@ -1,4 +1,4 @@
-from .authority import Leader, LeaderLocationType, LocationLeaderInvite, LeaderLocationType, LeaderPermission
+from .authority import Leader, LeaderLocationType, LocationLeaderInvite, LeaderLocationType, LeaderPermission, LeaderPermissionCode
 from .organisation import (
     Organisation, OrganisationContact, OrganisationControl, 
     InvolvedOrganisationRoleChoices, InvolvedEventOrganisation,
@@ -13,5 +13,5 @@ __all__ = [
     'InvolvedOrganisationRoleChoices', 'InvolvedEventOrganisation',
     'EventSponsor', 'EventSponsorPackage', 'EventSponsorInvite',
     'OrganisationAcceptanceCode', 'OrganisationInvite', 'UserOrganisationMembership',
-    'OrganisationEventPolicy', 'OrganisationEventTypePolicyRestriction', 'LeaderPermission', 'LeaderLocationType'
+    'OrganisationEventPolicy', 'OrganisationEventTypePolicyRestriction', 'LeaderPermission', 'LeaderPermissionCode', 'LeaderLocationType'
     ]
