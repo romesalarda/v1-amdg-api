@@ -17,6 +17,12 @@ class EventStaff(models.Model):
     class Meta:
         unique_together = ('event', 'user')
         ordering = ['-assigned_at']
+
+    def __str__(self):
+        return f"{self.user} - {self.event}"
+
+    def __repr__(self):
+        return f"<EventStaff {self.user} - {self.event}>"
         
 class EventStaffAvailability(models.Model):
     '''

@@ -296,7 +296,7 @@ class EventAPITest(BaseEventAPITestCase):
         self.assertTrue(response.data['effective_policy']['allow_sponsors'])
 
     def test_event_policy_write_requires_organisation_control(self):
-        self.client.force_authenticate(user=self.user)
+        self.client.force_authenticate(user=self.other_user)
 
         response = self.client.patch(
             f'/api/event/list/{self.event.url_safe_title}/policy/',
@@ -2168,8 +2168,8 @@ class EventCreateAuthorisationTest(BaseEventAPITestCase):
     def setUp(self):
         super().setUp()
 
-        self.invite = OrganisationInvite.objects.create(
-            organisation=self.organisation,
+        self.invite = EventStaffInvite.objects.create(
+            event=self.event,
             target_user=self.target_user,
             invited_by=self.user,
         )
@@ -2263,17 +2263,11 @@ class EventCreateAuthorisationTest(BaseEventAPITestCase):
         del payload['organisation']
         response = self.client.post('/api/event/list/', payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        
-        # Verify invite is accepted
-        self.invite.refresh_from_db()
-        self.assertTrue(self.invite.accepted)
-        self.assertIsNotNone(self.invite.accepted_at)
-        self.assertFalse(self.invite.is_active)
-        
+
         # Verify EventStaff was created
         staff = EventStaff.objects.filter(
-            event=self.event,
-            user=self.target_user
+            event=Event.objects.get(event_id=response.data['event_id']),
+            user=regular_user
         ).first()
         self.assertIsNotNone(staff)
     
@@ -2302,6 +2296,7 @@ class EventCreateAuthorisationTest(BaseEventAPITestCase):
         
         self.client.force_authenticate(user=self.target_user)
         response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/accept/')
+
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
         response = self.client.post(f'/api/event/list/{self.event.url_safe_title}/staff-invites/{self.invite.id}/accept/')

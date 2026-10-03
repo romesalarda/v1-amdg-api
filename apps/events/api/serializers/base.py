@@ -135,6 +135,7 @@ class EventSettingsSerializer(serializers.ModelSerializer):
 
 
 class EventPolicyValuesSerializer(serializers.Serializer):
+    
     allow_external_events = serializers.BooleanField()
     allow_attendee_deletions = serializers.BooleanField()
     allow_workshops = serializers.BooleanField()
