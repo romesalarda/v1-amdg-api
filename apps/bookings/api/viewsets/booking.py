@@ -591,6 +591,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 reserved_payment = serializer.validated_data.get('_payment_obj')
                 if (
                     not reserved_payment
+                    and payment_method
                     and payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
                 ):
                     # Fallback for clients that reserved a bank transfer reference but did not
