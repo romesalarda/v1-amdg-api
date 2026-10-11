@@ -186,7 +186,7 @@ class PersonalInfoItemSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
         allow_null=True,
-        help_text="Additional details about this requirement"
+        help_text="Details about this requirement (required - must not be blank)"
     )
     notes = serializers.CharField(
         required=False,
@@ -194,6 +194,14 @@ class PersonalInfoItemSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Notes or special instructions for this requirement"
     )
+
+    def validate(self, attrs):
+        # Selected items without details would otherwise be silently dropped downstream.
+        if not (attrs.get('details') or '').strip():
+            raise serializers.ValidationError({
+                'details': 'Please provide details for this requirement.'
+            })
+        return attrs
 
 
 class MedicalConditionItemSerializer(PersonalInfoItemSerializer):

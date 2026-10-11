@@ -44,6 +44,7 @@ from apps.bookings.api.serializers import (
     TicketListSerializer, 
     EventAlternativeSigninListSerializer,
     CheckoutSerializer, CheckoutPreviewSerializer, BookingAttendeePrecheckSerializer,
+    AttendeePersonalInfoDraftSerializer,
 )
 from apps.bookings.api.filtersets import BookingFilterSet
 from apps.bookings.api.permissions import IsBookingOwnerOrAdministrative
@@ -366,6 +367,56 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         response_status = status.HTTP_200_OK if precheck_result['valid'] else status.HTTP_400_BAD_REQUEST
         return Response(precheck_result, status=response_status)
+
+    @extend_schema(
+        summary="Sanity-check attendee personal info",
+        description=(
+            "Validate dietary, medical and accessibility entries for each attendee so that "
+            "incomplete items (e.g. a selection with no details) are reported instead of being lost."
+        ),
+        tags=["Bookings"],
+        request={'application/json': {'type': 'object'}},
+        responses={
+            200: OpenApiResponse(description="All personal info is valid"),
+            400: OpenApiResponse(description="Personal info has issues"),
+        },
+        operation_id="bookings_personal_info_check",
+    )
+    @action(detail=False, methods=['post'], url_path='personal-info-check')
+    def personal_info_check(self, request: Request):
+        """Body: {"attendees": [{"personal_info": {...}}, ...]}. Returns per-attendee issues."""
+
+        attendees = request.data.get('attendees')
+        if not isinstance(attendees, list):
+            raise ValidationError({'attendees': 'A list of attendees is required.'})
+
+        issues = []
+        for index, entry in enumerate(attendees):
+            personal_info = entry.get('personal_info') if isinstance(entry, dict) else None
+            if not personal_info:
+                continue
+            serializer = AttendeePersonalInfoDraftSerializer(data=personal_info)
+            if serializer.is_valid():
+                continue
+            for category, errors in serializer.errors.items():
+                if isinstance(errors, list):
+                    for item_index, item_errors in enumerate(errors):
+                        if not item_errors:
+                            continue
+                        item_id = None
+                        if isinstance(personal_info.get(category), list) and item_index < len(personal_info[category]):
+                            item_id = personal_info[category][item_index].get('id')
+                        issues.append({
+                            'attendee_index': index,
+                            'category': category,
+                            'item_id': item_id,
+                            'errors': item_errors,
+                        })
+                else:
+                    issues.append({'attendee_index': index, 'category': category, 'item_id': None, 'errors': errors})
+
+        result = {'valid': not issues, 'issues': issues}
+        return Response(result, status=status.HTTP_200_OK if not issues else status.HTTP_400_BAD_REQUEST)
 
     @extend_schema(
         summary="List checkout alternative sign-in definitions",
