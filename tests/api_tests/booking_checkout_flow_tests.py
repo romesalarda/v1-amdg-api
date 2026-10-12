@@ -773,7 +773,6 @@ class CheckoutAPITestCase(TestCase):
                 }
             ]
         }, format='json')
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'pending_verification')
         self.assertIsNotNone(response.data.get('booking_id'))

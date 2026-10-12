@@ -989,6 +989,72 @@ class OrderAPITestCase(APITestCase):
         # Verify the total was recalculated (3 * £25 = £75)
         self.assertEqual(self.order.total_amount, Money(75, 'GBP'))
     
+    def test_retrieve_with_event_param_after_item_added(self):
+        self.order.add_order_item(self.variant, 1)
+        self.client.force_authenticate(user=self.customer_user)
+        slug = self.event.url_safe_title
+        response = self.client.get(f'/api/products/orders/{self.order.order_id}/?event={slug}')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNotNone(response.data['expires_at'])
+        listing = self.client.get(f'/api/products/orders/?event={slug}&attendee_id={self.attendee.attendee_id}')
+        self.assertEqual(listing.status_code, 200, listing.data)
+
+    def test_remove_last_item_reports_order_deleted(self):
+        self.order.add_order_item(self.variant, 1)
+        item = self.order.order_items.first()
+        self.client.force_authenticate(user=self.customer_user)
+        response = self.client.post(
+            f'/api/products/orders/{self.order.order_id}/remove-item/',
+            {'order_item_id': item.id},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['order_deleted'])
+
+    def test_first_item_starts_hold(self):
+        self.order.add_order_item(self.variant, 1)
+        self.order.refresh_from_db()
+        self.assertIsNotNone(self.order.expires_at)
+        self.assertTrue(14 * 60 <= self.order.seconds_remaining <= 15 * 60)
+
+    def test_expire_cancels_order_and_restores_stock(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        self.order.add_order_item(self.variant, 2)
+        self.order.refresh_from_db()
+        self.variant.refresh_from_db()
+        stock_after_add = self.variant.stock_quantity
+        self.order.expires_at = timezone.now() - timedelta(seconds=1)
+        self.order.save()
+        self.assertTrue(self.order.expire())
+        self.order.refresh_from_db()
+        self.variant.refresh_from_db()
+        self.assertEqual(self.order.status, OrderStatusChoices.CANCELLED)
+        self.assertIsNotNone(self.order.expired_at)
+        self.assertGreater(self.variant.stock_quantity, stock_after_add)
+
+    def test_expired_order_add_item_returns_410(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        self.order.add_order_item(self.variant, 1)
+        self.order.expires_at = timezone.now() - timedelta(seconds=1)
+        self.order.save()
+        self.client.force_authenticate(user=self.customer_user)
+        response = self.client.post(
+            f'/api/products/orders/{self.order.order_id}/add-item/',
+            {'product_variant_id': str(self.variant.variant_id), 'quantity': 1}
+        )
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(response.data['code'], 'order_expired')
+
+    def test_extend_hold_once_only(self):
+        self.order.add_order_item(self.variant, 1)
+        self.client.force_authenticate(user=self.customer_user)
+        url = f'/api/products/orders/{self.order.order_id}/extend/'
+        first = self.client.post(url)
+        self.assertEqual(first.status_code, 200)
+        second = self.client.post(url)
+        self.assertEqual(second.status_code, 400)
+
     def test_submit_order(self):
         """Test submitting an order."""
         # Add item first
