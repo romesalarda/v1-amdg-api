@@ -61,6 +61,7 @@ from apps.payments.models import DiscountType, BankTransferEvidence
 from apps.payments.mixins import PaymentMixin
 
 from apps.payments.services.evaluator import discount_applies
+from apps.payments.services.completion import complete_payment, schedule_payment_fulfilment
 
 from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
 from apps.bookings.services import validate_attendee_precheck
@@ -670,6 +671,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         status=PaymentStatusChoices.COMPLETED,
                         metadata=payment_metadata,
                     )
+                    schedule_payment_fulfilment(payment.pk)
 
                     if idempotency_key:
                         intent.last_checkout_idempotency_key = idempotency_key
@@ -760,7 +762,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 #
                 # For Stripe, we intentionally do NOT pre-create objects here. All booking
                 # artifacts (Booking, Attendees, Tickets) are created atomically by
-                # BookingCheckoutFinaliser inside _process_completed_payment() after Stripe
+                # BookingCheckoutFinaliser inside fulfil_payment() after Stripe
                 # confirms the payment via webhook. This guarantees that if the card is
                 # declined or the user abandons the Stripe confirmation step, no orphaned
                 # records are left behind.
@@ -805,7 +807,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                             })
 
                         payment.stripe_payment_intent = payment_intent.id
-                        payment.transition_to(PaymentStatusChoices.COMPLETED)
+                        complete_payment(payment)
                         payment.save(update_fields=['stripe_payment_intent', 'updated_at'])
 
                         finalization = finalize_from_payment(payment, actor=user)
@@ -883,7 +885,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     return Response(response_data, status=status.HTTP_201_CREATED)
 
                 if payment_method.method_type == PaymentMethodTypeChoices.CASH:
-                    payment.transition_to(PaymentStatusChoices.COMPLETED)
+                    complete_payment(payment)
                     finalization = finalize_from_payment(payment, actor=user)
                     booking = finalization['booking']
                     response_data = CheckoutResponseBuilder.build(

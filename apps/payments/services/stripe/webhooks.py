@@ -11,6 +11,7 @@ from django.db import transaction
 
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.exceptions import StripeWebhookError
+from apps.payments.services.completion import complete_payment
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ class PaymentIntentSucceededHandler(WebhookEventHandler):
                     payment.stripe_charge_id = charge_id
                 
                 # Transition to COMPLETED
-                payment.transition_to(PaymentStatusChoices.COMPLETED)
+                complete_payment(payment)
                 payment.save()
                 
                 # Log history

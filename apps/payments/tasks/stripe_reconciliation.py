@@ -17,6 +17,7 @@ from apps.payments.models import Payment, PaymentStatusChoices, PaymentHistoryAc
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.payment_intents import PaymentIntentService
 from apps.payments.services.stripe.exceptions import StripeServiceError
+from apps.payments.services.completion import complete_payment
 
 logger = get_task_logger(__name__)
 
@@ -114,7 +115,10 @@ def reconcile_stripe_payment(self, payment_id: str):
                 pass
             
             if status_changed and new_status:
-                payment.transition_to(new_status)
+                if new_status == PaymentStatusChoices.COMPLETED:
+                    complete_payment(payment)
+                else:
+                    payment.transition_to(new_status)
                 payment.save()
                 
                 # Log reconciliation

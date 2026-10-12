@@ -90,7 +90,13 @@ class Payment(PayableModel):
         help_text='Snapshot of payment method policy at payment creation time.'
     )
     metadata = models.JSONField(blank=True, null=True) # data of info when the payment was made (ABSOLUTE)
-    
+    fulfilled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        db_index=True,
+        help_text='Set once post-completion processing (tickets, order transitions, etc.) has run.'
+    )
     status = models.CharField(
         max_length=20,
         choices=PaymentStatusChoices.choices,

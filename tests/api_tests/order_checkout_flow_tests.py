@@ -34,6 +34,7 @@ from apps.bookings.models import Booking
 from apps.organisations.models import Organisation
 
 import logging
+from apps.payments.services.completion import complete_payment
 
 logger = logging.getLogger(__name__)
 
@@ -1046,9 +1047,8 @@ class OrderPaymentCompletionSignalTestCase(TransactionTestCase):
         order.payment = payment
         order.save()
         
-        # Complete payment (triggers signal)
-        payment.status = PaymentStatusChoices.COMPLETED
-        payment.save()
+        # Complete payment explicitly (schedules fulfilment on commit)
+        complete_payment(payment)
         
         # Verify order transitioned to PROCESSING
         order.refresh_from_db()
@@ -1120,13 +1120,13 @@ class OrderPaymentCompletionSignalTestCase(TransactionTestCase):
         order.payment = payment
         order.save(update_fields=['payment'])
 
-        payment.status = PaymentStatusChoices.COMPLETED
-        payment.save(update_fields=['status'])
+        complete_payment(payment)
 
         payment.refresh_from_db()
         metadata = payment.metadata or {}
         self.assertTrue(metadata.get('requires_manual_review'))
         self.assertIn('processing_error', metadata)
+        self.assertIsNone(payment.fulfilled_at)
 
 
 # ============================================================================

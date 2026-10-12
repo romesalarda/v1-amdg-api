@@ -1,11 +1,12 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.db import transaction
 from django.utils.html import format_html
 from django.db.models import Sum, Count
 from django.urls import reverse
 from apps.payments.models import (
     Payment, PaymentMethod, Discount, DiscountRule,
     RefundRequest, RefundAssociation, RefundPolicy,
-    Donation, PaymentHistoryAction,
+    Donation, PaymentHistoryAction, PaymentStatusChoices,
     CreditExpense, BankTransferEvidence, StripeConnectedAccount,
     DebitExpense, BudgetProposal,
 )
@@ -250,7 +251,7 @@ class PaymentAdmin(admin.ModelAdmin):
     )
     readonly_fields = (
         'payment_id', 'payment_reference',
-        'created_at', 'updated_at', 'modified_amount',
+        'created_at', 'updated_at', 'fulfilled_at', 'modified_amount',
         'target', 'get_refund_summary', 'get_donation_summary', 'get_bank_transfer_evidence_status', 'get_stripe_account_id'
     )
     date_hierarchy = 'created_at'
@@ -287,7 +288,7 @@ class PaymentAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Metadata', {
-            'fields': ('metadata', 'created_at', 'updated_at'),
+            'fields': ('metadata', 'created_at', 'updated_at', 'fulfilled_at'),
             'classes': ('collapse',)
         }),
     )
@@ -378,22 +379,38 @@ class PaymentAdmin(admin.ModelAdmin):
     get_bank_transfer_evidence_status.short_description = 'Bank Evidence'
     
     def mark_as_completed(self, request, queryset):
-        """Bulk action to mark payments as completed."""
+        """Bulk action to mark payments as completed (validated, and fulfilled)."""
+        from django.core.exceptions import ValidationError
         from apps.payments.models.payments import PaymentStatusChoices
-        pending = queryset.filter(status=PaymentStatusChoices.PENDING)
-        updated = pending.update(status=PaymentStatusChoices.COMPLETED)
-        
-        # Log actions
-        for payment in pending:
-            PaymentHistoryAction.objects.create(
-                payment=payment,
-                action='BULK_MARKED_COMPLETED',
-                description='Payment marked as completed via bulk action',
-                performed_by=request.user
-            )
-        
+        from apps.payments.services.completion import complete_payment
+
+        updated = 0
+        for payment in queryset.filter(status=PaymentStatusChoices.PENDING):
+            try:
+                with transaction.atomic():
+                    complete_payment(payment)
+                    PaymentHistoryAction.objects.create(
+                        payment=payment,
+                        action='BULK_MARKED_COMPLETED',
+                        description='Payment marked as completed via bulk action',
+                        performed_by=request.user
+                    )
+                updated += 1
+            except ValidationError as exc:
+                self.message_user(
+                    request,
+                    f'{payment.payment_reference}: {"; ".join(exc.messages)}',
+                    level=messages.ERROR,
+                )
+
         self.message_user(request, f'{updated} payment(s) marked as completed.')
     mark_as_completed.short_description = 'Mark selected as COMPLETED'
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if 'status' in form.changed_data and obj.status == PaymentStatusChoices.COMPLETED:
+            from apps.payments.services.completion import schedule_payment_fulfilment
+            schedule_payment_fulfilment(obj.pk)
     
     def mark_as_failed(self, request, queryset):
         """Bulk action to mark payments as failed."""
