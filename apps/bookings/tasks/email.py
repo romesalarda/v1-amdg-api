@@ -8,7 +8,7 @@ import logging
 
 from celery import shared_task
 
-from apps.bookings.services.email import BookingEmailService
+from apps.bookings.services.email import send_booking_confirmation, send_booking_pending_bank_transfer
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def send_booking_confirmation_email(self, booking_pk: int, payment_pk: int) -> s
 
     Dispatched immediately after ticket creation commits to the database,
     both for Stripe direct-confirmation and bank-transfer-verified paths
-    (both routes flow through BookingPaymentProcessor.process).
+    (both routes flow through process_booking_payment).
 
     Retries up to 3 times (60-second intervals) on unexpected errors.
     Email delivery failures (SMTP errors) are logged but do not trigger
@@ -39,7 +39,7 @@ def send_booking_confirmation_email(self, booking_pk: int, payment_pk: int) -> s
         payment_pk,
     )
     try:
-        success = BookingEmailService.send_booking_confirmation(booking_pk, payment_pk)
+        success = send_booking_confirmation(booking_pk, payment_pk)
         if success:
             return f"confirmation email sent | booking_pk={booking_pk}"
         return f"confirmation email skipped (no recipient or missing record) | booking_pk={booking_pk}"
@@ -75,7 +75,7 @@ def send_booking_pending_bank_transfer_email(self, booking_pk: int, payment_pk: 
         payment_pk,
     )
     try:
-        success = BookingEmailService.send_booking_pending_bank_transfer(
+        success = send_booking_pending_bank_transfer(
             booking_pk, payment_pk
         )
         if success:

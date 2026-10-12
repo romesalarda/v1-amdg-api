@@ -63,7 +63,7 @@ from apps.payments.mixins import PaymentMixin
 from apps.payments.services.evaluator import discount_applies
 
 from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
-from apps.bookings.services import AttendeePrecheckValidationService
+from apps.bookings.services import validate_attendee_precheck
 
 import logging
 logger = logging.getLogger(__name__)
@@ -359,7 +359,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         intent = serializer.validated_data['_intent']
         attendee_selections = serializer.validated_data['attendees']
-        precheck_result = AttendeePrecheckValidationService.validate(
+        precheck_result = validate_attendee_precheck(
             event=intent.event,
             user=request.user,
             attendee_selections=attendee_selections,

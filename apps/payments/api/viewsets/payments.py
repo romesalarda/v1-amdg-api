@@ -28,7 +28,7 @@ from apps.payments.api.permissions import (
     resolve_event_from_request, user_can_access_event_payments,
 )
    
-from apps.bookings.services import TicketCreatorService
+from apps.bookings.services import create_tickets_for_payment
 from apps.payments.models import PaymentMethodTypeChoices
 from apps.bookings.models import Booking
 from apps.organisations.models import EventSponsor
@@ -531,7 +531,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
             # Handle target-specific actions
             if isinstance(target, Booking):
                 # Create tickets for booking
-                tickets = TicketCreatorService.create_tickets_for_payment(payment)
+                tickets = create_tickets_for_payment(payment)
                 
                 logger.info(
                     f"Bank transfer verified for booking payment {payment.payment_reference}. "

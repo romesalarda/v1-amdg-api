@@ -22,6 +22,7 @@ from apps.bookings.models import (
     EventAlternativeSigninIdentifier,
 )
 from apps.bookings.models.products import PackageProduct
+from apps.bookings.services.ticket_creator import create_tickets_for_payment
 from apps.bookings.tasks import send_booking_pending_bank_transfer_email
 from apps.common.models import Resource
 from apps.events.models import EventQuestionAnswer, EventQuestionAnswerChoice, EventNotification, NotificationTypeChoices, NotificationPriorityChoices
@@ -249,9 +250,7 @@ def _finalize_internal(payment: Payment, actor: typing.Optional[User] = None, cr
 
         tickets_created = False
         if create_tickets and payment.status == PaymentStatusChoices.COMPLETED:
-            from apps.bookings.services.ticket_creator import TicketCreatorService
-
-            TicketCreatorService.create_tickets_for_payment(payment)
+            create_tickets_for_payment(payment)
             booking.attendees.filter(status=AttendeeStatus.PENDING_PAYMENT).update(status=AttendeeStatus.REGISTERED)
             tickets_created = True
 
@@ -283,7 +282,7 @@ def _finalize_internal(payment: Payment, actor: typing.Optional[User] = None, cr
         #   2. The payment method is genuinely BANK_TRANSFER.
         #
         # The confirmation-with-tickets email is dispatched separately by
-        # BookingPaymentProcessor once the payment is marked COMPLETED.
+        # process_booking_payment once the payment is marked COMPLETED.
         _method_type = payment.method.method_type if payment.method else None
         if not create_tickets and _method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
             _booking_pk = booking.pk

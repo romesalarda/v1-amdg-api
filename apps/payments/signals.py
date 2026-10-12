@@ -10,7 +10,7 @@ schedules work via ``transaction.on_commit`` so side-effects only execute
 after the outer DB transaction commits. All business logic lives in
 dedicated service classes in their respective apps:
 
-  - apps.bookings.services.BookingPaymentProcessor  (Booking targets)
+  - apps.bookings.services.process_booking_payment  (Booking targets)
   - apps.products.services.OrderPaymentProcessor    (standalone Order targets)
 """
 import logging
@@ -20,7 +20,8 @@ from django.dispatch import receiver
 
 from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 from apps.bookings.services import (
-    TicketCreatorService,
+    should_create_tickets_for_payment,
+    process_booking_payment,
     finalize_from_payment,
     finalize_for_stripe,
     finalize_for_bank_transfer,
@@ -128,7 +129,7 @@ def _process_completed_payment(payment_pk: int) -> None:
     # ------------------------------------------------------------------
     # Phase 2: Auto-processing gate
     # ------------------------------------------------------------------
-    if not TicketCreatorService.should_create_tickets_for_payment(payment):
+    if not should_create_tickets_for_payment(payment):
         logger.info(
             f"Skipping auto-processing for payment {payment.payment_reference} "
             f"with method {payment.method.method_type if payment.method else 'None'}"
@@ -143,7 +144,6 @@ def _process_completed_payment(payment_pk: int) -> None:
     from apps.products.models import Order
     from apps.payments.models import Donation
     from apps.organisations.models import EventSponsor
-    from apps.bookings.services import BookingPaymentProcessor
     from apps.products.services import OrderPaymentProcessor
 
     target = payment.target
@@ -151,7 +151,7 @@ def _process_completed_payment(payment_pk: int) -> None:
     try:
         with transaction.atomic():
             if isinstance(target, Booking):
-                BookingPaymentProcessor.process(payment, target)
+                process_booking_payment(payment, target)
             elif isinstance(target, Order):
                 OrderPaymentProcessor.process(payment, target)
             elif isinstance(target, Donation):
