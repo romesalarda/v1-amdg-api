@@ -45,6 +45,7 @@ from apps.payments.models.stripe_accounts import StripeConnectedAccount
 from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
 from apps.payments.services.attendee_refunds import AttendeeRefundService
+from apps.payments.services.completion import schedule_payment_fulfilment
 from apps.events.models import Event
 from apps.events.services.policy import get_effective_policy_values
 
@@ -736,6 +737,9 @@ class PaymentUpdateSerializer(serializers.ModelSerializer):
         
         # Update the payment
         payment = super().update(instance, validated_data)
+
+        if old_status != new_status and new_status == PaymentStatusChoices.COMPLETED:
+            schedule_payment_fulfilment(payment.pk)
         
         # Log status change
         if old_status != new_status:

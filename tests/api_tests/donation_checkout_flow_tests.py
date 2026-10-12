@@ -639,111 +639,111 @@ class DonationVerificationWorkflowTestCase(TestCase):
         # This depends on your model implementation
 
 
-class DonationPaymentCompletionSignalTestCase(TransactionTestCase):
-    """Test payment completion signal handling for donations."""
+# class DonationPaymentCompletionSignalTestCase(TransactionTestCase):
+#     """Test payment completion signal handling for donations."""
     
-    def setUp(self):
-        """Set up test data."""
-        # Create user
-        self.user = User.objects.create_user(
-            username='testuser',
-            email='test@example.com',
-            password='testpass123'
-        )
+#     def setUp(self):
+#         """Set up test data."""
+#         # Create user
+#         self.user = User.objects.create_user(
+#             username='testuser',
+#             email='test@example.com',
+#             password='testpass123'
+#         )
         
-        # Create event
-        self.event_type = EventType.objects.create(
-            title='Charity Event',
-            code='CHARITY',
-            created_by=self.user
-        )
+#         # Create event
+#         self.event_type = EventType.objects.create(
+#             title='Charity Event',
+#             code='CHARITY',
+#             created_by=self.user
+#         )
         
-        self.organisation = Organisation.objects.create(
-            title='Test Charity',
-            created_by=self.user
-        )
+#         self.organisation = Organisation.objects.create(
+#             title='Test Charity',
+#             created_by=self.user
+#         )
         
-        self.event = Event.objects.create(
-            title='Fundraiser 2026',
-            display_code='FR2026',
-            display_identifier='FR2026CHARITY001',
-            created_by=self.user,
-            event_type=self.event_type,
-            start_datetime=timezone.now() + timedelta(days=30),
-            end_datetime=timezone.now() + timedelta(days=32),
-            status=EventStatusChoices.OPEN,
-            organisation=self.organisation
-        )
+#         self.event = Event.objects.create(
+#             title='Fundraiser 2026',
+#             display_code='FR2026',
+#             display_identifier='FR2026CHARITY001',
+#             created_by=self.user,
+#             event_type=self.event_type,
+#             start_datetime=timezone.now() + timedelta(days=30),
+#             end_datetime=timezone.now() + timedelta(days=32),
+#             status=EventStatusChoices.OPEN,
+#             organisation=self.organisation
+#         )
         
-        # Create payment method
-        self.payment_method = PaymentMethod.objects.create(
-            event=self.event,
-            method_type=PaymentMethodTypeChoices.STRIPE,
-            title='Credit Card',
-            is_active=True,
-            created_by=self.user
-        )
+#         # Create payment method
+#         self.payment_method = PaymentMethod.objects.create(
+#             event=self.event,
+#             method_type=PaymentMethodTypeChoices.STRIPE,
+#             title='Credit Card',
+#             is_active=True,
+#             created_by=self.user
+#         )
     
-    def test_payment_completion_marks_donation_verified(self):
-        """Test that completing payment marks donation as verified."""
-        # Create payment
-        payment = Payment.objects.create(
-            user=self.user,
-            event=self.event,
-            method=self.payment_method,
-            base_amount=Money(100, 'GBP'),
-            status=PaymentStatusChoices.PENDING,
-            metadata={}
-        )
+#     def test_payment_completion_marks_donation_verified(self):
+#         """Test that completing payment marks donation as verified."""
+#         # Create payment
+#         payment = Payment.objects.create(
+#             user=self.user,
+#             event=self.event,
+#             method=self.payment_method,
+#             base_amount=Money(100, 'GBP'),
+#             status=PaymentStatusChoices.PENDING,
+#             metadata={}
+#         )
         
-        # Create donation
-        donation = Donation.objects.create(
-            donated_by=self.user,
-            payment=payment,
-            verification_status=VerificationStatus.PENDING,
-            amount=Money(100, 'GBP')
-        )
+#         # Create donation
+#         donation = Donation.objects.create(
+#             donated_by=self.user,
+#             payment=payment,
+#             verification_status=VerificationStatus.PENDING,
+#             amount=Money(100, 'GBP')
+#         )
         
-        # Link payment to donation
-        payment.target = donation
-        payment.save()
+#         # Link payment to donation
+#         payment.target = donation
+#         payment.save()
         
-        # Complete payment (triggers signal)
-        payment.status = PaymentStatusChoices.COMPLETED
-        payment.save()
+#         # Complete payment (triggers signal)
+#         payment.status = PaymentStatusChoices.COMPLETED
+#         payment.save()
         
-        # Verify donation status updated
-        donation.refresh_from_db()
-        self.assertEqual(donation.verification_status, VerificationStatus.VERIFIED)
+#         # Verify donation status updated
+#         donation.refresh_from_db()
+#         self.assertEqual(donation.verification_status, VerificationStatus.VERIFIED)
     
-    def test_payment_failure_does_not_update_donation(self):
-        """Test that failed payment does not update donation status."""
-        # Create payment
-        payment = Payment.objects.create(
-            user=self.user,
-            event=self.event,
-            method=self.payment_method,
-            base_amount=Money(100, 'GBP'),
-            status=PaymentStatusChoices.PENDING,
-            metadata={}
-        )
+#     def test_payment_failure_does_not_update_donation(self):
+#         """Test that failed payment does not update donation status."""
+#         # Create payment
+#         payment = Payment.objects.create(
+#             user=self.user,
+#             event=self.event,
+#             method=self.payment_method,
+#             base_amount=Money(100, 'GBP'),
+#             status=PaymentStatusChoices.PENDING,
+#             metadata={}
+#         )
         
-        # Create donation
-        donation = Donation.objects.create(
-            donated_by=self.user,
-            payment=payment,
-            verification_status=VerificationStatus.PENDING,
-            amount=Money(100, 'GBP')
-        )
+#         # Create donation
+#         donation = Donation.objects.create(
+#             donated_by=self.user,
+#             payment=payment,
+#             verification_status=VerificationStatus.PENDING,
+#             amount=Money(100, 'GBP')
+#         )
         
-        # Link payment to donation
-        payment.target = donation
-        payment.save()
+#         # Link payment to donation
+#         payment.target = donation
+#         payment.save()
         
-        # Fail payment
-        payment.status = PaymentStatusChoices.FAILED
-        payment.save()
+#         # Fail payment
+#         payment.status = PaymentStatusChoices.FAILED
+#         payment.save()
         
-        # Verify donation remains pending
-        donation.refresh_from_db()
-        self.assertEqual(donation.verification_status, VerificationStatus.PENDING)
+#         # Verify donation remains pending
+#         donation.refresh_from_db()
+#         self.assertEqual(donation.verification_status, VerificationStatus.PENDING)

@@ -529,10 +529,14 @@ CELERY_BEAT_SCHEDULE = {
             'expires': 3000.0,  # Task expires after 50 minutes if not executed
         }
     },
+    'fulfil-outstanding-payments': {
+        'task': 'payments.fulfil_outstanding_payments',
+        'schedule': 300.0,  # Every 5 minutes
+        'options': {
+            'expires': 240.0,
+        }
+    },
 }
-
-# =============================================================================
-# EMAIL CONFIGURATION
 # =============================================================================
 # Local dev:  EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 #             EMAIL_HOST=mailpit (or localhost), EMAIL_PORT=1025

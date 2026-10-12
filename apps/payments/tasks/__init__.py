@@ -7,3 +7,4 @@ Provides retry mechanisms for:
 - Payment status synchronization with Stripe
 """
 from apps.payments.tasks.email import send_refund_email  # noqa: F401
+from apps.payments.tasks.fulfilment import fulfil_outstanding_payments_task  # noqa: F401

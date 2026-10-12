@@ -35,6 +35,7 @@ from apps.organisations.models import EventSponsor
 from apps.products.models import Order, OrderStatusChoices
 from apps.payments.models import Donation
 from apps.common.pagination import StandardPagination
+from apps.payments.services.completion import complete_payment
 
 from apps.events.services.notifications import create_notification, NotificationPriorityChoices, NotificationTypeChoices
 
@@ -193,7 +194,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            payment.transition_to(PaymentStatusChoices.COMPLETED)
+            complete_payment(payment)
         except DjangoValidationError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -490,7 +491,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         
         try:
             # Transition payment to completed
-            payment.transition_to(PaymentStatusChoices.COMPLETED)
+            complete_payment(payment)
             
             # Log verification action
             PaymentHistoryAction.objects.create(
