@@ -50,7 +50,7 @@ from apps.bookings.api.filtersets import BookingFilterSet
 from apps.bookings.api.permissions import IsBookingOwnerOrAdministrative
 from apps.attendee.api.serializers import AttendeeListSerializer
 
-from apps.bookings.services import BookingCheckoutFinaliser
+from apps.bookings.services.checkout_finaliser import finalize_from_payment, finalize_for_stripe, finalize_for_bank_transfer
 from apps.bookings.services.utils import (
     CheckoutPayloadBuilder, CheckoutPricingCalculator, CheckoutResponseBuilder,
 )
@@ -675,7 +675,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         intent.last_checkout_idempotency_key = idempotency_key
                         intent.save(update_fields=['last_checkout_idempotency_key'])
 
-                    finalization = BookingCheckoutFinaliser.finalize_for_stripe(payment, actor=user)
+                    finalization = finalize_for_stripe(payment, actor=user)
                     booking = finalization['booking']
                     response_data = CheckoutResponseBuilder.build(
                         request,
@@ -769,7 +769,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
                     and not stripe_payment_intent_id
                 ):
-                    prefinalization = BookingCheckoutFinaliser.finalize_for_bank_transfer(payment, actor=user)
+                    prefinalization = finalize_for_bank_transfer(payment, actor=user)
                     prefinalized_booking = prefinalization.get('booking')
 
                 if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
@@ -808,7 +808,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         payment.transition_to(PaymentStatusChoices.COMPLETED)
                         payment.save(update_fields=['stripe_payment_intent', 'updated_at'])
 
-                        finalization = BookingCheckoutFinaliser.finalize_from_payment(payment, actor=user)
+                        finalization = finalize_from_payment(payment, actor=user)
                         booking = finalization['booking']
 
                         response_data = CheckoutResponseBuilder.build(
@@ -884,7 +884,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
                 if payment_method.method_type == PaymentMethodTypeChoices.CASH:
                     payment.transition_to(PaymentStatusChoices.COMPLETED)
-                    finalization = BookingCheckoutFinaliser.finalize_from_payment(payment, actor=user)
+                    finalization = finalize_from_payment(payment, actor=user)
                     booking = finalization['booking']
                     response_data = CheckoutResponseBuilder.build(
                         request,

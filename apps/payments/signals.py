@@ -21,7 +21,9 @@ from django.dispatch import receiver
 from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 from apps.bookings.services import (
     TicketCreatorService,
-    BookingCheckoutFinaliser,
+    finalize_from_payment,
+    finalize_for_stripe,
+    finalize_for_bank_transfer,
     CheckoutFinalizationError,
 )
 
@@ -97,7 +99,7 @@ def _process_completed_payment(payment_pk: int) -> None:
     # ------------------------------------------------------------------
     if payment.target is None and (payment.metadata or {}).get('checkout_intent_id'):
         try:
-            result = BookingCheckoutFinaliser.finalize_from_payment(payment)
+            result = finalize_from_payment(payment)
             booking = result.get('booking')
             if booking:
                 # Re-fetch to get the updated target after finalization.
