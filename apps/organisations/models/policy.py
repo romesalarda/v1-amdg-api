@@ -54,6 +54,9 @@ class OrganisationEventPolicy(models.Model):
 class OrganisationEventTypePolicyRestriction(models.Model):
     '''
     Model representing restrictions on event types for an organisation. This allows organisations to specify which event types are allowed or disallowed for events created under them.
+    
+    WARNING: pending deprecation
+    
     '''
     organisation = models.ForeignKey(
         'organisations.Organisation',

@@ -44,12 +44,13 @@ from apps.bookings.api.serializers import (
     TicketListSerializer, 
     EventAlternativeSigninListSerializer,
     CheckoutSerializer, CheckoutPreviewSerializer, BookingAttendeePrecheckSerializer,
+    AttendeePersonalInfoDraftSerializer,
 )
 from apps.bookings.api.filtersets import BookingFilterSet
 from apps.bookings.api.permissions import IsBookingOwnerOrAdministrative
 from apps.attendee.api.serializers import AttendeeListSerializer
 
-from apps.bookings.services import BookingCheckoutFinaliser
+from apps.bookings.services.checkout_finaliser import finalize_from_payment, finalize_for_stripe, finalize_for_bank_transfer
 from apps.bookings.services.utils import (
     CheckoutPayloadBuilder, CheckoutPricingCalculator, CheckoutResponseBuilder,
 )
@@ -60,9 +61,10 @@ from apps.payments.models import DiscountType, BankTransferEvidence
 from apps.payments.mixins import PaymentMixin
 
 from apps.payments.services.evaluator import discount_applies
+from apps.payments.services.completion import complete_payment, schedule_payment_fulfilment
 
 from apps.events.services.notifications import create_notification, NotificationTypeChoices, NotificationPriorityChoices
-from apps.bookings.services import AttendeePrecheckValidationService
+from apps.bookings.services import validate_attendee_precheck
 
 import logging
 logger = logging.getLogger(__name__)
@@ -358,7 +360,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         intent = serializer.validated_data['_intent']
         attendee_selections = serializer.validated_data['attendees']
-        precheck_result = AttendeePrecheckValidationService.validate(
+        precheck_result = validate_attendee_precheck(
             event=intent.event,
             user=request.user,
             attendee_selections=attendee_selections,
@@ -366,6 +368,56 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         response_status = status.HTTP_200_OK if precheck_result['valid'] else status.HTTP_400_BAD_REQUEST
         return Response(precheck_result, status=response_status)
+
+    @extend_schema(
+        summary="Sanity-check attendee personal info",
+        description=(
+            "Validate dietary, medical and accessibility entries for each attendee so that "
+            "incomplete items (e.g. a selection with no details) are reported instead of being lost."
+        ),
+        tags=["Bookings"],
+        request={'application/json': {'type': 'object'}},
+        responses={
+            200: OpenApiResponse(description="All personal info is valid"),
+            400: OpenApiResponse(description="Personal info has issues"),
+        },
+        operation_id="bookings_personal_info_check",
+    )
+    @action(detail=False, methods=['post'], url_path='personal-info-check')
+    def personal_info_check(self, request: Request):
+        """Body: {"attendees": [{"personal_info": {...}}, ...]}. Returns per-attendee issues."""
+
+        attendees = request.data.get('attendees')
+        if not isinstance(attendees, list):
+            raise ValidationError({'attendees': 'A list of attendees is required.'})
+
+        issues = []
+        for index, entry in enumerate(attendees):
+            personal_info = entry.get('personal_info') if isinstance(entry, dict) else None
+            if not personal_info:
+                continue
+            serializer = AttendeePersonalInfoDraftSerializer(data=personal_info)
+            if serializer.is_valid():
+                continue
+            for category, errors in serializer.errors.items():
+                if isinstance(errors, list):
+                    for item_index, item_errors in enumerate(errors):
+                        if not item_errors:
+                            continue
+                        item_id = None
+                        if isinstance(personal_info.get(category), list) and item_index < len(personal_info[category]):
+                            item_id = personal_info[category][item_index].get('id')
+                        issues.append({
+                            'attendee_index': index,
+                            'category': category,
+                            'item_id': item_id,
+                            'errors': item_errors,
+                        })
+                else:
+                    issues.append({'attendee_index': index, 'category': category, 'item_id': None, 'errors': errors})
+
+        result = {'valid': not issues, 'issues': issues}
+        return Response(result, status=status.HTTP_200_OK if not issues else status.HTTP_400_BAD_REQUEST)
 
     @extend_schema(
         summary="List checkout alternative sign-in definitions",
@@ -591,6 +643,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 reserved_payment = serializer.validated_data.get('_payment_obj')
                 if (
                     not reserved_payment
+                    and payment_method
                     and payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
                 ):
                     # Fallback for clients that reserved a bank transfer reference but did not
@@ -618,12 +671,13 @@ class BookingViewSet(viewsets.ModelViewSet):
                         status=PaymentStatusChoices.COMPLETED,
                         metadata=payment_metadata,
                     )
+                    schedule_payment_fulfilment(payment.pk)
 
                     if idempotency_key:
                         intent.last_checkout_idempotency_key = idempotency_key
                         intent.save(update_fields=['last_checkout_idempotency_key'])
 
-                    finalization = BookingCheckoutFinaliser.finalize_for_stripe(payment, actor=user)
+                    finalization = finalize_for_stripe(payment, actor=user)
                     booking = finalization['booking']
                     response_data = CheckoutResponseBuilder.build(
                         request,
@@ -708,7 +762,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 #
                 # For Stripe, we intentionally do NOT pre-create objects here. All booking
                 # artifacts (Booking, Attendees, Tickets) are created atomically by
-                # BookingCheckoutFinaliser inside _process_completed_payment() after Stripe
+                # BookingCheckoutFinaliser inside fulfil_payment() after Stripe
                 # confirms the payment via webhook. This guarantees that if the card is
                 # declined or the user abandons the Stripe confirmation step, no orphaned
                 # records are left behind.
@@ -717,7 +771,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     payment_method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER
                     and not stripe_payment_intent_id
                 ):
-                    prefinalization = BookingCheckoutFinaliser.finalize_for_bank_transfer(payment, actor=user)
+                    prefinalization = finalize_for_bank_transfer(payment, actor=user)
                     prefinalized_booking = prefinalization.get('booking')
 
                 if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
@@ -753,10 +807,10 @@ class BookingViewSet(viewsets.ModelViewSet):
                             })
 
                         payment.stripe_payment_intent = payment_intent.id
-                        payment.transition_to(PaymentStatusChoices.COMPLETED)
+                        complete_payment(payment)
                         payment.save(update_fields=['stripe_payment_intent', 'updated_at'])
 
-                        finalization = BookingCheckoutFinaliser.finalize_from_payment(payment, actor=user)
+                        finalization = finalize_from_payment(payment, actor=user)
                         booking = finalization['booking']
 
                         response_data = CheckoutResponseBuilder.build(
@@ -831,8 +885,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                     return Response(response_data, status=status.HTTP_201_CREATED)
 
                 if payment_method.method_type == PaymentMethodTypeChoices.CASH:
-                    payment.transition_to(PaymentStatusChoices.COMPLETED)
-                    finalization = BookingCheckoutFinaliser.finalize_from_payment(payment, actor=user)
+                    complete_payment(payment)
+                    finalization = finalize_from_payment(payment, actor=user)
                     booking = finalization['booking']
                     response_data = CheckoutResponseBuilder.build(
                         request,

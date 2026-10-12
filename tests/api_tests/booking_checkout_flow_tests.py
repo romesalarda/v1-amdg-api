@@ -773,7 +773,6 @@ class CheckoutAPITestCase(TestCase):
                 }
             ]
         }, format='json')
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'pending_verification')
         self.assertIsNotNone(response.data.get('booking_id'))
@@ -1064,13 +1063,13 @@ class CheckoutAPITestCase(TestCase):
                         ],
                         'personal_info': {
                             'dietary_requirements': [
-                                {'id': dietary.id, 'details': 'No dairy'}
+                                {'id': dietary.id, 'details': 'No dairy', 'details': 'Lactose intolerant'}
                             ],
                             'medical_conditions': [
-                                {'id': medical.id, 'severity': 'mild'}
+                                {'id': medical.id, 'severity': 'mild', 'details': 'No known issues'}
                             ],
                             'accessibility_requirements': [
-                                {'id': accessibility.id}
+                                {'id': accessibility.id, 'details': 'Requires wheelchair access'}
                             ],
                             'emergency_contact': {
                                 'first_name': 'Jane',

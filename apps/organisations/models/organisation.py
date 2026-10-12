@@ -154,7 +154,7 @@ class UserOrganisationMembership(models.Model): # adminregister
     
 class OrganisationControl(models.Model):
     '''
-    Model representing a user who has control over an organisation.
+    Model representing a user who has control over an organisation. Basically a high level org admin.
     '''
 
     organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name='controllers')

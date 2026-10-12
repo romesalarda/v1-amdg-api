@@ -27,9 +27,9 @@ from apps.bookings.models import (
 )
 from apps.attendee.models import Attendee
 from apps.payments.models import BankTransferEvidence
-from apps.bookings.services import AttendeePrecheckValidationService
+from apps.bookings.services import validate_attendee_precheck
 from apps.locations.models import AreaLocation
-from apps.bookings.services.checkout_validation import CheckoutValidationService
+from apps.bookings.services.checkout_validation import validate_checkout_request
 from apps.payments.models import PaymentMethodTypeChoices
 from apps.payments.models import PaymentMethod
 
@@ -186,7 +186,7 @@ class PersonalInfoItemSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
         allow_null=True,
-        help_text="Additional details about this requirement"
+        help_text="Details about this requirement (required - must not be blank)"
     )
     notes = serializers.CharField(
         required=False,
@@ -194,6 +194,14 @@ class PersonalInfoItemSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Notes or special instructions for this requirement"
     )
+
+    def validate(self, attrs):
+        # Selected items without details would otherwise be silently dropped downstream.
+        if not (attrs.get('details') or '').strip():
+            raise serializers.ValidationError({
+                'details': 'Please provide details for this requirement.'
+            })
+        return attrs
 
 
 class MedicalConditionItemSerializer(PersonalInfoItemSerializer):
@@ -970,7 +978,7 @@ class CheckoutSerializer(serializers.Serializer):
         """
         Comprehensive cross-field validation.
         
-        Uses CheckoutValidationService to validate:
+        Uses checkout_validation to validate:
         - Intent and method compatibility
         - Attendee count
         - All attendee data
@@ -990,8 +998,8 @@ class CheckoutSerializer(serializers.Serializer):
         if request is not None:
             idempotency_key = request.headers.get('Idempotency-Key') or request.META.get('HTTP_IDEMPOTENCY_KEY')
         
-        # Validate using CheckoutValidationService
-        intent, method = CheckoutValidationService.validate_checkout_request(
+        # Validate using checkout_validation
+        intent, method = validate_checkout_request(
             intent_id,
             method_id,
             attendee_selections,
@@ -1007,7 +1015,7 @@ class CheckoutSerializer(serializers.Serializer):
         )
 
         if not is_idempotent_replay:
-            precheck_result = AttendeePrecheckValidationService.validate(
+            precheck_result = validate_attendee_precheck(
                 event=intent.event,
                 user=user,
                 attendee_selections=attendee_selections,

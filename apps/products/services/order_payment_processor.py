@@ -62,6 +62,10 @@ class OrderPaymentProcessor:
         # Acquire a row lock before checking transition eligibility.
         locked_order = Order.objects.select_for_update().get(pk=order.pk)
 
+        # Paid orders are no longer subject to the stock hold timeout.
+        if locked_order.expires_at is not None:
+            locked_order.clear_hold()
+
         if auto_process:
             if locked_order.can_transition_to(OrderStatusChoices.PROCESSING):
                 locked_order.transition_to(OrderStatusChoices.PROCESSING)

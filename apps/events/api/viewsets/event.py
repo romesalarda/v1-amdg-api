@@ -182,9 +182,18 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         summary="Create Event",
         description=(
             "Create a new event. Automatically assigns the authenticated user as the event creator "
-            "and generates a unique display code for identification."
+            "and generates a unique display code for identification.\n\n"
+            "Events linked to an organisation may only be created by authorised users: "
+            "organisation controllers or leaders holding the ALLOW_EVENT_APPROVAL leader "
+            "permission with create access. External events (no organisation) are unrestricted."
         ),
         tags=["Events"],
+        responses={
+            201: EventCreateUpdateSerializer,
+            403: OpenApiResponse(
+                description="User is not authorised to create events for the given organisation."
+            ),
+        },
     ),
     update=extend_schema(
         summary="Update Event",

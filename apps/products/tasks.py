@@ -95,3 +95,39 @@ def send_order_pending_bank_transfer_email(self, order_pk: int, payment_pk: int)
             payment_pk,
         )
         raise self.retry(exc=exc)
+
+
+@shared_task(name='products.expire_order_hold')
+def expire_order_hold(order_pk: int) -> str:
+    """Expire a single order whose stock hold has lapsed (no-op if extended or paid)."""
+    from apps.products.models import Order
+
+    order = Order.objects.filter(pk=order_pk).first()
+    if order is None or not order.is_expired:
+        return f"order hold not expired | order_pk={order_pk}"
+    expired = order.expire()
+    return f"order hold {'expired' if expired else 'kept'} | order_pk={order_pk}"
+
+
+@shared_task(name='products.expire_order_holds')
+def expire_order_holds() -> dict:
+    """Periodic sweep: cancel unpaid orders whose hold has lapsed and release their stock."""
+    from django.utils import timezone
+    from apps.products.models import Order, OPEN_ORDER_STATUSES
+
+    now = timezone.now()
+    candidates = Order.objects.filter(
+        status__in=OPEN_ORDER_STATUSES,
+        expires_at__isnull=False,
+        expires_at__lte=now,
+    )
+    expired = 0
+    for order in candidates.iterator():
+        try:
+            if order.expire():
+                expired += 1
+        except Exception:
+            logger.exception("expire_order_holds: failed to expire order_pk=%s", order.pk)
+    if expired:
+        logger.info("expire_order_holds: expired %s order(s)", expired)
+    return {'expired': expired, 'timestamp': now.isoformat()}

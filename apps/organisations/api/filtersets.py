@@ -130,7 +130,13 @@ class OrganisationFilterSet(filters.FilterSet):
         method='filter_has_controller',
         help_text="Filter organisations with specific controller (by user ID)"
     )
-    
+
+    # Request-user authorisation filter
+    authorised_event_creator = filters.BooleanFilter(
+        method='filter_authorised_event_creator',
+        help_text="Filter to organisations the requesting user is authorised to create events in"
+    )
+
     class Meta:
         model = Organisation
         fields = [
@@ -163,6 +169,22 @@ class OrganisationFilterSet(filters.FilterSet):
         if not value:
             return queryset
         return queryset.filter(controllers__user__id=value).distinct()
+
+    def filter_authorised_event_creator(self, queryset, name, value):
+        """Filter to organisations the requesting user can create events in.
+
+        Applies only when truthy. Anonymous requests yield an empty queryset.
+        Authorised means organisation controller or leader holding
+        ALLOW_EVENT_APPROVAL with create access.
+        """
+        if not value:
+            return queryset
+        from apps.organisations.api.permissions import authorised_event_creator_q
+        request = getattr(self, 'request', None)
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return queryset.none()
+        return queryset.filter(authorised_event_creator_q(user)).distinct()
 
 
 class OrganisationContactFilterSet(filters.FilterSet):

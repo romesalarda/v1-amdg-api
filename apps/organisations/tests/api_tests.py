@@ -29,7 +29,8 @@ from apps.organisations.models import (
     Organisation, OrganisationContact, OrganisationControl,
     UserOrganisationMembership, OrganisationInvite, OrganisationAcceptanceCode,
     InvolvedEventOrganisation, InvolvedOrganisationRoleChoices,
-    EventSponsor, EventSponsorPackage, EventSponsorInvite, Leader
+    EventSponsor, EventSponsorPackage, EventSponsorInvite, Leader,
+    LeaderPermission, LeaderPermissionCode,
 )
 from apps.events.models import Event, EventType, EventRole, EventRoleAssignment, EventRoleCategoryChoices, EventSettings
 from apps.payments.models import PaymentMethod, PaymentMethodTypeChoices, PaymentStatusChoices
@@ -1282,3 +1283,165 @@ class InvolvedEventOrganisationAPITest(TestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
+
+
+class OrganisationAuthorisedEventCreatorFilterTest(TestCase):
+    """Tests for the ?authorised_event_creator=True filter on the organisation list endpoint."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse('organisations:organisation-list')
+
+        self.admin_user = User.objects.create_user(
+            email='admin@aec.org', password='adminpass123', is_staff=True
+        )
+        self.controller_user = User.objects.create_user(
+            email='controller@aec.org', password='controlpass123'
+        )
+        self.leader_user = User.objects.create_user(
+            email='leader@aec.org', password='leaderpass123'
+        )
+        self.leader_no_create_user = User.objects.create_user(
+            email='leadernc@aec.org', password='leaderpass123'
+        )
+        self.leader_other_perm_user = User.objects.create_user(
+            email='leaderop@aec.org', password='leaderpass123'
+        )
+        self.regular_user = User.objects.create_user(
+            email='regular@aec.org', password='userpass123'
+        )
+
+        org_ct = ContentType.objects.get_for_model(Organisation)
+
+        # Org where controller_user has OrganisationControl
+        self.controller_org = Organisation.objects.create(
+            title='Controller Org', created_by=self.admin_user, verified=True,
+        )
+        OrganisationControl.objects.create(
+            organisation=self.controller_org, user=self.controller_user,
+            added_by=self.admin_user,
+        )
+
+        # Org where leader_user holds ALLOW_EVENT_APPROVAL with allow_create=True
+        self.leader_org = Organisation.objects.create(
+            title='Leader Org', created_by=self.admin_user, verified=True,
+        )
+        leader = Leader.objects.create(
+            user=self.leader_user, target_type=org_ct,
+            target_id=self.leader_org.id, organisation=self.leader_org,
+            added_by=self.admin_user,
+        )
+        LeaderPermission.objects.create(
+            leader=leader,
+            permission_code=LeaderPermissionCode.ALLOW_EVENT_APPROVAL,
+            allow_create=True,
+        )
+
+        # Org whose leader holds ALLOW_EVENT_APPROVAL without create access
+        self.no_create_org = Organisation.objects.create(
+            title='No Create Org', created_by=self.admin_user, verified=True,
+        )
+        leader_nc = Leader.objects.create(
+            user=self.leader_no_create_user, target_type=org_ct,
+            target_id=self.no_create_org.id, organisation=self.no_create_org,
+            added_by=self.admin_user,
+        )
+        LeaderPermission.objects.create(
+            leader=leader_nc,
+            permission_code=LeaderPermissionCode.ALLOW_EVENT_APPROVAL,
+            allow_create=False,
+        )
+
+        # Org whose leader holds a different permission code
+        self.other_perm_org = Organisation.objects.create(
+            title='Other Perm Org', created_by=self.admin_user, verified=True,
+        )
+        leader_op = Leader.objects.create(
+            user=self.leader_other_perm_user, target_type=org_ct,
+            target_id=self.other_perm_org.id, organisation=self.other_perm_org,
+            added_by=self.admin_user,
+        )
+        LeaderPermission.objects.create(
+            leader=leader_op,
+            permission_code=LeaderPermissionCode.ALLOW_MEMBERSHIP_ACCESS,
+            allow_create=True,
+        )
+
+        # Org with no roles assigned
+        self.plain_org = Organisation.objects.create(
+            title='Plain Org', created_by=self.admin_user, verified=True,
+        )
+
+    def _result_titles(self, response):
+        return {result['title'] for result in response.data['results']}
+
+    def test_filter_anonymous_returns_empty(self):
+        """Anonymous requests get an empty list when the filter is applied."""
+        response = self.client.get(self.url, {'authorised_event_creator': 'True'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 0)
+
+    def test_filter_regular_user_returns_empty(self):
+        """Users with no roles see no organisations."""
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(self.url, {'authorised_event_creator': 'True'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 0)
+
+    def test_filter_controller_sees_own_org(self):
+        """Controllers see the organisations they control."""
+        self.client.force_authenticate(user=self.controller_user)
+        response = self.client.get(self.url, {'authorised_event_creator': 'True'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._result_titles(response), {'Controller Org'})
+
+    def test_filter_leader_with_create_access_sees_own_org(self):
+        """Leaders with ALLOW_EVENT_APPROVAL + allow_create see their organisation."""
+        self.client.force_authenticate(user=self.leader_user)
+        response = self.client.get(self.url, {'authorised_event_creator': 'True'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._result_titles(response), {'Leader Org'})
+
+    def test_filter_leader_without_create_access_returns_empty(self):
+        """ALLOW_EVENT_APPROVAL without allow_create does not authorise."""
+        self.client.force_authenticate(user=self.leader_no_create_user)
+        response = self.client.get(self.url, {'authorised_event_creator': 'True'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 0)
+
+    def test_filter_leader_with_other_permission_returns_empty(self):
+        """Other permission codes do not authorise event creation."""
+        self.client.force_authenticate(user=self.leader_other_perm_user)
+        response = self.client.get(self.url, {'authorised_event_creator': 'True'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 0)
+
+    def test_filter_staff_without_roles_returns_empty(self):
+        """Staff users are not exempt from the authorisation rule."""
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(self.url, {'authorised_event_creator': 'True'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 0)
+
+    def test_filter_absent_returns_all_verified(self):
+        """Without the param the list is unaffected."""
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 5)
+
+    def test_filter_false_returns_all_verified(self):
+        """A falsy param value leaves the list unaffected."""
+        self.client.force_authenticate(user=self.controller_user)
+        response = self.client.get(self.url, {'authorised_event_creator': 'False'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 5)

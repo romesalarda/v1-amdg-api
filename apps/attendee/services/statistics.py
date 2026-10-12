@@ -858,7 +858,12 @@ def calculate_checkin_stats_by_day(
     from django.db.models import Max
     import pytz
 
-    attendee_qs = _get_base_queryset(event_id, include_deleted)
+    from django.db.models import OuterRef, Subquery
+
+    # Cancelled attendees can never be on site, so they are excluded from all totals/rates
+    attendee_qs = _get_base_queryset(event_id, include_deleted).exclude(
+        status=AttendeeStatus.CANCELLED
+    )
     total_attendees = attendee_qs.count()
 
     # Resolve event for day-label computation
@@ -922,12 +927,99 @@ def calculate_checkin_stats_by_day(
             'count': row['count'],
         })
 
+    # ------------------------------------------------------------------
+    # Occupancy (check-out aware). Source of truth = each attendee's latest
+    # SUCCESSFUL scan in the audit log (CHECK_IN = inside, CHECK_OUT = outside).
+    # ------------------------------------------------------------------
+    latest_scan = AttendeeCheckIn.objects.filter(
+        attendee=OuterRef('pk'),
+        scan_result=CheckInScanResult.SUCCESS,
+    ).order_by('-performed_at')
+    annotated_qs = attendee_qs.annotate(
+        last_action=Subquery(latest_scan.values('action')[:1]),
+        last_scan_at=Subquery(latest_scan.values('performed_at')[:1]),
+    )
+    inside_qs = annotated_qs.filter(last_action=CheckInAction.CHECK_IN)
+    currently_inside = inside_qs.count()
+    checked_out_now = annotated_qs.filter(last_action=CheckInAction.CHECK_OUT).count()
+    never_arrived = annotated_qs.filter(last_action__isnull=True).count()
+
+    def _pct(value: int) -> float:
+        return round(value / total_attendees * 100, 2) if total_attendees > 0 else 0
+
+    now = timezone.now()
+    longest_inside = []
+    for att in inside_qs.order_by('last_scan_at')[:10]:
+        longest_inside.append({
+            'attendee_id': str(att.attendee_id),
+            'attendee_display_id': getattr(att, 'attendee_display_id', None),
+            'full_name': att.full_name,
+            'checked_in_at': att.last_scan_at.isoformat() if att.last_scan_at else None,
+            'minutes_inside': int((now - att.last_scan_at).total_seconds() // 60) if att.last_scan_at else 0,
+        })
+
+    live = {
+        'currently_inside': currently_inside,
+        'checked_out': checked_out_now,
+        'never_arrived': never_arrived,
+        'total_attendees': total_attendees,
+        'percent_on_site': _pct(currently_inside),
+        'percent_checked_out': _pct(checked_out_now),
+        'percent_never_arrived': _pct(never_arrived),
+        'longest_inside': longest_inside,
+    }
+
+    # Replay all successful scans chronologically to derive per-day figures
+    scan_rows = (
+        AttendeeCheckIn.objects.filter(
+            attendee__in=attendee_qs,
+            scan_result=CheckInScanResult.SUCCESS,
+        )
+        .order_by('performed_at')
+        .values_list('attendee_id', 'action', 'event_day', 'performed_at')
+    )
+    inside_state: Dict[Any, bool] = {}
+    occupancy = 0
+    day_stats: Dict[int, Dict[str, Any]] = {}
+    for att_id, action_val, day_key, performed_at in scan_rows:
+        was_inside = inside_state.get(att_id, False)
+        if action_val == CheckInAction.CHECK_IN and not was_inside:
+            inside_state[att_id] = True
+            occupancy += 1
+        elif action_val == CheckInAction.CHECK_OUT and was_inside:
+            inside_state[att_id] = False
+            occupancy -= 1
+        if day_key is None:
+            continue
+        stats = day_stats.setdefault(day_key, {
+            'checked_out_ids': set(),
+            'hourly_out': {},
+            'peak': 0,
+            'peak_at': None,
+            'end_occupancy': 0,
+        })
+        if action_val == CheckInAction.CHECK_OUT:
+            stats['checked_out_ids'].add(att_id)
+            hour_label = performed_at.astimezone(event_tz).strftime('%H:00')
+            stats['hourly_out'][hour_label] = stats['hourly_out'].get(hour_label, 0) + 1
+        if occupancy > stats['peak']:
+            stats['peak'] = occupancy
+            stats['peak_at'] = performed_at.astimezone(event_tz).strftime('%H:%M')
+        stats['end_occupancy'] = occupancy
+
+    # Days that have any successful scan (check-in or check-out)
+    days_in_scope = {row['event_day'] for row in per_day_rows if row['event_day'] is not None}
+    days_in_scope |= set(day_stats.keys())
+    if event_day is not None:
+        days_in_scope &= {event_day}
+    checked_in_by_day = {row['event_day']: row['checked_in_count'] for row in per_day_rows}
+
     # Build per-day result list
     days_data = []
-    for row in per_day_rows:
-        day_num = row['event_day']
-        checked_in = row['checked_in_count']
+    for day_num in sorted(days_in_scope):
+        checked_in = checked_in_by_day.get(day_num, 0)
         not_checked_in = total_attendees - checked_in
+        stats = day_stats.get(day_num, {})
 
         # Derive calendar date label
         day_date = None
@@ -945,10 +1037,19 @@ def calculate_checkin_stats_by_day(
             'total_attendees': total_attendees,
             'check_in_rate': round(checked_in / total_attendees * 100, 2) if total_attendees > 0 else 0,
             'hourly_timeline': hourly_map.get(day_num, []),
+            'checked_out': len(stats.get('checked_out_ids', ())),
+            'still_inside': stats.get('end_occupancy', 0),
+            'peak_occupancy': stats.get('peak', 0),
+            'peak_occupancy_time': stats.get('peak_at'),
+            'hourly_check_out_timeline': [
+                {'hour': h, 'count': c}
+                for h, c in sorted(stats.get('hourly_out', {}).items())
+            ],
         })
 
     # If no checkins yet, return empty list (still useful to know total_attendees)
     return {
+        'live': live,
         'days': days_data,
         'total_attendees': total_attendees,
         'event_days_count': event_days_count,

@@ -7,11 +7,13 @@ from rest_framework.exceptions import PermissionDenied
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
+    OpenApiParameter,
 )
+from drf_spectacular.types import OpenApiTypes
 
 from apps.organisations.models import (
     Organisation, OrganisationContact, OrganisationControl,
-    OrganisationEventPolicy,
+    OrganisationEventPolicy, UserOrganisationMembership, Leader, LeaderPermission
 )
 from apps.utils.querying import get_object_or_url_safe_title
 from apps.organisations.api.serializers import (
@@ -36,6 +38,17 @@ from apps.common.pagination import StandardPagination
         summary="List organisations",
         description="Retrieve a paginated list of organisations with advanced filtering.",
         tags=["Organisations"],
+        parameters=[
+            OpenApiParameter(
+                name='authorised_event_creator',
+                type=OpenApiTypes.BOOL,
+                description=(
+                    'When true, restrict results to organisations the requesting '
+                    'user is authorised to create events in (organisation controller '
+                    'or leader with event-approval create access).'
+                ),
+            ),
+        ],
     ),
     retrieve=extend_schema(
         summary="Retrieve organisation details",
@@ -86,7 +99,6 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         return organisation
     
     def get_serializer_class(self):
-        """Return appropriate serializer based on action."""
         if self.action == 'list':
             return OrganisationListSerializer
         elif self.action in ['create', 'update', 'partial_update']:
@@ -162,9 +174,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=["GET"], url_path="my-permissions")
     def my_permissions(self, request, url_safe_title):
-        from apps.organisations.models import (
-            UserOrganisationMembership, Leader, LeaderPermission,
-        )
+
         obj = self.get_object()
         user = request.user
         is_controller = (

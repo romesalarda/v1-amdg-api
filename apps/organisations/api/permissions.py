@@ -617,3 +617,57 @@ class WriteRequiresControllerOrPolicyManager(permissions.BasePermission):
         if hasattr(obj, 'organisation'):
             return obj.organisation
         return None
+
+
+# ============================================================================
+# EVENT CREATION AUTHORISATION HELPERS
+# ============================================================================
+
+def user_can_create_event_for_organisation(user, organisation) -> bool:
+    """
+    Check whether a user is authorised to create events under an organisation.
+
+    Authorised users are:
+    1. Organisation controllers (OrganisationControl), or
+    2. Leaders of the organisation holding the ALLOW_EVENT_APPROVAL leader
+       permission with create access (allow_create=True).
+
+    Enforced for every user, including staff and superusers. Unauthenticated
+    users are never authorised.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if organisation is None:
+        return False
+    if OrganisationControl.objects.filter(
+        organisation=organisation, user=user
+    ).exists():
+        return True
+    from apps.organisations.models import LeaderPermission, LeaderPermissionCode
+    return LeaderPermission.objects.filter(
+        leader__user=user,
+        leader__organisation=organisation,
+        permission_code=LeaderPermissionCode.ALLOW_EVENT_APPROVAL,
+        allow_create=True,
+    ).exists()
+
+
+def authorised_event_creator_q(user):
+    """
+    Build a Q object matching organisations the user can create events in.
+
+    Intended for Organisation querysets. Matches nothing for anonymous users.
+    Caller should apply .distinct() since the leader join may duplicate rows.
+    """
+    from django.db.models import Q
+    from apps.organisations.models import LeaderPermissionCode
+    if not user or not getattr(user, 'is_authenticated', False):
+        return Q(pk__in=[])
+    return (
+        Q(controllers__user=user)
+        | Q(
+            organisation_leaders__user=user,
+            organisation_leaders__permissions__permission_code=LeaderPermissionCode.ALLOW_EVENT_APPROVAL,
+            organisation_leaders__permissions__allow_create=True,
+        )
+    )

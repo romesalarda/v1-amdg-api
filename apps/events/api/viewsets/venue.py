@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import viewsets, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
 
@@ -93,6 +94,20 @@ class EventVenueViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticatedOrReadOnly()]
         return [permissions.IsAuthenticated()]
 
+    @staticmethod
+    def _demote_other_primaries(event_venue):
+        EventVenue.objects.filter(event=event_venue.event, is_primary=True).exclude(
+            pk=event_venue.pk
+        ).update(is_primary=False)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        """Keep at most one primary venue per event."""
+        event_venue = serializer.save()
+        if event_venue.is_primary:
+            self._demote_other_primaries(event_venue)
+
+    @transaction.atomic
     def perform_create(self, serializer):
         """
         Clone global Venue data into the snapshot when source_venue_id is supplied.
@@ -125,6 +140,8 @@ class EventVenueViewSet(viewsets.ModelViewSet):
                 pass  # Caller-supplied inline fields are used as-is
 
         event_venue = serializer.save(**extra_fields)
+        if event_venue.is_primary:
+            self._demote_other_primaries(event_venue)
 
         # Clone sub-resources when a source was resolved
         if source_venue_id and extra_fields:

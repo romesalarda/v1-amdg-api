@@ -493,10 +493,37 @@ class CheckInDayBreakdownSerializer(serializers.Serializer):
     total_attendees = serializers.IntegerField()
     check_in_rate = serializers.FloatField()
     hourly_timeline = serializers.ListField(child=serializers.DictField())
+    checked_out = serializers.IntegerField()
+    still_inside = serializers.IntegerField()
+    peak_occupancy = serializers.IntegerField()
+    peak_occupancy_time = serializers.CharField(allow_null=True)
+    hourly_check_out_timeline = serializers.ListField(child=serializers.DictField())
+
+
+class LongestInsideAttendeeSerializer(serializers.Serializer):
+    """An attendee currently on site, ordered by time since their last check-in."""
+    attendee_id = serializers.CharField()
+    attendee_display_id = serializers.CharField(allow_null=True)
+    full_name = serializers.CharField()
+    checked_in_at = serializers.CharField(allow_null=True)
+    minutes_inside = serializers.IntegerField()
+
+
+class CheckInLiveStatsSerializer(serializers.Serializer):
+    """Live headcount based on each attendee's latest successful scan."""
+    currently_inside = serializers.IntegerField()
+    checked_out = serializers.IntegerField()
+    never_arrived = serializers.IntegerField()
+    total_attendees = serializers.IntegerField()
+    percent_on_site = serializers.FloatField()
+    percent_checked_out = serializers.FloatField()
+    percent_never_arrived = serializers.FloatField()
+    longest_inside = LongestInsideAttendeeSerializer(many=True)
 
 
 class CheckInDayStatsSerializer(BaseStatisticsSerializer):
     """Serializer for per-event-day check-in statistics."""
+    live = CheckInLiveStatsSerializer()
     days = CheckInDayBreakdownSerializer(many=True)
     total_attendees = serializers.IntegerField()
     event_days_count = serializers.IntegerField(allow_null=True)
