@@ -195,18 +195,14 @@ def _handle_donation_payment(payment: Payment, donation) -> None:
     Bank-transfer donations still need manual evidence review.
     """
     from apps.common.models.verification import VerificationStatus
-    print("handling donation payment")
 
     if payment.method and payment.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
-        print("handling donation payment 1")
         logger.info(
             "Bank-transfer payment completed for donation %s (payment %s). Awaiting admin verification.",
             donation.tracking_reference,
             payment.payment_reference,
         )
         return
-
-    print("handling donation payment 2")
 
     if donation.verification_status != VerificationStatus.VERIFIED:
         donation.verification_status = VerificationStatus.VERIFIED
