@@ -2,8 +2,9 @@
 from rest_framework import viewsets, status, permissions, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.exceptions import ValidationError, PermissionDenied, APIException
 from rest_framework.request import Request
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 
@@ -12,7 +13,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.contrib.auth.models import User 
-
+from django.core.exceptions import ValidationError as DjangoValidationError
 from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
@@ -58,6 +59,29 @@ from djmoney.money import Money
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+class OrderExpiredError(APIException):
+    """410 raised when an order's stock hold lapsed and the order was (or is about to be) released."""
+    status_code = status.HTTP_410_GONE
+    default_code = 'order_expired'
+
+    def __init__(self):
+        super().__init__(detail={
+            'code': 'order_expired',
+            'detail': 'Your order reservation has expired and the items have been released. Please start a new order.',
+        })
+
+
+def _assert_order_hold_active(order: Order):
+    """Raise OrderExpiredError if the order's hold has lapsed or it was already auto-expired."""
+    if order.expired_at is not None or order.is_expired:
+        raise OrderExpiredError()
+
+
+# Actions that must be rejected once the order's hold has lapsed.
+HOLD_GUARDED_ACTIONS = {'submit', 'add_item', 'update_item', 'remove_item', 'extend'}
+
 
 @extend_schema_view(
     list=extend_schema(
@@ -184,7 +208,41 @@ class OrderViewSet(viewsets.ModelViewSet):
         return queryset
 
     def get_object(self):
-        return super().get_object()
+        order = super().get_object()
+        # Lazy expiry: don't rely solely on the periodic sweep to release stock.
+        if order.is_expired:
+            order.expire()
+        if self.action in HOLD_GUARDED_ACTIONS:
+            _assert_order_hold_active(order)
+        return order
+
+    @extend_schema(
+        summary="Extend order reservation",
+        description=(
+            "Extend the stock hold on an unpaid order. Limited to ORDER_HOLD_MAX_EXTENSIONS extensions "
+            "and ORDER_HOLD_MAX_MINUTES in total. Returns 410 if the order has already expired."
+        ),
+        request=None,
+        responses={
+            200: OrderDetailSerializer,
+            400: OpenApiResponse(description='Extension not allowed (limit reached or payment started)'),
+            410: OpenApiResponse(description='Order reservation has expired'),
+        },
+        tags=["Orders"],
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrAdministrative])
+    def extend(self, request: Request, order_id: typing.Optional[str]=None):
+        """Extend the order's stock hold."""
+        with transaction.atomic():
+            order = get_object_or_404(Order.objects.select_for_update(), order_id=order_id)
+            self.check_object_permissions(request, order)
+            _assert_order_hold_active(order)
+            try:
+                order.extend_hold()
+            except DjangoValidationError as exc:
+                raise ValidationError({'error': exc.messages[0] if exc.messages else str(exc)})
+        serializer = OrderDetailSerializer(order, context=self.get_serializer_context())
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     def perform_create(self, serializer):
         serializer.context['request'] = self.request  # Pass request to serializer for validation
@@ -581,13 +639,15 @@ class OrderViewSet(viewsets.ModelViewSet):
             locked_order.total_amount = locked_order.get_total_amount()
             locked_order.save(update_fields=['total_amount', 'updated_at'])
 
-            if locked_order.order_items.count() == 0:
+            order_deleted = locked_order.order_items.count() == 0
+            if order_deleted:
                 locked_order.delete()
 
             return Response({
                 'status': 'success',
                 'message': 'Order item removed.',
                 'order_total': str(locked_order.total_amount),
+                'order_deleted': order_deleted,
             }, status=status.HTTP_200_OK)
 
     @extend_schema(
@@ -795,6 +855,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 order_id=order_id,
             )
             self.check_object_permissions(request, locked_order)
+            _assert_order_hold_active(locked_order)
 
             if locked_order.status != OrderStatusChoices.DRAFT:
                 raise ValidationError({'order': 'Only draft orders can reserve a bank transfer reference.'})
@@ -1002,6 +1063,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 order_id=order_id,
             )
             self.check_object_permissions(request, locked_order)
+            _assert_order_hold_active(locked_order)
 
             serializer = OrderCheckoutSerializer(
                 data=request.data,
@@ -1018,6 +1080,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             if locked_order.total_amount.amount == 0:
                 logger.info(f"Processing free order {locked_order.order_reference_id}, moving from DRAFT to PROCESSING")
                 if locked_order.status == OrderStatusChoices.DRAFT:
+                    locked_order.clear_hold(save=False)
                     locked_order.transition_to(OrderStatusChoices.PENDING)
                     logger.info(f"Free order {locked_order.order_reference_id} transitioned to pending")
                     locked_order.transition_to(OrderStatusChoices.PROCESSING)
@@ -1242,6 +1305,12 @@ class OrderViewSet(viewsets.ModelViewSet):
                     
                     payment.stripe_payment_intent = payment_intent['id']
                     payment.save()
+
+                    # Payment has started: give the user a fresh window to complete it.
+                    locked_order.start_hold(
+                        minutes=settings.ORDER_CHECKOUT_HOLD_MINUTES,
+                        reset_extensions=True,
+                    )
                     
                     response_data['stripe_client_secret'] = payment_intent['client_secret']
                     response_data['status'] = 'pending_payment'
@@ -1254,6 +1323,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                     raise ValidationError({'stripe': f'Failed to create payment intent: {str(e)}'})
             
             elif method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
+                # Bank transfers are settled out of band, so they are not time limited.
+                locked_order.clear_hold()
                 # Generate bank transfer reference (already done in Payment model)
                 response_data['bank_transfer_reference'] = payment.bank_transfer_reference
                 response_data['bank_transfer_instructions'] = (
@@ -1288,7 +1359,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                 )
             
             elif method_type == PaymentMethodTypeChoices.CASH:
-                # Cash payment - pending approval at venue
+                # Cash payment is collected at the venue, so it is not time limited.
+                locked_order.clear_hold()
                 response_data['status'] = 'pending_approval'
                 response_data['message'] = 'Payment will be collected at the venue. Your order will be processed after payment confirmation.'
                 
@@ -1309,6 +1381,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                 })
 
             
+            response_data['expires_at'] = locked_order.expires_at.isoformat() if locked_order.expires_at else None
+            response_data['seconds_remaining'] = locked_order.seconds_remaining
             return Response(response_data, status=status.HTTP_201_CREATED)
 
     @extend_schema(

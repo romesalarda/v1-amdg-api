@@ -1326,16 +1326,25 @@ class OrderListSerializer(serializers.ModelSerializer):
     created_at = EventTimezoneField(read_only=True)
     order_items = OrderItemSerializer(many=True, read_only=True)
     is_refunded = serializers.SerializerMethodField(help_text="Whether this order has been refunded")
+    expires_at = serializers.DateTimeField(read_only=True, help_text="When the stock hold lapses; null if not time limited")
+    expired_at = serializers.DateTimeField(read_only=True, help_text="Set if the order was cancelled because its hold expired")
+    seconds_remaining = serializers.SerializerMethodField(help_text="Seconds left on the hold, computed server-side to avoid client clock skew")
+    can_extend_hold = serializers.BooleanField(read_only=True)
+    extension_count = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = Order
         fields = (
             'id', 'order_id', 'order_reference_id', 'customer', 'customer_name',
             'attendee', 'attendee_name', 'status', 'status_display',
-            'total_amount', 'item_count', 'created_at', '_links', 'order_items', 'is_refunded'  
+            'total_amount', 'item_count', 'created_at', '_links', 'order_items', 'is_refunded',
+            'expires_at', 'expired_at', 'seconds_remaining', 'can_extend_hold', 'extension_count',
         )
         read_only_fields = ('id', 'order_id', 'order_reference_id', 'created_at','is_refunded')
     
+    def get_seconds_remaining(self, obj) -> Optional[int]:
+        return obj.seconds_remaining
+
     def get_total_amount(self, obj) -> str:
         return str(obj.total_amount)
     

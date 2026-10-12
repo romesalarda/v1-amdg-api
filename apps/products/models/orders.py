@@ -8,6 +8,7 @@ from djmoney.models.fields import MoneyField
 from djmoney.money import Money
 
 from django.conf import settings
+from django.utils import timezone
 
 from core.utils.display import try_generate_unique_display_code
 from apps.common.models.verification import RequiresVerificationModel
@@ -17,6 +18,7 @@ from .product import ProductVariant
 from apps.bookings.models.products import PackageProduct
 
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 
 import logging
@@ -123,6 +125,24 @@ class Order(SoftDeleteModel): # no admin model
         blank=True,
         related_name='orders'
     ) # payment associated with the order, if any, fast lookup
+
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='When the stock hold on this unpaid order lapses. Null means the order is not time limited.',
+    )
+    hold_started_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When the current hold window started; used to cap total hold time including extensions.',
+    )
+    extension_count = models.PositiveSmallIntegerField(default=0)
+    expired_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Set when the order was cancelled automatically because its hold expired.',
+    )
     
     booking_package = models.ForeignKey(
         'bookings.BookingPackage',
@@ -198,6 +218,139 @@ class Order(SoftDeleteModel): # no admin model
     @property
     def is_open(self) -> bool:
         return self.status in OPEN_ORDER_STATUSES
+
+    # ------------------------------------------------------------------
+    # Stock hold (cart / checkout timeout)
+    # ------------------------------------------------------------------
+    @property
+    def has_active_hold(self) -> bool:
+        return self.expires_at is not None and self.is_open
+
+    @property
+    def is_expired(self) -> bool:
+        return self.has_active_hold and timezone.now() >= self.expires_at
+
+    @property
+    def seconds_remaining(self) -> int | None:
+        if not self.has_active_hold:
+            return None
+        return max(0, int((self.expires_at - timezone.now()).total_seconds()))
+
+    @property
+    def can_extend_hold(self) -> bool:
+        return (
+            self.has_active_hold
+            and not self.is_expired
+            and self.extension_count < settings.ORDER_HOLD_MAX_EXTENSIONS
+            and self.payment_id is None
+        )
+
+    def start_hold(self, minutes: int | None = None, *, reset_extensions: bool = False, save: bool = True):
+        '''
+        Starts (or restarts) the stock hold window for this unpaid order.
+        '''
+        now = timezone.now()
+        minutes = settings.ORDER_HOLD_MINUTES if minutes is None else minutes
+        self.hold_started_at = now
+        self.expires_at = now + timedelta(minutes=minutes)
+        if reset_extensions:
+            self.extension_count = 0
+        if save:
+            self.save(update_fields=['hold_started_at', 'expires_at', 'extension_count', 'updated_at'])
+        self._schedule_expiry_task()
+
+    def clear_hold(self, save: bool = True):
+        '''
+        Removes the time limit (order paid, or settled via a non-timed method such as bank transfer).
+        '''
+        self.expires_at = None
+        self.hold_started_at = None
+        if save:
+            self.save(update_fields=['expires_at', 'hold_started_at', 'updated_at'])
+
+    def extend_hold(self):
+        '''
+        Grants one of the allowed hold extensions, capped at ORDER_HOLD_MAX_MINUTES in total.
+        '''
+        if not self.has_active_hold or self.is_expired:
+            raise exceptions.ValidationError("This order has no active reservation to extend.")
+        if self.payment_id is not None:
+            raise exceptions.ValidationError("A reservation cannot be extended once payment has started.")
+        if self.extension_count >= settings.ORDER_HOLD_MAX_EXTENSIONS:
+            raise exceptions.ValidationError("The maximum number of reservation extensions has been reached.")
+
+        cap = (self.hold_started_at or self.created_at) + timedelta(minutes=settings.ORDER_HOLD_MAX_MINUTES)
+        new_expiry = min(self.expires_at + timedelta(minutes=settings.ORDER_HOLD_EXTENSION_MINUTES), cap)
+        if new_expiry <= self.expires_at:
+            raise exceptions.ValidationError("The maximum reservation time has been reached.")
+
+        self.expires_at = new_expiry
+        self.extension_count += 1
+        self.save(update_fields=['expires_at', 'extension_count', 'updated_at'])
+        self._schedule_expiry_task()
+
+    def _schedule_expiry_task(self):
+        '''
+        Queue a precise expiry job; the periodic sweep and lazy checks remain the safety net.
+        '''
+        if not self.pk or not self.expires_at:
+            return
+        order_pk, eta = self.pk, self.expires_at + timedelta(seconds=1)
+
+        def _dispatch():
+            from apps.products.tasks import expire_order_hold
+            try:
+                expire_order_hold.apply_async(args=[order_pk], eta=eta)
+            except Exception:
+                logger.warning("Could not schedule expiry task for order %s", order_pk, exc_info=True)
+
+        transaction.on_commit(_dispatch)
+
+    def expire(self) -> bool:
+        '''
+        Cancels the order and releases its stock if its hold has lapsed.
+
+        Returns True if the order was expired by this call. Orders whose payment completed (or whose
+        Stripe PaymentIntent cannot be safely cancelled) are left alone.
+        '''
+        from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
+        from apps.payments.services.stripe.payment_intents import PaymentIntentService
+
+        expired = False
+        with transaction.atomic():
+            locked = Order.objects.select_for_update().get(pk=self.pk)
+            if locked.is_expired:
+                payment = locked.payment
+                proceed = True
+                if payment:
+                    if payment.status == PaymentStatusChoices.COMPLETED:
+                        locked.clear_hold()
+                        proceed = False
+                    else:
+                        if payment.method.method_type == PaymentMethodTypeChoices.STRIPE and payment.stripe_payment_intent:
+                            try:
+                                PaymentIntentService.cancel(
+                                    payment.stripe_payment_intent,
+                                    cancellation_reason='abandoned',
+                                    stripe_account_id=payment.method.get_stripe_account_id(),
+                                )
+                            except Exception:
+                                # The intent may be mid-capture; retry shortly instead of risking a paid cancelled order.
+                                logger.warning("Could not cancel PaymentIntent for order %s; retrying", locked.pk, exc_info=True)
+                                locked.expires_at = timezone.now() + timedelta(minutes=5)
+                                locked.save(update_fields=['expires_at', 'updated_at'])
+                                locked._schedule_expiry_task()
+                                proceed = False
+                        if proceed and payment.status in (PaymentStatusChoices.DRAFTING, PaymentStatusChoices.PENDING):
+                            payment.status = PaymentStatusChoices.CANCELLED
+                            payment.save()
+                if proceed:
+                    locked.expired_at = timezone.now()
+                    locked.expires_at = None
+                    locked.transition_to(OrderStatusChoices.CANCELLED)
+                    expired = True
+        self.refresh_from_db()
+        return expired
 
     # validate transitions
     def can_transition_to(self, new_status: str) -> bool:
@@ -352,6 +505,9 @@ class Order(SoftDeleteModel): # no admin model
             # Recalculate and save order total within transaction for consistency
             self.refresh_from_db()
             self.total_amount = self.get_total_amount()
+            if self.expires_at is None and self.expired_at is None and self.booking_package_id is None:
+                # first item starts the cart hold; booking orders follow the booking intent timeout
+                self.start_hold(save=False)
             self.full_clean()
             self.save() # persist changes
 

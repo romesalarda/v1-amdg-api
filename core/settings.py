@@ -522,6 +522,13 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # Celery Beat Schedule - Periodic Tasks
 CELERY_BEAT_SCHEDULE = {
+    'expire-order-holds': {
+        'task': 'products.expire_order_holds',
+        'schedule': 60.0,  # Every minute
+        'options': {
+            'expires': 55.0,
+        }
+    },
     'mark-completed-events': {
         'task': 'events.mark_completed_events',
         'schedule': 3600.0,  # Run every hour (3600 seconds)
@@ -684,6 +691,18 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # =============================================================================
 MAX_LENGTH_LOCATION_ID = 20
 MAX_ID_GENERATION_ATTEMPTS = 5
+
+# =============================================================================
+# ORDER HOLD (CART / CHECKOUT TIMEOUT)
+# Stock is reserved while an order is in the cart or awaiting card payment.
+# Unpaid orders are cancelled (stock released) once the hold expires.
+# Bank transfer, cash, free and booking-linked orders are not time limited.
+# =============================================================================
+ORDER_HOLD_MINUTES = int(get_secret("ORDER_HOLD_MINUTES", "15"))  # cart hold from first item
+ORDER_CHECKOUT_HOLD_MINUTES = int(get_secret("ORDER_CHECKOUT_HOLD_MINUTES", "15"))  # reset when card payment starts
+ORDER_HOLD_EXTENSION_MINUTES = int(get_secret("ORDER_HOLD_EXTENSION_MINUTES", "10"))
+ORDER_HOLD_MAX_EXTENSIONS = int(get_secret("ORDER_HOLD_MAX_EXTENSIONS", "1"))
+ORDER_HOLD_MAX_MINUTES = int(get_secret("ORDER_HOLD_MAX_MINUTES", "30"))  # cap on total hold incl. extensions
 FULL_DELETE_BOOKING_INTENTS = 10 # days
 
 JAZZMIN_SETTINGS = {
