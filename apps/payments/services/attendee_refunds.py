@@ -11,8 +11,7 @@ from djmoney.money import Money
 from apps.attendee.models import Attendee
 from apps.bookings.models import Booking, Ticket, TicketStatusChoices
 from apps.common.models import VerificationStatus
-from apps.payments.models import PaymentStatusChoices, RefundAssociation, RefundRequest
-from apps.payments.models.donations import Donation
+from apps.payments.models import PaymentStatusChoices, RefundAssociation, RefundRequest, Donation, Payment
 from apps.products.models import Order, OrderItem, OrderStatusChoices, OrderItemStatusChoices, RefundRollbackLog
 from apps.organisations.models import EventSponsor
 
@@ -55,7 +54,10 @@ TARGETED_REFUND_SCOPES = {
     REFUND_SCOPE_HYBRID_BOOKING,
 }
 
-def get_payment_target_kind(payment) -> str:
+def get_payment_target_kind(payment: Payment) -> str:
+    '''
+    Return the target kind of the payment.
+    '''
     target = getattr(payment, "target", None)
     if target is None:
         return TARGET_KIND_NONE
@@ -71,7 +73,7 @@ def get_payment_target_kind(payment) -> str:
         return TARGET_KIND_SPONSORSHIP
     return TARGET_KIND_UNSUPPORTED
 
-def assert_supported_payment_target(payment) -> str:
+def assert_supported_payment_target(payment: Payment) -> str:
     target_kind = get_payment_target_kind(payment)
     if target_kind == TARGET_KIND_UNSUPPORTED:
         raise ValidationError("Refunds are not supported for this payment target type.")
@@ -80,10 +82,10 @@ def assert_supported_payment_target(payment) -> str:
 def is_full_refund_only_target_kind(target_kind: str) -> bool:
     return target_kind in FULL_REFUND_ONLY_TARGET_KINDS
 
-def supports_itemized_refunds(payment) -> bool:
+def supports_itemized_refunds(payment: Payment) -> bool:
     return get_payment_target_kind(payment) in ITEMIZED_REFUND_TARGET_KINDS
 
-def calculate_full_target_breakdown(payment) -> Dict[str, Any]:
+def calculate_full_target_breakdown(payment: Payment) -> Dict[str, Any]:
     """Build frozen context for full refunds that are target-level only."""
     target_kind = assert_supported_payment_target(payment)
     if target_kind not in {
@@ -109,7 +111,7 @@ def calculate_full_target_breakdown(payment) -> Dict[str, Any]:
         },
     }
 
-def is_booking_payment(payment) -> bool:
+def is_booking_payment(payment: Payment) -> bool:
     return get_payment_target_kind(payment) == TARGET_KIND_BOOKING
 
 def _transition_order_to_pending_refund(order: Order) -> bool:
@@ -141,7 +143,9 @@ def _save_rollback_snapshot(refund_request: RefundRequest, snapshot: Dict[str, A
     refund_request.save(update_fields=["metadata"])
 
 def initialize_rollback_snapshot(refund_request: RefundRequest) -> None:
-    """Capture payment state before any refund side-effects mutate linked entities."""
+    """
+    Capture payment state before any refund side-effects mutate linked entities.
+    """
     snapshot = _get_rollback_snapshot(refund_request) 
     changed = False
 
@@ -379,7 +383,24 @@ def _ticket_amount(payment, ticket: Ticket) -> Money:
 
     return Money(Decimal("0.00"), currency)
 
-def calculate_breakdown(payment, attendees: List[Attendee]) -> Dict[str, Any]:
+def calculate_breakdown(payment: Payment, attendees: List[Attendee]) -> Dict[str, Any]:
+    '''
+    Calculate the breakdown of refund amounts for the given attendees within a payment.
+
+    Args:
+        payment (Payment): The payment object associated with the attendees.
+        attendees (List[Attendee]): A list of attendees for whom the refund breakdown is calculated. Should be part of the given payment.
+
+    Returns:
+        A dictionary with the following structure:
+        {
+            "total": float, 
+            "total_currency": str,  
+            "tickets": List[Dict[str, Any]],  
+            "orders": List[Dict[str, Any]], 
+            "entity_counts": {"tickets": int, "orders": int}
+        }
+    '''
     entities = get_refund_entities(payment, attendees)
     currency = payment.base_amount.currency
     total = Money(Decimal("0.00"), currency)
@@ -416,8 +437,10 @@ def calculate_breakdown(payment, attendees: List[Attendee]) -> Dict[str, Any]:
         "entity_counts": {"tickets": len(ticket_items), "orders": len(order_items)},
     }
 
-def calculate_booking_ticket_breakdown(payment, attendees: List[Attendee]) -> Dict[str, Any]:
-    """Calculate ticket-only totals for selected booking attendees."""
+def calculate_booking_ticket_breakdown(payment: Payment, attendees: List[Attendee]) -> Dict[str, Any]:
+    """
+    Calculate ticket-only totals for selected booking attendees.
+    """
     entities = get_refund_entities(payment, attendees)
     currency = payment.base_amount.currency
     total = Money(Decimal("0.00"), currency)
@@ -443,7 +466,7 @@ def calculate_booking_ticket_breakdown(payment, attendees: List[Attendee]) -> Di
         "entity_counts": {"tickets": len(ticket_items), "orders": 0, "items": 0},
     }
 
-def calculate_targeted_booking_product_breakdown(payment, refund_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+def calculate_targeted_booking_product_breakdown(payment: Payment, refund_items: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Calculate and validate targeted booking product-line refund selections."""
     if not is_booking_payment(payment):
         raise ValidationError("Targeted booking product refunds are only supported for booking-linked payments.")
