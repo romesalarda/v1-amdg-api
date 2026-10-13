@@ -44,7 +44,7 @@ from apps.payments.models import (
 from apps.payments.models.stripe_accounts import StripeConnectedAccount
 from apps.products.models import StockAuditLog
 from apps.common.models import VerificationStatus
-from apps.payments.services.attendee_refunds import AttendeeRefundService
+from apps.payments.services import attendee_refunds
 from apps.payments.services.completion import schedule_payment_fulfilment
 from apps.events.models import Event
 from apps.events.services.policy import get_effective_policy_values
@@ -1367,11 +1367,11 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         override_used_ticket_block = attrs.get('override_used_ticket_block', False)
         override_reason = attrs.get('override_reason')
         reason_code = attrs.get('reason_code', 'unspecified')
-        target_kind = AttendeeRefundService.assert_supported_payment_target(payment)
+        target_kind = attendee_refunds.assert_supported_payment_target(payment)
 
         refund_context = {
             'target_kind': target_kind,
-            'is_booking_payment': target_kind == AttendeeRefundService.TARGET_KIND_BOOKING,
+            'is_booking_payment': target_kind == attendee_refunds.TARGET_KIND_BOOKING,
             'selected_attendee_ids': attendee_ids,
             'breakdown': None,
             'refund_scope': 'legacy',
@@ -1379,8 +1379,8 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         }
 
         is_booking_payment = refund_context['is_booking_payment']
-        is_order_payment = target_kind == AttendeeRefundService.TARGET_KIND_ORDER
-        is_full_refund_only_target = AttendeeRefundService.is_full_refund_only_target_kind(target_kind)
+        is_order_payment = target_kind == attendee_refunds.TARGET_KIND_ORDER
+        is_full_refund_only_target = attendee_refunds.is_full_refund_only_target_kind(target_kind)
 
         if amount > payment.base_amount:
             raise serializers.ValidationError({
@@ -1391,7 +1391,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         is_targeted_booking_refund = is_booking_payment and bool(refund_items) and not bool(attendee_ids)
         is_targeted_order_refund = is_order_payment and bool(refund_items)
 
-        if not AttendeeRefundService.supports_itemized_refunds(payment) and refund_items:
+        if not attendee_refunds.supports_itemized_refunds(payment) and refund_items:
             raise serializers.ValidationError({
                 'refund_items': "refund_items is only supported for booking or order payment targets."
             })
@@ -1440,9 +1440,9 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 })
 
         if is_hybrid_booking_refund:
-            attendees = AttendeeRefundService.resolve_booking_attendees(payment, attendee_ids)
+            attendees = attendee_refunds.resolve_booking_attendees(payment, attendee_ids)
 
-            if AttendeeRefundService.has_used_ticket(payment, attendees) and not override_used_ticket_block:
+            if attendee_refunds.has_used_ticket(payment, attendees) and not override_used_ticket_block:
                 raise serializers.ValidationError({
                     'attendee_ids': (
                         "One or more selected attendees already have a used ticket. "
@@ -1450,8 +1450,8 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                     )
                 })
 
-            ticket_breakdown = AttendeeRefundService.calculate_booking_ticket_breakdown(payment, attendees)
-            order_item_breakdown = AttendeeRefundService.calculate_targeted_booking_product_breakdown(payment, refund_items)
+            ticket_breakdown = attendee_refunds.calculate_booking_ticket_breakdown(payment, attendees)
+            order_item_breakdown = attendee_refunds.calculate_targeted_booking_product_breakdown(payment, refund_items)
 
             ticket_total = Decimal(str(ticket_breakdown.get('total', 0))).quantize(Decimal('0.01'))
             order_item_total = Decimal(str(order_item_breakdown.get('total', 0))).quantize(Decimal('0.01'))
@@ -1482,7 +1482,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
             )
 
         elif is_booking_payment and is_targeted_booking_refund:
-            breakdown = AttendeeRefundService.calculate_targeted_booking_product_breakdown(payment, refund_items)
+            breakdown = attendee_refunds.calculate_targeted_booking_product_breakdown(payment, refund_items)
             refund_context['selected_attendee_ids'] = breakdown.get('selected_attendee_ids', [])
             refund_context['selected_refund_items'] = breakdown.get('items', [])
             refund_context['breakdown'] = breakdown
@@ -1494,7 +1494,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
             )
 
         elif is_targeted_order_refund:
-            breakdown = AttendeeRefundService.calculate_targeted_order_item_breakdown(payment, refund_items)
+            breakdown = attendee_refunds.calculate_targeted_order_item_breakdown(payment, refund_items)
             refund_context['selected_refund_items'] = breakdown.get('items', [])
             refund_context['breakdown'] = breakdown
             refund_context['refund_scope'] = 'targeted_order_items'
@@ -1511,9 +1511,9 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 )
                 attendee_ids = [str(att_id) for att_id in attendee_ids]
 
-            attendees = AttendeeRefundService.resolve_booking_attendees(payment, attendee_ids)
+            attendees = attendee_refunds.resolve_booking_attendees(payment, attendee_ids)
 
-            if AttendeeRefundService.has_used_ticket(payment, attendees) and not override_used_ticket_block:
+            if attendee_refunds.has_used_ticket(payment, attendees) and not override_used_ticket_block:
                 raise serializers.ValidationError({
                     'attendee_ids': (
                         "One or more selected attendees already have a used ticket. "
@@ -1521,7 +1521,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                     )
                 })
 
-            breakdown = AttendeeRefundService.calculate_breakdown(payment, attendees)
+            breakdown = attendee_refunds.calculate_breakdown(payment, attendees)
             refund_context['selected_attendee_ids'] = attendee_ids
             refund_context['breakdown'] = breakdown
             refund_context['refund_scope'] = 'attendee_entities'
@@ -1534,7 +1534,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
                 )
 
         else:
-            breakdown = AttendeeRefundService.calculate_full_target_breakdown(payment)
+            breakdown = attendee_refunds.calculate_full_target_breakdown(payment)
             refund_context['breakdown'] = breakdown
             refund_context['refund_scope'] = 'full_target'
             self._assert_breakdown_amount_matches(
@@ -1590,7 +1590,7 @@ class RefundRequestCreateSerializer(serializers.ModelSerializer):
         refund_request.metadata = metadata
         refund_request.save(update_fields=['metadata'])
 
-        AttendeeRefundService.attach_associations(refund_request)
+        attendee_refunds.attach_associations(refund_request)
         return refund_request
 
 

@@ -12,6 +12,8 @@ from django.db import transaction
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.exceptions import StripeWebhookError
 from apps.payments.services.completion import complete_payment
+from apps.payments.services.attendee_refunds import apply_process_finalize
+from apps.payments.tasks import send_refund_email
 
 logger = logging.getLogger(__name__)
 
@@ -425,11 +427,9 @@ class ChargeRefundedHandler(WebhookEventHandler):
                         refund_request.save()
 
                         # Finalize linked tickets / orders (mirrors the manual process endpoint).
-                        from apps.payments.services.attendee_refunds import AttendeeRefundService
-                        AttendeeRefundService.apply_process_finalize(refund_request)
+                        apply_process_finalize(refund_request)
 
                         # Queue refund confirmation email (fires after this transaction commits).
-                        from apps.payments.tasks import send_refund_email
                         _refund_pk = refund_request.pk
                         transaction.on_commit(lambda: send_refund_email.delay(_refund_pk))
                         
