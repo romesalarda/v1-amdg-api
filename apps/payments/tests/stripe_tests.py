@@ -24,7 +24,7 @@ from apps.payments.models import (
 )
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.connect import StripeConnectService
-from apps.payments.services.stripe.payment_intents import PaymentIntentService
+from apps.payments.services.stripe import payment_intents
 from apps.payments.services.stripe import refunds as refund_service
 from apps.payments.services.stripe.webhooks import (
     verify_webhook_signature,
@@ -125,7 +125,7 @@ class PaymentIntentServiceTestCase(TestCase):
         mock_create.return_value = mock_payment_intent
         
         # Create PaymentIntent
-        payment_intent = PaymentIntentService.create(
+        payment_intent = payment_intents.create(
             amount=Money(50, 'GBP'),
             currency='GBP',
             payment_reference='PAY-TEST-001',
@@ -156,7 +156,7 @@ class PaymentIntentServiceTestCase(TestCase):
         mock_payment_intent.status = 'requires_payment_method'
         mock_create.return_value = mock_payment_intent
 
-        payment_intent = PaymentIntentService.create(
+        payment_intent = payment_intents.create(
             amount=Money(50, 'GBP'),
             currency='GBP',
             payment_reference='PAY-TEST-004',
@@ -173,7 +173,7 @@ class PaymentIntentServiceTestCase(TestCase):
     def test_create_payment_intent_invalid_amount(self, mock_create):
         """Test PaymentIntent creation with invalid amount."""
         with self.assertRaises(StripeValidationError) as cm:
-            PaymentIntentService.create(
+            payment_intents.create(
                 amount=Money(0, 'GBP'),
                 currency='GBP',
                 payment_reference='PAY-TEST-002',
@@ -195,7 +195,7 @@ class PaymentIntentServiceTestCase(TestCase):
         mock_create.side_effect = mock_error
         
         with self.assertRaises(StripePaymentError) as cm:
-            PaymentIntentService.create(
+            payment_intents.create(
                 amount=Money(50, 'GBP'),
                 currency='GBP',
                 payment_reference='PAY-TEST-003',
@@ -213,7 +213,7 @@ class PaymentIntentServiceTestCase(TestCase):
         mock_payment_intent.status = 'succeeded'
         mock_retrieve.return_value = mock_payment_intent
         
-        payment_intent = PaymentIntentService.retrieve('pi_test123', stripe_account_id=self.stripe_account_id)
+        payment_intent = payment_intents.retrieve('pi_test123', stripe_account_id=self.stripe_account_id)
         
         self.assertEqual(payment_intent.id, 'pi_test123')
         self.assertEqual(payment_intent.status, 'succeeded')
@@ -227,7 +227,7 @@ class PaymentIntentServiceTestCase(TestCase):
         mock_payment_intent.status = 'canceled'
         mock_cancel.return_value = mock_payment_intent
         
-        payment_intent = PaymentIntentService.cancel(
+        payment_intent = payment_intents.cancel(
             'pi_test123',
             'requested_by_customer',
             stripe_account_id=self.stripe_account_id,
@@ -665,7 +665,7 @@ class IdempotencyTestCase(TestCase):
         mock_create.return_value = mock_payment_intent
         
         # Create first PaymentIntent
-        pi1 = PaymentIntentService.create(
+        pi1 = payment_intents.create(
             amount=Money(50, 'GBP'),
             currency='GBP',
             payment_reference='PAY-IDEMP-001',
@@ -674,7 +674,7 @@ class IdempotencyTestCase(TestCase):
         )
         
         # Create second PaymentIntent with same idempotency key
-        pi2 = PaymentIntentService.create(
+        pi2 = payment_intents.create(
             amount=Money(50, 'GBP'),
             currency='GBP',
             payment_reference='PAY-IDEMP-001',  # Same key

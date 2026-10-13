@@ -35,7 +35,7 @@ from apps.payments.api.serializers.stripe import (
 from rest_framework import serializers as drf_serializers
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.connect import StripeConnectService
-from apps.payments.services.stripe.payment_intents import PaymentIntentService
+from apps.payments.services.stripe import payment_intents
 from apps.payments.services.stripe.webhooks import verify_webhook_signature, process_webhook_event
 from apps.payments.services.stripe.exceptions import StripeServiceError, StripeWebhookError
 
@@ -285,7 +285,7 @@ class CreatePaymentIntentView(APIView):
         
         # Create PaymentIntent
         try:
-            payment_intent = PaymentIntentService.create(
+            payment_intent = payment_intents.create(
                 amount=payment.base_amount,
                 currency=payment.base_amount.currency.code,
                 payment_reference=payment.payment_reference,
@@ -415,7 +415,7 @@ class StripeConfirmPaymentView(APIView):
                 )
             
             # Confirm payment intent
-            payment_intent = PaymentIntentService.confirm(
+            payment_intent = payment_intents.confirm(
                 payment_intent_id=payment_intent_id,
                 payment_method=payment_method,
                 stripe_account_id=payment_stripe_account_id,

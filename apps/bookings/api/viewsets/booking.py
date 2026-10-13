@@ -54,7 +54,7 @@ from apps.bookings.services.checkout_finaliser import finalize_from_payment, fin
 from apps.bookings.services.utils import (
     CheckoutPayloadBuilder, CheckoutPricingCalculator, CheckoutResponseBuilder,
 )
-from apps.payments.services.stripe.payment_intents import PaymentIntentService
+from apps.payments.services.stripe import payment_intents
 from apps.bookings.api.pagination import StandardPagination
 
 from apps.payments.models import DiscountType, BankTransferEvidence
@@ -595,7 +595,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                                 else None
                             )
                             try:
-                                existing_payment_intent = PaymentIntentService.retrieve(
+                                existing_payment_intent = payment_intents.retrieve(
                                     existing_payment.stripe_payment_intent,
                                     stripe_account_id=stripe_account_id,
                                 )
@@ -781,7 +781,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
                     if stripe_payment_intent_id:
                         try:
-                            payment_intent = PaymentIntentService.retrieve(
+                            payment_intent = payment_intents.retrieve(
                                 stripe_payment_intent_id,
                                 stripe_account_id=stripe_account_id,
                             )
@@ -829,7 +829,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     try:
                         stripe_metadata = payment.prepare_stripe_metadata()
                         stripe_metadata['checkout_intent_id'] = str(intent.booking_intent_id)
-                        payment_intent = PaymentIntentService.create(
+                        payment_intent = payment_intents.create(
                             amount=payment.base_amount,
                             currency=payment.base_amount.currency.code,
                             payment_reference=payment.payment_reference,

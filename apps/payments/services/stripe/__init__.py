@@ -1,5 +1,4 @@
 from .client import StripeClient
-from .payment_intents import PaymentIntentService
 from .refunds import (
     create, 
     REASON_DUPLICATE, 

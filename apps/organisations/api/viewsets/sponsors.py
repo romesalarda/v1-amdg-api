@@ -436,7 +436,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
             }
 
             if payment_method.method_type == PaymentMethodTypeChoices.STRIPE:
-                from apps.payments.services.stripe.payment_intents import PaymentIntentService
+                from apps.payments.services.stripe import payment_intents
                 from apps.payments.services.stripe.client import StripeClient
                 from apps.payments.services.stripe.exceptions import StripeServiceError
 
@@ -449,7 +449,7 @@ class EventSponsorViewSet(viewsets.ModelViewSet):
                                 "This Stripe payment method has no connected account configured. "
                                 "Please contact the event organiser."
                             )
-                    payment_intent = PaymentIntentService.create(
+                    payment_intent = payment_intents.create(
                         amount=payment.base_amount,
                         currency=payment.base_amount.currency.code,
                         payment_reference=payment.payment_reference,

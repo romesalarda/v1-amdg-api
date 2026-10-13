@@ -14,8 +14,8 @@ from datetime import timedelta
 import stripe
 
 from apps.payments.models import Payment, PaymentStatusChoices, PaymentHistoryAction
+from apps.payments.services.stripe import payment_intents
 from apps.payments.services.stripe.client import StripeClient
-from apps.payments.services.stripe.payment_intents import PaymentIntentService
 from apps.payments.services.stripe.exceptions import StripeServiceError
 from apps.payments.services.completion import complete_payment
 
@@ -67,7 +67,7 @@ def reconcile_stripe_payment(self, payment_id: str):
                 if payment.method and hasattr(payment.method, 'get_stripe_account_id'):
                     stripe_account_id = payment.method.get_stripe_account_id()
 
-                payment_intent = PaymentIntentService.retrieve(
+                payment_intent = payment_intents.retrieve(
                     payment.stripe_payment_intent,
                     stripe_account_id=stripe_account_id,
                 )

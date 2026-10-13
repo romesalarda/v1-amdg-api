@@ -2476,7 +2476,7 @@ class DonationAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('user_id', response.data)
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    @patch('apps.payments.services.stripe.payment_intents.create')
     def test_create_donation_with_stripe_payment_uses_connected_account(self, mock_create):
         """Stripe donation checkout should pass the connected Stripe account to PaymentIntent creation."""
         self.payment_method.provided_details = {'stripe_account_id': 'acct_test123'}

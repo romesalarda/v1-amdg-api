@@ -786,7 +786,7 @@ class CheckoutAPITestCase(TestCase):
         self.assertEqual(attendees.count(), 1)
         self.assertEqual(attendees.first().status, AttendeeStatus.PENDING_PAYMENT)
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    @patch('apps.payments.services.stripe.payment_intents.create')
     def test_checkout_stripe_pending_creates_booking_and_attendee_from_draft(self, mock_create_intent):
         """Stripe checkout (client_secret flow) defers booking/attendee creation until webhook confirms payment."""
         intent = self.create_booking_intent(ticket_count=1)
@@ -1494,8 +1494,8 @@ class CheckoutAPITestCase(TestCase):
         self.assertEqual(str(resource.target_id), str(self.event.id))
         self.assertEqual(upload_answer.answer_text, resource.resource_url)
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    @patch('apps.payments.services.stripe.payment_intents.retrieve')
+    @patch('apps.payments.services.stripe.payment_intents.create')
     def test_checkout_idempotent_stripe_retry_returns_client_secret(self, mock_create_intent, mock_retrieve_intent):
         """Idempotent Stripe retries should return client_secret so frontend can continue confirmation."""
         intent = self.create_booking_intent(ticket_count=1)
@@ -1544,7 +1544,7 @@ class CheckoutAPITestCase(TestCase):
         self.assertEqual(second_response.data['stripe_client_secret'], 'pi_retry_secret_123')
         self.assertEqual(Payment.objects.count(), 1)
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    @patch('apps.payments.services.stripe.payment_intents.retrieve')
     def test_checkout_stripe_confirmed_payment(self, mock_retrieve_intent):
         """Checkout should confirm Stripe payments when intent is succeeded."""
         intent = self.create_booking_intent(ticket_count=1)
@@ -1604,7 +1604,7 @@ class CheckoutAPITestCase(TestCase):
         payload.update(overrides)
         return payload
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    @patch('apps.payments.services.stripe.payment_intents.retrieve')
     def test_checkout_stripe_retrieve_failure_returns_400(self, mock_retrieve_intent):
         """Checkout should surface a validation error if the Stripe PaymentIntent can't be retrieved."""
         intent = self.create_booking_intent(ticket_count=1)
@@ -1619,7 +1619,7 @@ class CheckoutAPITestCase(TestCase):
         self.assertIn('stripe_payment_intent_id', response.data)
         self.assertEqual(Payment.objects.count(), 0)
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    @patch('apps.payments.services.stripe.payment_intents.retrieve')
     def test_checkout_stripe_amount_mismatch_returns_400(self, mock_retrieve_intent):
         """Checkout should reject a Stripe PaymentIntent whose amount doesn't match the checkout total."""
         intent = self.create_booking_intent(ticket_count=1)
@@ -1636,7 +1636,7 @@ class CheckoutAPITestCase(TestCase):
         self.assertIn('stripe_payment_intent_id', response.data)
         self.assertEqual(Payment.objects.count(), 0)
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    @patch('apps.payments.services.stripe.payment_intents.retrieve')
     def test_checkout_stripe_currency_mismatch_returns_400(self, mock_retrieve_intent):
         """Checkout should reject a Stripe PaymentIntent whose currency doesn't match the checkout currency."""
         intent = self.create_booking_intent(ticket_count=1)
@@ -1653,7 +1653,7 @@ class CheckoutAPITestCase(TestCase):
         self.assertIn('stripe_payment_intent_id', response.data)
         self.assertEqual(Payment.objects.count(), 0)
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.retrieve')
+    @patch('apps.payments.services.stripe.payment_intents.retrieve')
     def test_checkout_stripe_not_succeeded_returns_400(self, mock_retrieve_intent):
         """Checkout should reject a Stripe PaymentIntent that has not succeeded."""
         intent = self.create_booking_intent(ticket_count=1)
@@ -1670,7 +1670,7 @@ class CheckoutAPITestCase(TestCase):
         self.assertIn('stripe_payment_intent_id', response.data)
         self.assertEqual(Payment.objects.count(), 0)
 
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    @patch('apps.payments.services.stripe.payment_intents.create')
     def test_checkout_stripe_create_intent_failure_returns_400(self, mock_create_intent):
         """Checkout should surface a validation error if Stripe PaymentIntent creation fails."""
         intent = self.create_booking_intent(ticket_count=1)
