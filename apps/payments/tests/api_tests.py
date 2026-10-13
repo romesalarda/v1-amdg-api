@@ -20,9 +20,7 @@ from unittest.mock import Mock, patch
 
 from apps.payments.models import (
     Payment, PaymentMethod, PaymentStatusChoices, PaymentMethodTypeChoices,
-    Discount, DiscountRule, DiscountType, DiscountRuleTypeChoices,
-    RefundRequest, RefundPolicy, RefundPolicyTypeChoices,
-    Donation, PaymentHistoryAction,
+    Discount, DiscountType, RefundRequest, Donation,
     CreditExpense, CreditExpenseTypeChoices, BankTransferEvidence,
     StripeConnectedAccount,
     DebitExpense, DebitExpenseTypeChoices, BudgetProposal,

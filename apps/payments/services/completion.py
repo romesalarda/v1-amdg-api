@@ -42,7 +42,7 @@ from apps.bookings.services import (
 from apps.organisations.models import EventSponsor
 from apps.payments.models import Donation
 from apps.products.models import Order
-from apps.products.services import OrderPaymentProcessor
+from apps.products.services import process_order_payment
 from apps.common.models.verification import VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -171,7 +171,7 @@ def _run_fulfilment(payment: Payment) -> None:
     if isinstance(target, Booking):
         process_booking_payment(payment, target)
     elif isinstance(target, Order):
-        OrderPaymentProcessor.process(payment, target)
+        process_order_payment(payment, target)
     elif isinstance(target, Donation):
         _handle_donation_payment(payment, target)
     elif isinstance(target, EventSponsor):
