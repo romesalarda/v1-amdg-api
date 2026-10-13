@@ -43,6 +43,7 @@ from apps.organisations.models import EventSponsor
 from apps.payments.models import Donation
 from apps.products.models import Order
 from apps.products.services import OrderPaymentProcessor
+from apps.common.models.verification import VerificationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,6 @@ def _handle_donation_payment(payment: Payment, donation) -> None:
     Auto-verify donations once the provider has confirmed funds.
     Bank-transfer donations still need manual evidence review.
     """
-    from apps.common.models.verification import VerificationStatus
 
     if payment.method and payment.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
         logger.info(
