@@ -6,11 +6,13 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from apps.events.models import (
-    Event, EventStaff, EventPermission, EventPermissionAssignment,
-    EventPermissionCategoryChoices
+    EventStaff, EventPermission, EventPermissionAssignment,
+    EventStaffInvite
 )
 from apps.events.services.permission_templates import get_template, is_valid_template
 from apps.organisations.models import UserOrganisationMembership
+
+from django.contrib.auth import get_user_model
 
 
 def apply_permission_template(event, user, template_code, assigned_by=None):
@@ -129,8 +131,6 @@ def get_eligible_staff_for_event(event):
     Returns:
         QuerySet: QuerySet of User objects eligible to be invited
     """
-    from django.contrib.auth import get_user_model
-    from apps.events.models import EventStaffInvite
     
     User = get_user_model()
     

@@ -1,8 +1,4 @@
 """
 Products services module.
 """
-from .order_payment_processor import OrderPaymentProcessor
-
-__all__ = [
-    'OrderPaymentProcessor',
-]
+from .order_payment_processor import process_order_payment

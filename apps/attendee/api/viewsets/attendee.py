@@ -16,6 +16,7 @@ from drf_spectacular.types import OpenApiTypes
 from django.utils import timezone
 
 from apps.attendee.models import Attendee
+from apps.payments.services.attendee_refunds import is_booking_payment
 
 
 from apps.attendee.api.serializers import (
@@ -276,7 +277,6 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         from apps.events.models import EventRoleAssignment, EventRoleCategoryChoices
         from apps.payments.models import Payment, PaymentHistoryAction, PaymentStatusChoices
         from apps.payments.api.serializers import RefundRequestCreateSerializer
-        from apps.payments.services.attendee_refunds import AttendeeRefundService
 
         payment = get_object_or_404(Payment, payment_id=payment_id)
         if not self._is_payment_linked_to_attendee(attendee, payment):
@@ -295,7 +295,7 @@ class AttendeeViewSet(viewsets.ModelViewSet):
         payload['payment'] = str(payment.payment_id)
 
         # For booking-linked payments, default attendee_ids to the current attendee when omitted.
-        if AttendeeRefundService.is_booking_payment(payment) and not payload.get('attendee_ids'):
+        if is_booking_payment(payment) and not payload.get('attendee_ids'):
             payload['attendee_ids'] = [str(attendee.attendee_id)]
 
         refund_serializer = RefundRequestCreateSerializer(data=payload, context={'request': request})

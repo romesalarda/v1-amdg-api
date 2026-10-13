@@ -33,6 +33,18 @@ from django.utils import timezone
 
 from apps.payments.models import Payment, PaymentStatusChoices, PaymentMethodTypeChoices
 
+from apps.bookings.models import Booking
+from apps.bookings.services import (
+    finalize_from_payment,
+    process_booking_payment,
+    should_create_tickets_for_payment,
+)
+from apps.organisations.models import EventSponsor
+from apps.payments.models import Donation
+from apps.products.models import Order
+from apps.products.services import process_order_payment
+from apps.common.models.verification import VerificationStatus
+
 logger = logging.getLogger(__name__)
 
 
@@ -133,18 +145,6 @@ def fulfil_outstanding_payments(min_age_minutes: int = 5, batch_size: int = 100)
 
 def _run_fulfilment(payment: Payment) -> None:
     """Deferred finalisation, auto-processing gate and target dispatch."""
-    # Imported lazily: payments must not import bookings/products at module load.
-    from apps.bookings.models import Booking
-    from apps.bookings.services import (
-        finalize_from_payment,
-        process_booking_payment,
-        should_create_tickets_for_payment,
-    )
-    from apps.organisations.models import EventSponsor
-    from apps.payments.models import Donation
-    from apps.products.models import Order
-    from apps.products.services import OrderPaymentProcessor
-
     # Phase 1: deferred booking finalisation (two-phase checkout).
     if payment.target is None and (payment.metadata or {}).get('checkout_intent_id'):
         result = finalize_from_payment(payment)
@@ -171,7 +171,7 @@ def _run_fulfilment(payment: Payment) -> None:
     if isinstance(target, Booking):
         process_booking_payment(payment, target)
     elif isinstance(target, Order):
-        OrderPaymentProcessor.process(payment, target)
+        process_order_payment(payment, target)
     elif isinstance(target, Donation):
         _handle_donation_payment(payment, target)
     elif isinstance(target, EventSponsor):
@@ -194,7 +194,6 @@ def _handle_donation_payment(payment: Payment, donation) -> None:
     Auto-verify donations once the provider has confirmed funds.
     Bank-transfer donations still need manual evidence review.
     """
-    from apps.common.models.verification import VerificationStatus
 
     if payment.method and payment.method.method_type == PaymentMethodTypeChoices.BANK_TRANSFER:
         logger.info(

@@ -8,7 +8,7 @@ import logging
 
 from celery import shared_task
 
-from apps.organisations.services.email import SponsorshipEmailService
+from apps.organisations.services.email import send_sponsorship_payment_confirmation
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,7 @@ def send_sponsorship_payment_confirmation_email(self, sponsor_pk: int, payment_p
         payment_pk,
     )
     try:
-        success = SponsorshipEmailService.send_sponsorship_payment_confirmation(
-            sponsor_pk, payment_pk
-        )
+        success = send_sponsorship_payment_confirmation(sponsor_pk, payment_pk)
         if success:
             return f"sponsorship confirmation email sent | sponsor_pk={sponsor_pk}"
         return (

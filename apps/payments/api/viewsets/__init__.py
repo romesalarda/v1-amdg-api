@@ -6,7 +6,7 @@ from .debit import *  # noqa: F401, F403
 from .payments import *  # noqa: F401, F403
 from .discounts import *  # noqa: F401, F403
 from .donations import *  # noqa: F401, F403
-from .refunds import *  # noqa: F401, F403
+from .refunds import RefundRequestViewSet, RefundAssociationViewSet, RefundPolicyViewSet  # noqa: F401, F403
 from .history import *  # noqa: F401, F403
 from .stock import *  # noqa: F401, F403
 from .stripe import *  # noqa: F401, F403

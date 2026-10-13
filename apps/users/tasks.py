@@ -8,7 +8,11 @@ import logging
 
 from celery import shared_task
 
-from apps.users.services.email import UserEmailService
+from apps.users.services.email import send_welcome, send_email_verification, send_password_changed, send_password_reset_confirmation
+from apps.common.services.email import send_templated_email
+from django.contrib.auth import get_user_model
+from django.conf import settings
+from django.core.management import call_command
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +33,7 @@ def send_welcome_email(self, user_pk: int) -> str:
     """
     logger.info("send_welcome_email: user_pk=%s", user_pk)
     try:
-        success = UserEmailService.send_welcome(user_pk)
+        success = send_welcome(user_pk)
         if success:
             return f"welcome email sent | user_pk={user_pk}"
         return f"welcome email skipped (no recipient or user not found) | user_pk={user_pk}"
@@ -58,7 +62,7 @@ def send_email_verification_email(self, user_pk: int, verification_url: str) -> 
         "send_email_verification_email: user_pk=%s", user_pk
     )
     try:
-        success = UserEmailService.send_email_verification(user_pk, verification_url)
+        success = send_email_verification(user_pk, verification_url)
         if success:
             return f"verification email sent | user_pk={user_pk}"
         return (
@@ -88,7 +92,7 @@ def send_password_changed_email(self, user_pk: int) -> str:
     """
     logger.info("send_password_changed_email: user_pk=%s", user_pk)
     try:
-        success = UserEmailService.send_password_changed(user_pk)
+        success = send_password_changed(user_pk)
         if success:
             return f"password changed email sent | user_pk={user_pk}"
         return (
@@ -118,7 +122,7 @@ def send_password_reset_confirmation_email(self, user_pk: int) -> str:
     """
     logger.info("send_password_reset_confirmation_email: user_pk=%s", user_pk)
     try:
-        success = UserEmailService.send_password_reset_confirmation(user_pk)
+        success = send_password_reset_confirmation(user_pk)
         if success:
             return f"password reset confirmation email sent | user_pk={user_pk}"
         return (
@@ -148,9 +152,6 @@ def send_password_reset_email(self, user_id: int, reset_url: str) -> str:
     Returns:
         A short status string for Celery result inspection.
     """
-    from apps.common.services.email import send_templated_email
-    from django.contrib.auth import get_user_model
-    from django.conf import settings
 
     logger.info("send_password_reset_email: user_id=%s", user_id)
     User = get_user_model()
@@ -196,7 +197,6 @@ def send_password_reset_email(self, user_id: int, reset_url: str) -> str:
 @shared_task
 def cleanup_old_sessions() -> str:
     """Clean up expired sessions from the database (scheduled via Celery Beat)."""
-    from django.core.management import call_command
 
     call_command("clearsessions")
     return "Old sessions cleaned up"
