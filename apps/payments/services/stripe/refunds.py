@@ -20,210 +20,205 @@ from apps.payments.services.stripe.exceptions import (
 logger = logging.getLogger(__name__)
 
 
-class RefundService:
-    """Service for managing Stripe Refunds."""
+# class RefundService:
     
     # Stripe refund reasons
-    REASON_DUPLICATE = 'duplicate'
-    REASON_FRAUDULENT = 'fraudulent'
-    REASON_REQUESTED_BY_CUSTOMER = 'requested_by_customer'
-    
-    @staticmethod
-    def create(
-        payment_intent_id: str,
-        amount: Optional[Money] = None,
-        reason: str = REASON_REQUESTED_BY_CUSTOMER,
-        metadata: Optional[Dict] = None,
-        refund_reference: Optional[str] = None,
-        stripe_account_id: Optional[str] = None,
-    ) -> stripe.Refund:
-        """
-        Create a Stripe Refund.
-        
-        Args:
-            payment_intent_id: Stripe PaymentIntent ID to refund
-            amount: Refund amount. If None, refunds full amount
-            reason: Refund reason (duplicate, fraudulent, requested_by_customer)
-            metadata: Additional data to attach to refund
-            refund_reference: Unique refund reference for idempotency
-            
-        Returns:
-            stripe.Refund: Created Refund object
-            
-        Raises:
-            StripeValidationError: If validation fails
-            StripeRefundError: If Stripe API call fails
-        """
-        StripeClient.initialize()
-        
-        # Validate amount if provided
-        if amount is not None and amount.amount <= 0:
-            raise StripeValidationError(
-                message=f"Invalid refund amount: {amount}. Must be greater than zero.",
-                user_message="Invalid refund amount."
-            )
-        
-        if not stripe_account_id:
-            raise StripeValidationError(
-                message="Stripe account ID is required to create a refund.",
-                user_message="Refund processing error. Please try again."
-            )
-        
-        # Prepare request parameters
-        params = {
-            'payment_intent': payment_intent_id,
-            'reason': reason,
-        }
-        
-        if amount is not None:
-            # Convert to smallest currency unit (cents/pence)
-            amount_in_cents = int(amount.amount * 100)
-            params['amount'] = amount_in_cents
-        
-        if metadata:
-            # Validate metadata size (Stripe limits)
-            if len(metadata) > 50:
-                logger.warning(f"Metadata has {len(metadata)} keys. Stripe limit is 50. Truncating.")
-                metadata = dict(list(metadata.items())[:50])
-            params['metadata'] = metadata
+REASON_DUPLICATE = 'duplicate'
+REASON_FRAUDULENT = 'fraudulent'
+REASON_REQUESTED_BY_CUSTOMER = 'requested_by_customer'
 
-        request_options = {}
-        if stripe_account_id:
-            request_options['stripe_account'] = stripe_account_id
+def create(
+    payment_intent_id: str,
+    amount: Optional[Money] = None,
+    reason: str = REASON_REQUESTED_BY_CUSTOMER,
+    metadata: Optional[Dict] = None,
+    refund_reference: Optional[str] = None,
+    stripe_account_id: Optional[str] = None,
+) -> stripe.Refund:
+    """
+    Create a Stripe Refund.
+    
+    Args:
+        payment_intent_id: Stripe PaymentIntent ID to refund
+        amount: Refund amount. If None, refunds full amount
+        reason: Refund reason (duplicate, fraudulent, requested_by_customer)
+        metadata: Additional data to attach to refund
+        refund_reference: Unique refund reference for idempotency
         
-        try:
-            # Use refund_reference as idempotency key if provided
-            kwargs = {}
-            if refund_reference:
-                kwargs['idempotency_key'] = refund_reference
-            kwargs.update(request_options)
-            
-            refund = stripe.Refund.create(**params, **kwargs)
-            
-            refund_amount = amount or "full amount"
-            logger.info(
-                f"Created Refund {refund.id} for PaymentIntent {payment_intent_id} "
-                f"({refund_amount})"
-            )
-            
-            return refund
-            
-        except stripe.StripeError as e:
-            logger.error(f"Failed to create Refund for {payment_intent_id}: {str(e)}")
-            
-            # Check for specific refund errors
-            error_code = getattr(e, 'code', None)
-            if error_code == 'charge_already_refunded':
-                raise StripeRefundError(
-                    message=f"Charge already refunded: {str(e)}",
-                    stripe_error=e,
-                    user_message="This payment has already been refunded."
-                )
-            
-            raise map_stripe_error(e)
+    Returns:
+        stripe.Refund: Created Refund object
         
-        except Exception as e:
-            logger.exception(f"Unexpected error creating Refund: {str(e)}")
+    Raises:
+        StripeValidationError: If validation fails
+        StripeRefundError: If Stripe API call fails
+    """
+    StripeClient.initialize()
+    
+    # Validate amount if provided
+    if amount is not None and amount.amount <= 0:
+        raise StripeValidationError(
+            message=f"Invalid refund amount: {amount}. Must be greater than zero.",
+            user_message="Invalid refund amount."
+        )
+    
+    if not stripe_account_id:
+        raise StripeValidationError(
+            message="Stripe account ID is required to create a refund.",
+            user_message="Refund processing error. Please try again."
+        )
+    
+    # Prepare request parameters
+    params = {
+        'payment_intent': payment_intent_id,
+        'reason': reason,
+    }
+    
+    if amount is not None:
+        # Convert to smallest currency unit (cents/pence)
+        amount_in_cents = int(amount.amount * 100)
+        params['amount'] = amount_in_cents
+    
+    if metadata:
+        # Validate metadata size (Stripe limits)
+        if len(metadata) > 50:
+            logger.warning(f"Metadata has {len(metadata)} keys. Stripe limit is 50. Truncating.")
+            metadata = dict(list(metadata.items())[:50])
+        params['metadata'] = metadata
+
+    request_options = {}
+    if stripe_account_id:
+        request_options['stripe_account'] = stripe_account_id
+    
+    try:
+        # Use refund_reference as idempotency key if provided
+        kwargs = {}
+        if refund_reference:
+            kwargs['idempotency_key'] = refund_reference
+        kwargs.update(request_options)
+        
+        refund = stripe.Refund.create(**params, **kwargs)
+        
+        refund_amount = amount or "full amount"
+        logger.info(
+            f"Created Refund {refund.id} for PaymentIntent {payment_intent_id} "
+            f"({refund_amount})"
+        )
+        
+        return refund
+        
+    except stripe.StripeError as e:
+        logger.error(f"Failed to create Refund for {payment_intent_id}: {str(e)}")
+        
+        # Check for specific refund errors
+        error_code = getattr(e, 'code', None)
+        if error_code == 'charge_already_refunded':
             raise StripeRefundError(
-                message=f"Unexpected error: {str(e)}",
-                user_message="Refund processing error. Please try again."
+                message=f"Charge already refunded: {str(e)}",
+                stripe_error=e,
+                user_message="This payment has already been refunded."
             )
+        
+        raise map_stripe_error(e)
     
-    @staticmethod
-    def retrieve(refund_id: str, stripe_account_id: Optional[str] = None) -> stripe.Refund:
-        """
-        Retrieve a Refund by ID.
-        
-        Args:
-            refund_id: Stripe Refund ID (starts with 're_')
-            
-        Returns:
-            stripe.Refund: Retrieved Refund object
-            
-        Raises:
-            StripeRefundError: If retrieval fails
-        """
-        StripeClient.initialize()
-        
-        try:
-            kwargs = {}
-            if stripe_account_id:
-                kwargs['stripe_account'] = stripe_account_id
+    except Exception as e:
+        logger.exception(f"Unexpected error creating Refund: {str(e)}")
+        raise StripeRefundError(
+            message=f"Unexpected error: {str(e)}",
+            user_message="Refund processing error. Please try again."
+        )
 
-            refund = stripe.Refund.retrieve(refund_id, **kwargs)
-            return refund
-            
-        except stripe.StripeError as e:
-            logger.error(f"Failed to retrieve Refund {refund_id}: {str(e)}")
-            raise map_stripe_error(e)
+def retrieve(refund_id: str, stripe_account_id: Optional[str] = None) -> stripe.Refund:
+    """
+    Retrieve a Refund by ID.
     
-    @staticmethod
-    def list_for_payment_intent(
-        payment_intent_id: str,
-        limit: int = 100,
-        stripe_account_id: Optional[str] = None,
-    ) -> stripe.ListObject:
-        """
-        List all refunds for a PaymentIntent.
+    Args:
+        refund_id: Stripe Refund ID (starts with 're_')
         
-        Args:
-            payment_intent_id: Stripe PaymentIntent ID
-            limit: Maximum number of refunds to return
-            
-        Returns:
-            stripe.ListObject: List of Refund objects
-            
-        Raises:
-            StripeRefundError: If listing fails
-        """
-        StripeClient.initialize()
+    Returns:
+        stripe.Refund: Retrieved Refund object
         
-        try:
-            kwargs = {}
-            if stripe_account_id:
-                kwargs['stripe_account'] = stripe_account_id
-
-            refunds = stripe.Refund.list(
-                payment_intent=payment_intent_id,
-                limit=limit,
-                **kwargs,
-            )
-            
-            return refunds
-            
-        except stripe.StripeError as e:
-            logger.error(f"Failed to list Refunds for {payment_intent_id}: {str(e)}")
-            raise map_stripe_error(e)
+    Raises:
+        StripeRefundError: If retrieval fails
+    """
+    StripeClient.initialize()
     
-    @staticmethod
-    def cancel(refund_id: str, stripe_account_id: Optional[str] = None) -> stripe.Refund:
-        """
-        Cancel a pending Refund.
-        
-        Can only cancel refunds that are in 'pending' status.
-        Once a refund succeeds or fails, it cannot be cancelled.
-        
-        Args:
-            refund_id: Stripe Refund ID
-            
-        Returns:
-            stripe.Refund: Cancelled Refund object
-            
-        Raises:
-            StripeRefundError: If cancellation fails
-        """
-        StripeClient.initialize()
-        
-        try:
-            kwargs = {}
-            if stripe_account_id:
-                kwargs['stripe_account'] = stripe_account_id
+    try:
+        kwargs = {}
+        if stripe_account_id:
+            kwargs['stripe_account'] = stripe_account_id
 
-            refund = stripe.Refund.cancel(refund_id, **kwargs)
-            
-            logger.info(f"Cancelled Refund {refund_id}")
-            return refund
-            
-        except stripe.StripeError as e:
-            logger.error(f"Failed to cancel Refund {refund_id}: {str(e)}")
-            raise map_stripe_error(e)
+        refund = stripe.Refund.retrieve(refund_id, **kwargs)
+        return refund
+        
+    except stripe.StripeError as e:
+        logger.error(f"Failed to retrieve Refund {refund_id}: {str(e)}")
+        raise map_stripe_error(e)
+
+def list_for_payment_intent(
+    payment_intent_id: str,
+    limit: int = 100,
+    stripe_account_id: Optional[str] = None,
+) -> stripe.ListObject:
+    """
+    List all refunds for a PaymentIntent.
+    
+    Args:
+        payment_intent_id: Stripe PaymentIntent ID
+        limit: Maximum number of refunds to return
+        
+    Returns:
+        stripe.ListObject: List of Refund objects
+        
+    Raises:
+        StripeRefundError: If listing fails
+    """
+    StripeClient.initialize()
+    
+    try:
+        kwargs = {}
+        if stripe_account_id:
+            kwargs['stripe_account'] = stripe_account_id
+
+        refunds = stripe.Refund.list(
+            payment_intent=payment_intent_id,
+            limit=limit,
+            **kwargs,
+        )
+        
+        return refunds
+        
+    except stripe.StripeError as e:
+        logger.error(f"Failed to list Refunds for {payment_intent_id}: {str(e)}")
+        raise map_stripe_error(e)
+
+def cancel(refund_id: str, stripe_account_id: Optional[str] = None) -> stripe.Refund:
+    """
+    Cancel a pending Refund.
+    
+    Can only cancel refunds that are in 'pending' status.
+    Once a refund succeeds or fails, it cannot be cancelled.
+    
+    Args:
+        refund_id: Stripe Refund ID
+        
+    Returns:
+        stripe.Refund: Cancelled Refund object
+        
+    Raises:
+        StripeRefundError: If cancellation fails
+    """
+    StripeClient.initialize()
+    
+    try:
+        kwargs = {}
+        if stripe_account_id:
+            kwargs['stripe_account'] = stripe_account_id
+
+        refund = stripe.Refund.cancel(refund_id, **kwargs)
+        
+        logger.info(f"Cancelled Refund {refund_id}")
+        return refund
+        
+    except stripe.StripeError as e:
+        logger.error(f"Failed to cancel Refund {refund_id}: {str(e)}")
+        raise map_stripe_error(e)

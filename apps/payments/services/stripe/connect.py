@@ -13,7 +13,7 @@ import stripe
 from django.conf import settings
 from django.db import transaction
 
-from apps.payments.models import StripeConnectedAccount, StripeConnectedAccountStatusChoices
+from apps.payments.models import StripeConnectedAccount
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.exceptions import StripeServiceError, map_stripe_error
 

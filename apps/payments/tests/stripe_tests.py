@@ -25,7 +25,7 @@ from apps.payments.models import (
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.connect import StripeConnectService
 from apps.payments.services.stripe.payment_intents import PaymentIntentService
-from apps.payments.services.stripe.refunds import RefundService
+from apps.payments.services.stripe import refunds as refund_service
 from apps.payments.services.stripe.webhooks import (
     verify_webhook_signature,
     process_webhook_event,
@@ -249,9 +249,9 @@ class RefundServiceTestCase(TestCase):
         mock_refund.amount = 5000
         mock_create.return_value = mock_refund
         
-        refund = RefundService.create(
+        refund = refund_service.create(
             payment_intent_id='pi_test123',
-            reason=RefundService.REASON_REQUESTED_BY_CUSTOMER,
+            reason=refund_service.REASON_REQUESTED_BY_CUSTOMER,
             stripe_account_id='acct_test123'
         )
         
@@ -271,10 +271,10 @@ class RefundServiceTestCase(TestCase):
         mock_refund.amount = 2000
         mock_create.return_value = mock_refund
         
-        refund = RefundService.create(
+        refund = refund_service.create(
             payment_intent_id='pi_test123',
             amount=Money(20, 'GBP'),
-            reason=RefundService.REASON_REQUESTED_BY_CUSTOMER,
+            reason=refund_service.REASON_REQUESTED_BY_CUSTOMER,
             refund_reference='REF-TEST-001',
             stripe_account_id='acct_test123'
         )
@@ -295,9 +295,9 @@ class RefundServiceTestCase(TestCase):
         mock_refund.amount = 5000
         mock_create.return_value = mock_refund
 
-        refund = RefundService.create(
+        refund = refund_service.create(
             payment_intent_id='pi_test123',
-            reason=RefundService.REASON_REQUESTED_BY_CUSTOMER,
+            reason=refund_service.REASON_REQUESTED_BY_CUSTOMER,
             stripe_account_id='acct_test123'
         )
 
@@ -308,7 +308,7 @@ class RefundServiceTestCase(TestCase):
     def test_create_refund_invalid_amount(self, mock_create):
         """Test refund creation with invalid amount."""
         with self.assertRaises(StripeValidationError):
-            RefundService.create(
+            refund_service.create(
                 payment_intent_id='pi_test123',
                 amount=Money(0, 'GBP')
             )
