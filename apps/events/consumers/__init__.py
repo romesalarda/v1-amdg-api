@@ -6,5 +6,13 @@ from .questions import EventQuestionConsumer
 from .checkin import CheckInConsumer
 from .attendee_roster import AttendeeRosterConsumer
 from .forms import EventFormConsumer
+from .dashboard_presence import DashboardPresenceConsumer
 
-__all__ = ['BaseRealtimeConsumer', 'EventQuestionConsumer', 'CheckInConsumer', 'AttendeeRosterConsumer', 'EventFormConsumer']
+__all__ = [
+    'BaseRealtimeConsumer',
+    'EventQuestionConsumer',
+    'CheckInConsumer',
+    'AttendeeRosterConsumer',
+    'EventFormConsumer',
+    'DashboardPresenceConsumer',
+]

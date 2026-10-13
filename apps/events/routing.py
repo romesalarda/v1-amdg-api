@@ -2,7 +2,13 @@
 WebSocket URL routing for events application.
 """
 from django.urls import re_path
-from .consumers import EventQuestionConsumer, CheckInConsumer, AttendeeRosterConsumer, EventFormConsumer
+from .consumers import (
+    AttendeeRosterConsumer,
+    CheckInConsumer,
+    DashboardPresenceConsumer,
+    EventFormConsumer,
+    EventQuestionConsumer,
+)
 
 # This regex is designed to match either a standard UUID or a URL-friendly slug.
 # - UUIDs are matched by their typical 32-hex-character-with-hyphens format.
@@ -24,5 +30,9 @@ websocket_urlpatterns = [
     re_path(
         r'^ws/events/(?P<event_identifier>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[\w-]+))/forms/$',
         EventFormConsumer.as_asgi()
+    ),
+    re_path(
+        r'^ws/events/(?P<event_identifier>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[\w-]+))/dashboard/presence/$',
+        DashboardPresenceConsumer.as_asgi()
     ),
 ]
