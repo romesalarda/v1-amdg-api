@@ -12,9 +12,8 @@ Tests cover:
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from unittest.mock import patch, Mock, MagicMock
+from unittest.mock import patch, Mock
 from datetime import timedelta
-from decimal import Decimal
 from djmoney.money import Money
 import stripe
 
@@ -23,12 +22,11 @@ from apps.payments.models import (
     RefundRequest, PaymentHistoryAction, StripeConnectedAccount
 )
 from apps.payments.services.stripe.client import StripeClient
-from apps.payments.services.stripe.connect import StripeConnectService
+from apps.payments.services.stripe import connect
 from apps.payments.services.stripe import payment_intents
 from apps.payments.services.stripe import refunds as refund_service
 from apps.payments.services.stripe.webhooks import (
     verify_webhook_signature,
-    process_webhook_event,
     PaymentIntentSucceededHandler,
     PaymentIntentPaymentFailedHandler,
     PaymentIntentCanceledHandler,
@@ -42,7 +40,6 @@ from apps.payments.services.stripe.exceptions import (
 from apps.events.models import Event, EventType, EventStatusChoices
 from apps.organisations.models import Organisation
 from apps.products.models import Order, OrderStatusChoices
-from apps.common.models.verification import VerificationStatus
 
 User = get_user_model()
 
@@ -366,7 +363,7 @@ class StripeConnectServiceTestCase(TestCase):
         mock_account.metadata = {}
         mock_create.return_value = mock_account
 
-        account_record, stripe_account = StripeConnectService.create_or_refresh_account(self.user)
+        account_record, stripe_account = connect.create_or_refresh_account(self.user)
 
         self.assertEqual(account_record.stripe_account_id, 'acct_test123')
         self.assertEqual(stripe_account.id, 'acct_test123')
@@ -383,7 +380,7 @@ class StripeConnectServiceTestCase(TestCase):
             provided_details={'stripe_account_id': 'acct_test456'}
         )
 
-        stripe_account_id = StripeConnectService.resolve_payment_method_stripe_account_id(payment_method)
+        stripe_account_id = connect.resolve_payment_method_stripe_account_id(payment_method)
 
         self.assertEqual(stripe_account_id, 'acct_test456')
 
@@ -409,7 +406,7 @@ class StripeConnectServiceTestCase(TestCase):
             is_primary=False,
         )
 
-        StripeConnectService.set_primary(second)
+        connect.set_primary(second)
 
         first.refresh_from_db()
         second.refresh_from_db()
@@ -437,7 +434,7 @@ class StripeConnectServiceTestCase(TestCase):
             is_primary=True,
         )
 
-        resolved = StripeConnectService.get_user_account(self.user)
+        resolved = connect.get_user_account(self.user)
 
         self.assertIsNotNone(resolved)
         self.assertEqual(resolved.pk, preferred.pk)

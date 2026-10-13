@@ -941,7 +941,7 @@ class StripeConnectedAccountAPITestCase(APITestCase):
         returned_ids = {item['stripe_account_id'] for item in response.data["results"]}
         self.assertEqual(returned_ids, {'acct_user_1', 'acct_user_2'})
 
-    @patch('apps.payments.services.stripe.connect.StripeConnectService.retrieve_account')
+    @patch('apps.payments.services.stripe.connect.retrieve_account')
     def test_create_connected_account(self, mock_retrieve_account):
         mock_retrieve_account.return_value = self._stripe_account_mock(account_id='acct_create_1')
 
@@ -961,7 +961,7 @@ class StripeConnectedAccountAPITestCase(APITestCase):
         self.assertEqual(response.data['display_name'], 'Primary Wallet')
         self.assertTrue(response.data['is_primary'])
 
-    @patch('apps.payments.services.stripe.connect.StripeConnectService.retrieve_account')
+    @patch('apps.payments.services.stripe.connect.retrieve_account')
     def test_create_rejects_duplicate_for_same_user(self, mock_retrieve_account):
         mock_retrieve_account.return_value = self._stripe_account_mock(account_id='acct_dup_1')
         StripeConnectedAccount.objects.create(user=self.user, stripe_account_id='acct_dup_1')
@@ -979,7 +979,7 @@ class StripeConnectedAccountAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('stripe_account_id', response.data)
 
-    @patch('apps.payments.services.stripe.connect.StripeConnectService.retrieve_account')
+    @patch('apps.payments.services.stripe.connect.retrieve_account')
     def test_create_rejects_account_registered_by_another_user(self, mock_retrieve_account):
         mock_retrieve_account.return_value = self._stripe_account_mock(account_id='acct_taken_1')
         StripeConnectedAccount.objects.create(user=self.other_user, stripe_account_id='acct_taken_1')
