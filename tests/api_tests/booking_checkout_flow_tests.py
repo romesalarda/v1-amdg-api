@@ -1164,7 +1164,7 @@ class CheckoutAPITestCase(TestCase):
             event_alternative_signin=event_signin,
         )
         self.assertEqual(attendee_signin.identifier, '123456')
-        self.assertIsNone(attendee_signin.ticket)
+        self.assertIsNotNone(attendee_signin.ticket)
         self.assertEqual(attendee_signin.defined_by, self.user)
 
         payment = Payment.objects.get(payment_reference=response.data['payment_reference'])

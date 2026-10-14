@@ -267,8 +267,7 @@ class EventInviteActionsMixin:
             return Response(serializer.data)
 
         # DELETE — soft deactivate
-        invite.is_active = False
-        invite.save()
+        invite.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     # ------------------------------------------------------------------

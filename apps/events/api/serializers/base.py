@@ -2579,7 +2579,7 @@ class EventStaffInviteSerializer(serializers.ModelSerializer):
             if not is_valid_template(value):
                 raise serializers.ValidationError(
                     f"Invalid permission template code: {value}. "
-                    "Use GET /api/event/permission-templates to see available templates."
+                    # "Use GET /api/event/permission-templates to see available templates."
                 )
         return value
     
