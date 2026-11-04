@@ -9,15 +9,6 @@ https://docs.djangoproject.com/en/3.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/3.2/ref/settings/
 
-IMPORTANT - AWS SSM USAGE:
-==============================
-ALL secrets are loaded from SSM Parameter Store in a SINGLE batch call at startup.
-This prevents KMS quota exhaustion from repeated decrypt operations.
-
-DO NOT add runtime SSM calls anywhere in the application:
-- NO get_parameter() calls in views, tasks, or middleware
-- ALL secrets must be loaded via get_secret() which uses startup cache
-- New secrets must be added to REQUIRED_SECRETS list below
 """
 
 from pathlib import Path
