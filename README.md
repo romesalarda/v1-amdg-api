@@ -1,6 +1,6 @@
 # AMDG API Platform
 
-Backend service for AMDG events site
+Backend service for AMDG events site - Catholic events management site
 
 ## Tech Stack
 
