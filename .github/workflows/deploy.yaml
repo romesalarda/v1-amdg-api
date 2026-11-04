@@ -132,7 +132,7 @@ jobs:
               "cd \($dir)",
               "runuser -u ec2-user -- git fetch --prune origin main",
               "runuser -u ec2-user -- git reset --hard \($sha)",
-              "bash scripts/deploy.sh"
+              "bash scripts/deploy.sh \($sha)"
             ]
           }')
 

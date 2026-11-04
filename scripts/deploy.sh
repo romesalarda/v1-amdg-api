@@ -13,7 +13,9 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-export IMAGE_TAG="${1:-$(git rev-parse --short=12 HEAD)}"
+# safe.directory: this runs as root but the checkout is owned by ec2-user
+export IMAGE_TAG="${1:-$(git -c safe.directory="$PWD" rev-parse HEAD)}"
+IMAGE_TAG="${IMAGE_TAG:0:12}"
 export DOCKER_BUILDKIT=1
 # Explicit -f so a docker-compose.override.yml is never picked up on the server.
 # --env-file feeds ${VAR} interpolation in the compose file (e.g. DB_PASSWORD for the db service).
@@ -33,8 +35,9 @@ if grep -q '\$' /run/app.env; then
   grep '\$' /run/app.env | cut -d= -f1 >&2
 fi
 
+# Plain docker build: `docker-compose build` needs a newer buildx plugin than this host has
 echo "==> Building image"
-$COMPOSE build web
+docker build -t "amdg:$IMAGE_TAG" .
 
 echo "==> Ensuring db and redis are up"
 $COMPOSE up -d db redis
