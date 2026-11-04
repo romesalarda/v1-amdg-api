@@ -366,7 +366,7 @@ python manage.py check
 
 This project is proprietary and confidential.
 
-## Extra useful commands
+### Extra useful commands
 
 uvicorn core.asgi:application --reload   
 
