@@ -30,7 +30,7 @@ from apps.payments.api.permissions import (
     resolve_event_from_request, user_can_access_event_payments,
 )
 
-from apps.payments.services.attendee_refunds import AttendeeRefundService
+from apps.payments.services import attendee_refunds
 from apps.payments.tasks import send_refund_email
 from apps.common.pagination import StandardPagination
 
@@ -237,8 +237,8 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             except ValidationError as e:
                 return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
-            blocked_summary = AttendeeRefundService.apply_verify_block(refund_request)
-            verify_status = AttendeeRefundService.determine_payment_status_after_verify(refund_request)
+            blocked_summary = attendee_refunds.apply_verify_block(refund_request)
+            verify_status = attendee_refunds.determine_payment_status_after_verify(refund_request)
             refund_request.payment.transition_to(verify_status)
 
             PaymentHistoryAction.objects.create(
@@ -302,8 +302,8 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         
         with transaction.atomic():
             refund_request.mark_processed(request.user)
-            finalized_summary = AttendeeRefundService.apply_process_finalize(refund_request)
-            target_status = AttendeeRefundService.determine_payment_status_after_process(refund_request)
+            finalized_summary = attendee_refunds.apply_process_finalize(refund_request)
+            target_status = attendee_refunds.determine_payment_status_after_process(refund_request)
             refund_request.payment.transition_to(target_status)
 
             action_name = 'REFUND_FULLY_PROCESSED' if refund_request.is_full else 'REFUND_PARTIALLY_PROCESSED'
@@ -383,7 +383,7 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             refund_request.mark_rejected(request.user)
 
-            rollback_summary = AttendeeRefundService.apply_reject_rollback(refund_request)
+            rollback_summary = attendee_refunds.apply_reject_rollback(refund_request)
             restored_payment_status = rollback_summary.get('restored_payment_status', PaymentStatusChoices.COMPLETED)
             try:
                 refund_request.payment.transition_to(restored_payment_status)

@@ -8,7 +8,9 @@ import logging
 from typing import List, Dict, Optional
 from django.db import transaction
 from django.core.exceptions import ValidationError
-from djmoney.money import Money
+
+from apps.payments.models import PaymentStatusChoices
+from apps.bookings.models import Booking, Ticket, AttendeeAlternativeSigninIdentifier
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +41,6 @@ def create_tickets_for_payment(payment) -> List:
         TicketCreationError: If tickets cannot be created
         ValidationError: If payment or booking state is invalid
     """
-    from apps.payments.models import PaymentStatusChoices
-    from apps.bookings.models import Booking, Ticket
     
     # Validate payment status
     if payment.status != PaymentStatusChoices.COMPLETED:
@@ -104,6 +104,16 @@ def create_tickets_for_payment(payment) -> List:
                     frozen_price=selection.get('frozen_price')
                 )
                 created_tickets.append(ticket)
+
+                alt_signin = AttendeeAlternativeSigninIdentifier.objects.filter(
+                    attendee__attendee_id=attendee_id,
+                )
+                print(f"Alternative signin identifiers for attendee_id {attendee_id}: {alt_signin}")
+                if alt_signin.exists():
+                    for alt in alt_signin:
+                        print(f"Assigning ticket {ticket} to alternative signin identifier {alt}")
+                        alt.ticket = ticket
+                        alt.save()  
             
             if not created_tickets:
                 raise TicketCreationError(

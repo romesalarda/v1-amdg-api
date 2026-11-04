@@ -12,6 +12,10 @@ from django.db import transaction
 from apps.payments.services.stripe.client import StripeClient
 from apps.payments.services.stripe.exceptions import StripeWebhookError
 from apps.payments.services.completion import complete_payment
+from apps.payments.services.attendee_refunds import apply_process_finalize
+from apps.payments.tasks import send_refund_email
+from apps.common.models.verification import VerificationStatus
+from apps.payments.models import Payment, PaymentStatusChoices, RefundRequest, PaymentHistoryAction
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +50,9 @@ class WebhookEventHandler:
         account_suffix = f" account={self.account_id}" if self.account_id else ""
         log_func(f"[{self.event_type}:{self.event_id}{account_suffix}] {message}")
 
-    def _cancel_related_orders(self, payment, note: str):
+class OrderCancellationMixin:
+
+    def cancel_related_orders(self, payment, note: str):
         """Cancel linked open orders to restore stock for failed/cancelled payments."""
         from apps.products.models import OrderStatusChoices
 
@@ -203,7 +209,7 @@ class PaymentIntentSucceededHandler(WebhookEventHandler):
             self.log_event(f"Failed to update target status: {str(e)}", level='warning')
 
 
-class PaymentIntentPaymentFailedHandler(WebhookEventHandler):
+class PaymentIntentPaymentFailedHandler(WebhookEventHandler, OrderCancellationMixin):
     """Handle payment_intent.payment_failed events."""
     
     def handle(self) -> Dict:
@@ -247,7 +253,7 @@ class PaymentIntentPaymentFailedHandler(WebhookEventHandler):
                 payment.transition_to(PaymentStatusChoices.FAILED)
                 payment.save()
 
-                cancelled_order_ids = self._cancel_related_orders(
+                cancelled_order_ids = self.cancel_related_orders(
                     payment,
                     note='Payment failed; rolled back stock by cancelling linked orders',
                 )
@@ -285,12 +291,11 @@ class PaymentIntentPaymentFailedHandler(WebhookEventHandler):
             )
 
 
-class PaymentIntentCanceledHandler(WebhookEventHandler):
+class PaymentIntentCanceledHandler(WebhookEventHandler, OrderCancellationMixin):
     """Handle payment_intent.canceled events."""
     
     def handle(self) -> Dict:
         """Mark Payment as CANCELLED when PaymentIntent is canceled."""
-        from apps.payments.models import Payment, PaymentStatusChoices, PaymentHistoryAction
         
         payment_intent_id = self.data.id
         cancellation_reason = getattr(self.data, 'cancellation_reason', None)
@@ -320,7 +325,7 @@ class PaymentIntentCanceledHandler(WebhookEventHandler):
                 payment.transition_to(PaymentStatusChoices.CANCELLED)
                 payment.save()
 
-                cancelled_order_ids = self._cancel_related_orders(
+                cancelled_order_ids = self.cancel_related_orders(
                     payment,
                     note='Payment intent cancelled; rolled back stock by cancelling linked orders',
                 )
@@ -351,7 +356,7 @@ class PaymentIntentCanceledHandler(WebhookEventHandler):
             raise StripeWebhookError(message=f"Failed to process webhook: {str(e)}")
 
 
-class ChargeRefundedHandler(WebhookEventHandler):
+class ChargeRefundedHandler(WebhookEventHandler, OrderCancellationMixin):
     """Handle charge.refunded events."""
     
     def handle(self) -> Dict:
@@ -364,8 +369,6 @@ class ChargeRefundedHandler(WebhookEventHandler):
         - Payment.status -> REFUNDED (if full refund)
         - Restore stock if applicable
         """
-        from apps.payments.models import Payment, PaymentStatusChoices, RefundRequest
-        from apps.common.models.verification import VerificationStatus
         
         charge_id = self.data.id
         refunds_container = getattr(self.data, 'refunds', None)
@@ -425,11 +428,9 @@ class ChargeRefundedHandler(WebhookEventHandler):
                         refund_request.save()
 
                         # Finalize linked tickets / orders (mirrors the manual process endpoint).
-                        from apps.payments.services.attendee_refunds import AttendeeRefundService
-                        AttendeeRefundService.apply_process_finalize(refund_request)
+                        apply_process_finalize(refund_request)
 
                         # Queue refund confirmation email (fires after this transaction commits).
-                        from apps.payments.tasks import send_refund_email
                         _refund_pk = refund_request.pk
                         transaction.on_commit(lambda: send_refund_email.delay(_refund_pk))
                         

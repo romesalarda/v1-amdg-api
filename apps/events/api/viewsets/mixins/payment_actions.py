@@ -26,8 +26,7 @@ from apps.events.api.filtersets import (
     EventMyOutstandingPaymentsFilterSet,
 )
 from apps.events.api.pagination import StandardPagination
-from apps.events.services import OutstandingPaymentsService
-from apps.events.services.payment_summary import EventPaymentSummaryService
+from apps.events.services import payment_summary, outstanding_payments
 
 
 class EventPaymentActionsMixin:
@@ -150,7 +149,7 @@ class EventPaymentActionsMixin:
         event = self.get_object()
 
         outstanding_qs = (
-            OutstandingPaymentsService.get_user_outstanding_payments_with_validation(
+            outstanding_payments.get_user_outstanding_payments_with_validation(
                 request.user, event
             ).order_by("-created_at")
         )
@@ -239,7 +238,7 @@ class EventPaymentActionsMixin:
             if isinstance(attendee_filter, Response):
                 return attendee_filter  # propagate early error response
 
-        payload = EventPaymentSummaryService.build_for_booking(
+        payload = payment_summary.build_for_booking(
             booking=booking,
             event=event,
             attendee_filter=attendee_filter,

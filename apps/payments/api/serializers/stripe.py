@@ -11,7 +11,7 @@ from apps.payments.models import (
     StripeConnectedAccount,
     StripeConnectedAccountStatusChoices,
 )
-from apps.payments.services.stripe.connect import StripeConnectService
+from apps.payments.services.stripe import connect
 from apps.payments.services.stripe.exceptions import StripeServiceError
 
 
@@ -130,7 +130,7 @@ class StripeConnectedAccountCreateSerializer(serializers.ModelSerializer):
         stripe_account_id = validated_data['stripe_account_id']
 
         try:
-            stripe_account = StripeConnectService.retrieve_account(stripe_account_id)
+            stripe_account = connect.retrieve_account(stripe_account_id)
         except StripeServiceError as exc:
             raise serializers.ValidationError({'stripe_account_id': exc.user_message}) from exc
 
@@ -146,7 +146,7 @@ class StripeConnectedAccountCreateSerializer(serializers.ModelSerializer):
             charges_enabled=bool(getattr(stripe_account, 'charges_enabled', False)),
             payouts_enabled=bool(getattr(stripe_account, 'payouts_enabled', False)),
             details_submitted=bool(getattr(stripe_account, 'details_submitted', False)),
-            disabled_reason=StripeConnectService.get_disabled_reason(getattr(stripe_account, 'requirements', None)),
+            disabled_reason=connect.get_disabled_reason(getattr(stripe_account, 'requirements', None)),
             capabilities=getattr(stripe_account, 'capabilities', {}) or {},
             requirements=getattr(stripe_account, 'requirements', {}) or {},
             metadata=getattr(stripe_account, 'metadata', {}) or {},

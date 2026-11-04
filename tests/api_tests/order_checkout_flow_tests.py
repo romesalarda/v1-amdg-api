@@ -172,7 +172,7 @@ class OrderCheckoutAPITestCase(TestCase):
         # order.transition_to(OrderStatusChoices.PENDING)
         return order
     
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    @patch('apps.payments.services.stripe.payment_intents.create')
     def test_stripe_checkout_success(self, mock_create_intent):
         """Test successful STRIPE checkout flow."""
         # Mock Stripe response
@@ -732,7 +732,7 @@ class OrderCheckoutAPITestCase(TestCase):
         }
 
         # Use multipart format because evidence_file is a file upload
-        with patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create') as mock_pi:
+        with patch('apps.payments.services.stripe.payment_intents.create') as mock_pi:
             mock_pi.return_value = MagicMock(id='pi_evidence_test', client_secret='secret')
             response = self.client.post(url, data, format='multipart')
 

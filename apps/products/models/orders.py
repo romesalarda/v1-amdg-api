@@ -314,7 +314,7 @@ class Order(SoftDeleteModel): # no admin model
         Stripe PaymentIntent cannot be safely cancelled) are left alone.
         '''
         from apps.payments.models import PaymentStatusChoices, PaymentMethodTypeChoices
-        from apps.payments.services.stripe.payment_intents import PaymentIntentService
+        from apps.payments.services.stripe import payment_intents
 
         expired = False
         with transaction.atomic():
@@ -329,7 +329,7 @@ class Order(SoftDeleteModel): # no admin model
                     else:
                         if payment.method.method_type == PaymentMethodTypeChoices.STRIPE and payment.stripe_payment_intent:
                             try:
-                                PaymentIntentService.cancel(
+                                payment_intents.cancel(
                                     payment.stripe_payment_intent,
                                     cancellation_reason='abandoned',
                                     stripe_account_id=payment.method.get_stripe_account_id(),

@@ -17,6 +17,9 @@ from django.conf import settings
 from apps.common.models.verification import RequiresVerificationModel, VerificationStatus
 from apps.common.mixins import HasAvailabilityMixin
 
+from apps.payments.services.stripe import refunds as refund_service
+from apps.payments.services.stripe.exceptions import StripeServiceError
+
 from core.utils.display import try_generate_unique_code
 from decimal import Decimal
 import uuid
@@ -220,14 +223,12 @@ class RefundRequest(RequiresVerificationModel): # inherits verification fields
         if self.payment.stripe_payment_intent:
             
             logger = logging.getLogger(__name__)
-            from apps.payments.services.stripe.refunds import RefundService
-            from apps.payments.services.stripe.exceptions import StripeServiceError
             try:
                 # Create Stripe refund
-                stripe_refund = RefundService.create(
+                stripe_refund = refund_service.create(
                     payment_intent_id=self.payment.stripe_payment_intent,
                     amount=self.amount,
-                    reason=RefundService.REASON_REQUESTED_BY_CUSTOMER,
+                    reason=refund_service.REASON_REQUESTED_BY_CUSTOMER,
                     metadata={
                         'refund_id': str(self.refund_id),
                         'tracking_reference': self.tracking_reference,

@@ -12,7 +12,7 @@ import logging
 
 from celery import shared_task
 
-from apps.payments.services.email import RefundEmailService
+from apps.payments.services.email import send_booking_refund, send_order_refund
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +58,10 @@ def send_refund_email(self, refund_request_pk: int) -> str:
         is_booking = AttendeeRefundService.is_booking_payment(payment)
 
         if is_booking:
-            success = RefundEmailService.send_booking_refund(refund_request_pk)
+            success = send_booking_refund(refund_request_pk)
             label = "booking refund"
         else:
-            success = RefundEmailService.send_order_refund(refund_request_pk)
+            success = send_order_refund(refund_request_pk)
             label = "order refund"
 
         if success:

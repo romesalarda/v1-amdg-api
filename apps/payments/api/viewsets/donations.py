@@ -213,7 +213,7 @@ class DonationViewSet(viewsets.ModelViewSet):
         - CASH: Marks as pending approval
         """
         from apps.payments.api.serializers import DonationCheckoutSerializer
-        from apps.payments.services.stripe.payment_intents import PaymentIntentService
+        from apps.payments.services.stripe import payment_intents
         from django.db import transaction
         import logging
         
@@ -298,7 +298,7 @@ class DonationViewSet(viewsets.ModelViewSet):
                     stripe_metadata = payment.prepare_stripe_metadata()
                     stripe_account_id = payment_method.get_stripe_account_id() if hasattr(payment_method, 'get_stripe_account_id') else None
 
-                    payment_intent = PaymentIntentService.create(
+                    payment_intent = payment_intents.create(
                         amount=donation.amount,
                         currency=donation.amount.currency.code,
                         payment_reference=payment.payment_reference,

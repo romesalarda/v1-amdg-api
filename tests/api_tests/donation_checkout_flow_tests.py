@@ -107,7 +107,7 @@ class DonationCheckoutAPITestCase(TestCase):
             created_by=self.user
         )
     
-    @patch('apps.payments.services.stripe.payment_intents.PaymentIntentService.create')
+    @patch('apps.payments.services.stripe.payment_intents.create')
     def test_stripe_donation_success(self, mock_create_intent):
         """Test successful STRIPE donation flow."""
         # Mock Stripe response

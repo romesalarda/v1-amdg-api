@@ -52,7 +52,7 @@ from apps.events.models import Event
 
 from apps.products.api.serializers import OrderCheckoutSerializer
 from apps.payments.models import BankTransferEvidence, Payment, PaymentStatusChoices, PaymentMethodTypeChoices, PaymentMethod
-from apps.payments.services.stripe.payment_intents import PaymentIntentService
+from apps.payments.services.stripe import payment_intents
 from apps.attendee.models import Attendee
 from django.db import transaction
 from djmoney.money import Money
@@ -1293,7 +1293,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 # Create Stripe PaymentIntent
                 try:
                     stripe_metadata = payment.prepare_stripe_metadata()
-                    payment_intent = PaymentIntentService.create(
+                    payment_intent = payment_intents.create(
                         amount=discounted_total,
                         currency=discounted_total.currency.code,
                         payment_reference=payment.payment_reference,

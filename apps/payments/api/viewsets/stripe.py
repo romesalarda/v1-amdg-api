@@ -34,8 +34,8 @@ from apps.payments.api.serializers.stripe import (
 )
 from rest_framework import serializers as drf_serializers
 from apps.payments.services.stripe.client import StripeClient
-from apps.payments.services.stripe.connect import StripeConnectService
-from apps.payments.services.stripe.payment_intents import PaymentIntentService
+from apps.payments.services.stripe import connect
+from apps.payments.services.stripe import payment_intents
 from apps.payments.services.stripe.webhooks import verify_webhook_signature, process_webhook_event
 from apps.payments.services.stripe.exceptions import StripeServiceError, StripeWebhookError
 
@@ -49,7 +49,7 @@ from apps.payments.api.serializers.stripe import (
     StripeConnectedAccountUpdateSerializer,
 )
 from apps.payments.models import StripeConnectedAccount
-from apps.payments.services.stripe.connect import StripeConnectService
+from apps.payments.services.stripe import connect
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class StripeConnectStatusView(APIView):
     )
     def get(self, request):
         try:
-            account = StripeConnectService.refresh_user_account(request.user)
+            account = connect.refresh_user_account(request.user)
             serializer = StripeConnectAccountSerializer(_serialize_connect_account(account))
             return Response(serializer.data)
         except StripeServiceError as e:
@@ -176,7 +176,7 @@ class StripeConnectOnboardingView(APIView):
             country = request.data.get('country') if hasattr(request.data, 'get') else None
             force_new = request.data.get('force_new', False) if hasattr(request.data, 'get') else False
             
-            account_record, stripe_account = StripeConnectService.create_or_refresh_account(
+            account_record, stripe_account = connect.create_or_refresh_account(
                 request.user, 
                 country=country,
                 force_new=force_new
@@ -184,13 +184,13 @@ class StripeConnectOnboardingView(APIView):
 
             refresh_url = request.build_absolute_uri(reverse('payments:stripe-connect-onboard'))
             return_url = request.build_absolute_uri(reverse('payments:stripe-connect-status'))
-            onboarding_link = StripeConnectService.create_account_link(
+            onboarding_link = connect.create_account_link(
                 account_record.stripe_account_id,
                 refresh_url=refresh_url,
                 return_url=return_url,
             )
 
-            account_record = StripeConnectService.sync_from_stripe(account_record, stripe_account)
+            account_record = connect.sync_from_stripe(account_record, stripe_account)
             serializer = StripeConnectAccountSerializer(
                 _serialize_connect_account(account_record, onboarding_url=onboarding_link.url)
             )
@@ -285,7 +285,7 @@ class CreatePaymentIntentView(APIView):
         
         # Create PaymentIntent
         try:
-            payment_intent = PaymentIntentService.create(
+            payment_intent = payment_intents.create(
                 amount=payment.base_amount,
                 currency=payment.base_amount.currency.code,
                 payment_reference=payment.payment_reference,
@@ -415,7 +415,7 @@ class StripeConfirmPaymentView(APIView):
                 )
             
             # Confirm payment intent
-            payment_intent = PaymentIntentService.confirm(
+            payment_intent = payment_intents.confirm(
                 payment_intent_id=payment_intent_id,
                 payment_method=payment_method,
                 stripe_account_id=payment_stripe_account_id,
@@ -597,7 +597,7 @@ class StripeConnectedAccountViewSet(viewsets.ModelViewSet):
 
         # Keep primary-account behavior centralized in service/model layers.
         if serializer.validated_data.get('is_primary') is True:
-            account = StripeConnectService.set_primary(account)
+            account = connect.set_primary(account)
 
         response_serializer = StripeConnectedAccountListSerializer(account)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
@@ -605,7 +605,7 @@ class StripeConnectedAccountViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='set-primary')
     def set_primary(self, request, stripe_account_id=None):
         account = self.get_object()
-        account = StripeConnectService.set_primary(account)
+        account = connect.set_primary(account)
         serializer = StripeConnectedAccountListSerializer(account)
         return Response(serializer.data, status=status.HTTP_200_OK)
 

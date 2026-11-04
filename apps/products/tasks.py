@@ -7,8 +7,10 @@ task registry is cleanly separated from service logic.
 import logging
 
 from celery import shared_task
+from django.utils import timezone
 
-from apps.products.services.email import OrderEmailService
+from apps.products.services import email as email_service
+from apps.products.models import Order, OPEN_ORDER_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ def send_order_confirmation_email(self, order_pk: int, payment_pk: int) -> str:
         payment_pk,
     )
     try:
-        success = OrderEmailService.send_order_confirmation(order_pk, payment_pk)
+        success = email_service.send_order_confirmation(order_pk, payment_pk)
         if success:
             return f"order confirmation email sent | order_pk={order_pk}"
         return (
@@ -80,7 +82,7 @@ def send_order_pending_bank_transfer_email(self, order_pk: int, payment_pk: int)
         payment_pk,
     )
     try:
-        success = OrderEmailService.send_order_pending_bank_transfer(order_pk, payment_pk)
+        success = email_service.send_order_pending_bank_transfer(order_pk, payment_pk)
         if success:
             return f"order pending bank transfer email sent | order_pk={order_pk}"
         return (
@@ -100,7 +102,6 @@ def send_order_pending_bank_transfer_email(self, order_pk: int, payment_pk: int)
 @shared_task(name='products.expire_order_hold')
 def expire_order_hold(order_pk: int) -> str:
     """Expire a single order whose stock hold has lapsed (no-op if extended or paid)."""
-    from apps.products.models import Order
 
     order = Order.objects.filter(pk=order_pk).first()
     if order is None or not order.is_expired:
@@ -112,8 +113,6 @@ def expire_order_hold(order_pk: int) -> str:
 @shared_task(name='products.expire_order_holds')
 def expire_order_holds() -> dict:
     """Periodic sweep: cancel unpaid orders whose hold has lapsed and release their stock."""
-    from django.utils import timezone
-    from apps.products.models import Order, OPEN_ORDER_STATUSES
 
     now = timezone.now()
     candidates = Order.objects.filter(
