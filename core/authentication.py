@@ -5,7 +5,7 @@ This module provides a custom JWT authentication class that reads tokens
 from HTTP-only cookies instead of the Authorization header.
 """
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed
+from rest_framework_simplejwt.exceptions import InvalidToken
 from django.conf import settings
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 

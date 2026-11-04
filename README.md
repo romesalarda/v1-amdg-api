@@ -1,6 +1,6 @@
 # AMDG API Platform
 
-Backend service for AMDG
+Backend service for AMDG events site
 
 ## Tech Stack
 
