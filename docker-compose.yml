@@ -1,6 +1,7 @@
 # Production docker-compose.yml
-# This file is used on EC2 for production deployments
-# Images are ALWAYS pulled from ECR - never built locally
+# Used on EC2 via scripts/deploy.sh (always with an explicit -f docker-compose.yml).
+# The app image is built on the instance and shared by web, celery_worker and celery_beat.
+# Secrets/config come from /run/app.env, written by scripts/fetch_secrets.sh (.env + SSM).
 
 services:
   # Redis - Broker for Celery and Channel Layer for Django Channels
@@ -38,7 +39,8 @@ services:
 
   # Django Web Application (HTTP + WebSockets via Uvicorn)
   web:
-    image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-2.amazonaws.com}/amdg:${IMAGE_TAG:-latest}
+    build: .
+    image: amdg:${IMAGE_TAG:-latest}
     container_name: django_app
     command: uvicorn core.asgi:application --host 0.0.0.0 --port 8000 --log-level info
     expose:
@@ -57,36 +59,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    env_file: /run/app.env
     environment:
       - DJANGO_SETTINGS_MODULE=core.settings
-      - SECRET_KEY
-      - DEBUG
-      - ALLOWED_HOSTS
-      - DB_ENGINE
-      - DB_NAME
-      - DB_USER
-      - DB_PASSWORD
-      - DB_HOST
-      - DB_PORT
-      - AWS_STORAGE_BUCKET_NAME
-      - AWS_S3_REGION_NAME
-      - AWS_ACCESS_KEY_ID
-      - AWS_SECRET_ACCESS_KEY
-      - STRIPE_TEST_MODE
-      - STRIPE_SECRET_KEY_TEST
-      - STRIPE_SECRET_KEY_LIVE
-      - STRIPE_PUBLISHABLE_KEY_TEST
-      - STRIPE_PUBLISHABLE_KEY_LIVE
-      - STRIPE_WEBHOOK_SECRET
-      - GOOGLE_OAUTH_CLIENT_ID
-      - GOOGLE_OAUTH_CLIENT_SECRET
-      - GOOGLE_OAUTH_REDIRECT_URI
-      # All other env vars are set via shell environment on EC2
-      # Never use env_file in production - use AWS Systems Manager Parameter Store
 
   # Celery Worker - Background task execution
   celery_worker:
-    image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-2.amazonaws.com}/amdg:${IMAGE_TAG:-latest}
+    image: amdg:${IMAGE_TAG:-latest}
     container_name: celery_worker
     command: celery -A core worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}
     restart: unless-stopped
@@ -95,6 +74,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    env_file: /run/app.env
     environment:
       - DJANGO_SETTINGS_MODULE=core.settings
     healthcheck:
@@ -106,7 +86,7 @@ services:
 
   # Celery Beat - Scheduled task dispatcher
   celery_beat:
-    image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-2.amazonaws.com}/amdg:${IMAGE_TAG:-latest}
+    image: amdg:${IMAGE_TAG:-latest}
     container_name: celery_beat
     command: celery -A core beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     restart: unless-stopped
@@ -117,6 +97,7 @@ services:
         condition: service_healthy
       web:
         condition: service_healthy
+    env_file: /run/app.env
     environment:
       - DJANGO_SETTINGS_MODULE=core.settings
 
