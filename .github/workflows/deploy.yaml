@@ -67,6 +67,10 @@ jobs:
       CSRF_TRUSTED_ORIGINS: http://localhost:3000
       EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
       STRIPE_TEST_MODE: "True"
+      # Fake values: tests mock the Stripe API but still need these to be non-empty
+      STRIPE_SECRET_KEY_TEST: sk_test_ci_fake
+      STRIPE_PUBLISHABLE_KEY_TEST: pk_test_ci_fake
+      STRIPE_WEBHOOK_SECRET: whsec_ci_fake
       SENTRY_ENABLED: "False"
 
     steps:

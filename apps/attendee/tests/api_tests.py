@@ -257,6 +257,8 @@ class AttendeeFilteringTests(AttendeeAPITestCase):
     
     def test_search_attendees_by_name(self):
         """Test searching attendees by name."""
+        # TODO: requires database to enable trigram search for attendee names
+        
         self.client.force_authenticate(user=self.regular_user)
         response = self.client.get('/api/attendees/?search=John')
         
