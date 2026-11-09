@@ -190,24 +190,11 @@ def _serialize_payment_item(
     summary_context: dict | None = None,
 ) -> dict:
     """Serialise a single payment record into the summary item format."""
-    amount = None
-    amount_value = None
+    amount = str(payment.final_amount) if getattr(payment, "final_amount", None) else None
+    amount_value = str(payment.final_amount.amount)
     currency = None
     original_amount = getattr(payment, "original_amount", None)
     total_refunded_amount = getattr(payment, "total_refunded_amount", None)
-
-    if getattr(payment, "base_amount", None):
-        amount = str(payment.final_amount)
-        amount_value = str(payment.final_amount.amount)
-        currency = str(payment.final_amount.currency)
-
-        if attendee is not None:
-            metadata = payment.metadata or {}
-            for item in metadata.get("attendee_selections", []):
-                if item.get("attendee_id") == str(attendee.attendee_id):
-                    amount = str(item.get("frozen_price", amount))
-                    amount_value = str(Decimal(item.get("price", amount_value)))
-                    break
 
     method = getattr(payment, "method", None)
 

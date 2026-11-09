@@ -158,7 +158,6 @@ class PayableModel(models.Model, DiscountMixin, PaymentMixin):
         :param self: Instance of PayableModel
         :return: Money representing the modified amount
         '''
-        from apps.common.models.verification import VerificationStatus
 
         return self.base_amount * (
             Decimal('1.00') + self.percentage_modifier / Decimal('100')
