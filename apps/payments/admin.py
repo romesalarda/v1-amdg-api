@@ -265,7 +265,7 @@ class PaymentAdmin(admin.ModelAdmin):
             )
         }),
         ('Amount Details', {
-            'fields': ('base_amount', 'percentage_modifier', 'modified_amount'),
+            'fields': ('base_amount', 'percentage_modifier', 'modified_amount', 'final_amount'),
             'description': 'Base amount with any applied modifiers'
         }),
         ('Payment Method', {
